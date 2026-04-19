@@ -271,7 +271,7 @@ app.get("/api/proxy/stream", async (req, res) => {
           // Rewrite URI= attributes inside tags (e.g. #EXT-X-KEY:URI="...")
           return line.replace(/URI="([^"]+)"/g, (_match, uri) => {
             const abs = new URL(uri, targetUrl).href;
-            return `URI="http://localhost:${process.env.PORT || 4000}/api/proxy/segment?url=${encodeURIComponent(abs)}"`;
+            return `URI="/api/proxy/segment?url=${encodeURIComponent(abs)}"`;
           });
         }
         // Segment lines / variant playlist lines
@@ -279,9 +279,9 @@ app.get("/api/proxy/stream", async (req, res) => {
         const ext = trimmed.split("?")[0];
         // .m3u8 sub-playlists go through /stream, .ts/.aac go through /segment
         if (ext.endsWith(".m3u8")) {
-          return `http://localhost:${process.env.PORT || 4000}/api/proxy/stream?url=${encodeURIComponent(abs)}`;
+          return `/api/proxy/stream?url=${encodeURIComponent(abs)}`;
         }
-        return `http://localhost:${process.env.PORT || 4000}/api/proxy/segment?url=${encodeURIComponent(abs)}`;
+        return `/api/proxy/segment?url=${encodeURIComponent(abs)}`;
       })
       .join("\n");
 
