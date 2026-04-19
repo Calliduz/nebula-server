@@ -15,10 +15,18 @@
   "dependencies": {
     "@consumet/extensions": "^1.8.8",
     "@movie-web/providers": "^2.4.13",
+    "axios": "^1.15.0",
+    "axios-cookiejar-support": "^6.0.5",
+    "cheerio": "^1.2.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mongoose": "^9.4.1"
+    "fuzzball": "^2.2.3",
+    "mongoose": "^9.4.1",
+    "puppeteer": "^24.41.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tough-cookie": "^6.0.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
