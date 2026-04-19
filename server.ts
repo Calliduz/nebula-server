@@ -197,6 +197,18 @@ app.get('/api/image', async (req, res) => {
   }
 });
 
+async function getIMDBId(tmdbId: string) {
+  try {
+    const res = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}`, {
+      headers: { 'Authorization': `Bearer ${TMDB_API_KEY}` }
+    });
+    const data = await res.json();
+    return data.imdb_id;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getTVDBId(tmdbId: string) {
   try {
     const res = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`, {
@@ -231,8 +243,20 @@ async function getFanartMetadata(tmdbId: string, type: 'movie' | 'tv' = 'movie')
     }
 
     const endpoint = type === 'tv' ? 'tv' : 'movies';
-    const raw = await fetch(`https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`);
-    const data = await raw.json();
+    let raw = await fetch(`https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`);
+    let data = await raw.json();
+
+    // Secondary Fallback for Movies: IMDB ID
+    if (type === 'movie' && !data.hdmovielogo && !data.movielogo) {
+       const imdbId = await getIMDBId(tmdbId);
+       if (imdbId) {
+          const imdbRaw = await fetch(`https://webservice.fanart.tv/v3/movies/${imdbId}?api_key=${FANART_API_KEY}`);
+          const imdbData = await imdbRaw.json();
+          if (imdbData.hdmovielogo || imdbData.movielogo) {
+             data = imdbData;
+          }
+       }
+    }
 
     let hdLogo = null;
     let backgroundUrl = null;
@@ -240,10 +264,16 @@ async function getFanartMetadata(tmdbId: string, type: 'movie' | 'tv' = 'movie')
     if (type === 'tv') {
       const logoChoices = [...(data.hdtvlogo || []), ...(data.clearlogo || [])];
       if (logoChoices.length > 0) {
-        const enLogo = logoChoices.find((l: any) => l.lang === 'en' || !l.lang);
-        hdLogo = enLogo ? enLogo.url : logoChoices[0].url;
+        // Priority: English -> Neutral -> First available
+        const preferred = logoChoices.find((l: any) => l.lang === 'en') || 
+                          logoChoices.find((l: any) => !l.lang || l.lang === '00' || l.lang === '') ||
+                          logoChoices[0];
+        hdLogo = preferred.url;
       }
-      if (data.tvbackground && data.tvbackground.length > 0) backgroundUrl = data.tvbackground[0].url;
+      
+      const backgroundChoices = [...(data.tvbackground || []), ...(data.hdclearart || [])];
+      if (backgroundChoices.length > 0) backgroundUrl = backgroundChoices[0].url;
+
     } else {
       const logoChoices = [
         ...(data.hdmovielogo || []), 
@@ -252,11 +282,19 @@ async function getFanartMetadata(tmdbId: string, type: 'movie' | 'tv' = 'movie')
         ...(data.movieclearlogo || [])
       ];
       if (logoChoices.length > 0) {
-        // Preference: English Logo -> Fallback to first available
-        const enLogo = logoChoices.find((l: any) => l.lang === 'en' || !l.lang);
-        hdLogo = enLogo ? enLogo.url : logoChoices[0].url;
+        // Priority: English -> Neutral -> First available
+        const preferred = logoChoices.find((l: any) => l.lang === 'en') || 
+                          logoChoices.find((l: any) => !l.lang || l.lang === '00' || l.lang === '') ||
+                          logoChoices[0];
+        hdLogo = preferred.url;
       }
-      if (data.moviebackground && data.moviebackground.length > 0) backgroundUrl = data.moviebackground[0].url;
+
+      const backgroundChoices = [
+        ...(data.moviebackground || []), 
+        ...(data.hdmovieclearart || []), 
+        ...(data.moviebanner || [])
+      ];
+      if (backgroundChoices.length > 0) backgroundUrl = backgroundChoices[0].url;
     }
 
     // Save to Cache with Type
