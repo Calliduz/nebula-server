@@ -153,6 +153,9 @@ app.get('/api/metadata', async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const isBatch = req.query.batch as string; 
   const type = (req.query.type as any) || 'movie';
+
+  console.log(`[METADATA REQUEST] Type: ${type}, ID: ${tmdbId || 'Batch: ' + isBatch}`);
+
   if (isBatch) {
      const combos = isBatch.split(',').filter(id => id.trim());
      const results = await Promise.all(combos.map(async (combo) => {
@@ -243,14 +246,22 @@ async function getFanartMetadata(tmdbId: string, type: 'movie' | 'tv' = 'movie')
     }
 
     const endpoint = type === 'tv' ? 'tv' : 'movies';
-    let raw = await fetch(`https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`);
+    const fanartUrl = `https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`;
+    console.log(`[FANART] Requesting: ${fanartUrl}`);
+    
+    let raw = await fetch(fanartUrl);
+    console.log(`[FANART] Status: ${raw.status} for ${type}:${tmdbId}`);
+    
     let data = await raw.json();
 
     // Secondary Fallback for Movies: IMDB ID
     if (type === 'movie' && !data.hdmovielogo && !data.movielogo) {
        const imdbId = await getIMDBId(tmdbId);
        if (imdbId) {
-          const imdbRaw = await fetch(`https://webservice.fanart.tv/v3/movies/${imdbId}?api_key=${FANART_API_KEY}`);
+          const imdbUrl = `https://webservice.fanart.tv/v3/movies/${imdbId}?api_key=${FANART_API_KEY}`;
+          console.log(`[FANART] Fallback IMDB Request: ${imdbUrl}`);
+          const imdbRaw = await fetch(imdbUrl);
+          console.log(`[FANART] IMDB Status: ${imdbRaw.status}`);
           const imdbData = await imdbRaw.json();
           if (imdbData.hdmovielogo || imdbData.movielogo) {
              data = imdbData;
@@ -307,6 +318,7 @@ async function getFanartMetadata(tmdbId: string, type: 'movie' | 'tv' = 'movie')
     return { logoUrl: hdLogo, backgroundUrl };
 
   } catch (e: any) {
+    console.error(`[FANART ERROR] ${type}:${tmdbId} -> ${e.message}`);
     return { logoUrl: null, backgroundUrl: null };
   }
 }
