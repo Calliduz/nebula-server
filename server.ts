@@ -137,6 +137,17 @@ app.get('/api/stream', async (req, res) => {
 });
 
 // Endpoint: Fetch Visual Metadata (Fanart Logos)
+// Clear Cache (Admin/Dev)
+app.post('/api/cache/clear', async (req, res) => {
+  try {
+    await MetadataCache.deleteMany({});
+    console.log('Metadata Cache Flushed Successfully');
+    res.json({ success: true, message: 'Registry cache cleared successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Cache flush failure' });
+  }
+});
+
 app.get('/api/metadata', async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const isBatch = req.query.batch as string; 
@@ -202,11 +213,11 @@ async function getFanartMetadata(tmdbId: string) {
     let hdLogo = null;
     let backgroundUrl = null;
 
-    if (data.hdmovieclearart && data.hdmovieclearart.length > 0) hdLogo = data.hdmovieclearart[0].url;
-    else if (data.hdmovielogo && data.hdmovielogo.length > 0) hdLogo = data.hdmovielogo[0].url;
-    else if (data.moviebrowser && data.moviebrowser.length > 0) hdLogo = data.moviebrowser[0].url;
+    if (data.hdmovieclearlogo && data.hdmovieclearlogo.length > 0) hdLogo = data.hdmovieclearlogo[0].url;
+    else if (data.movieclearlogo && data.movieclearlogo.length > 0) hdLogo = data.movieclearlogo[0].url;
 
     if (data.moviebackground && data.moviebackground.length > 0) backgroundUrl = data.moviebackground[0].url;
+    else if (data.moviethumb && data.moviethumb.length > 0) backgroundUrl = data.moviethumb[0].url;
 
     // Save to Cache
     await MetadataCache.findOneAndUpdate(
