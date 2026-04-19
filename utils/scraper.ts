@@ -55,6 +55,10 @@ export interface ScrapeResult {
     source: string;
     /** Heartbeat session — pass to startHeartbeat() to keep the stream alive. */
     session: HeartbeatSession;
+    /** Quality tag parsed from the release filename: CAM | TC | WEBDL | WEBRIP | BLURAY | HDTC | HD | UNKNOWN */
+    qualityTag: string;
+    /** Resolution parsed from the release filename: 4K | 1080p | 720p | 480p | UNKNOWN */
+    resolution: string;
 }
 
 export interface HeartbeatSession {
@@ -129,6 +133,81 @@ export function stopHeartbeat(sessionId: string): void {
         activeHeartbeats.delete(sessionId);
         console.log(`[HEARTBEAT] Stopped for session ${sessionId}`);
     }
+}
+
+// ── Quality Tag Parser ─────────────────────────────────────────────────────
+
+/**
+ * parseQualityFromFilename
+ *
+ * Decodes the base64-encoded `flnm` variable from Cloudnestra's playerJS HTML
+ * and extracts a quality classification and resolution string.
+ *
+ * Priority order (most specific → least specific):
+ *   CAM / TS / TELESYNC / HDTS → qualityTag = 'CAM'
+ *   TC / HDTC               → qualityTag = 'TC'
+ *   WEB-DL / WEBDL           → qualityTag = 'WEBDL'
+ *   WEBRip / WEBRIP          → qualityTag = 'WEBRIP'
+ *   BluRay / BLURAY / BDRip  → qualityTag = 'BLURAY'
+ *   HDRip / HDRIP            → qualityTag = 'HDRIP'
+ *   WEB (generic)            → qualityTag = 'WEBDL'
+ *
+ * @param playerHtml  Raw HTML from the Cloudnestra /prorcp/ page.
+ * @returns           { qualityTag, resolution, rawFilename }
+ */
+function parseQualityFromFilename(playerHtml: string): { qualityTag: string; resolution: string; rawFilename: string } {
+    // Try to find var flnm = removeExtension(atob('...')); or just atob('...')
+    const b64Match = playerHtml.match(/atob\(["']([A-Za-z0-9+/=]+)["']\)/i);
+
+    if (!b64Match?.[1]) {
+        console.log('[QUALITY] No base64 filename found — defaulting to UNKNOWN');
+        return { qualityTag: 'UNKNOWN', resolution: 'UNKNOWN', rawFilename: '' };
+    }
+
+    let rawFilename = '';
+    try {
+        rawFilename = Buffer.from(b64Match[1], 'base64').toString('utf-8');
+    } catch {
+        return { qualityTag: 'UNKNOWN', resolution: 'UNKNOWN', rawFilename: '' };
+    }
+
+    const upper = rawFilename.toUpperCase();
+    console.log(`[QUALITY] Release name: ${rawFilename.substring(0, 80)}`);
+
+    // ─ Resolution ─────────────────────────────────────────────────────────
+    let resolution = 'UNKNOWN';
+    if (upper.includes('2160P') || upper.includes('4K') || upper.includes('UHD')) {
+        resolution = '4K';
+    } else if (upper.includes('1080P')) {
+        resolution = '1080p';
+    } else if (upper.includes('720P')) {
+        resolution = '720p';
+    } else if (upper.includes('480P')) {
+        resolution = '480p';
+    }
+
+    // ─ Source (most specific wins) ────────────────────────────────────────
+    let qualityTag = 'UNKNOWN';
+    if (upper.includes('CAM') || upper.includes('CAMRIP') || upper.includes('HDCAM')) {
+        qualityTag = 'CAM';
+    } else if (upper.includes('TELESYNC') || upper.includes('TS') && !upper.includes('WEB') || upper.includes('HDTS')) {
+        qualityTag = 'CAM';
+    } else if (upper.includes('HDTC') || (upper.includes('TC') && !upper.includes('DTC'))) {
+        qualityTag = 'TC';
+    } else if (upper.includes('WEB-DL') || upper.includes('WEBDL')) {
+        qualityTag = 'WEBDL';
+    } else if (upper.includes('WEBRIP') || upper.includes('WEB-RIP') || upper.includes('WEBSCR')) {
+        qualityTag = 'WEBRIP';
+    } else if (upper.includes('BLURAY') || upper.includes('BLU-RAY') || upper.includes('BDRIP') || upper.includes('BRRIP')) {
+        qualityTag = 'BLURAY';
+    } else if (upper.includes('HDRIP')) {
+        qualityTag = 'HDRIP';
+    } else if (upper.includes('WEB')) {
+        qualityTag = 'WEBDL'; // Generic WEB → treat as WebDL
+    }
+
+    console.log(`[QUALITY] → qualityTag=${qualityTag}  resolution=${resolution}`);
+    return { qualityTag, resolution, rawFilename };
 }
 
 // ── Internal Axios factory ──────────────────────────────────────────────────
@@ -224,9 +303,20 @@ export async function scrapeVsembed(
     });
     const wrapperHtml: string = wrapperRes.data;
 
-    // Match the jQuery-loaded iframe: src: '/prorcp/XXXXX'
-    const prorpcMatch = wrapperHtml.match(/src:\s*['"](\/?prorcp\/[^'"]+)['"]/i);
+    // Match the jQuery-loaded iframe path — try multiple patterns in order of specificity.
+    // Cloudnestra has used several structures over time; we cascade through all known ones.
+    const prorpcMatch =
+        wrapperHtml.match(/src:\s*['"](\/prorcp\/[^'"]+)['"]/i)          ||  // src: '/prorcp/...'
+        wrapperHtml.match(/url:\s*['"](\/prorcp\/[^'"]+)['"]/i)          ||  // url: '/prorcp/...'
+        wrapperHtml.match(/href:\s*['"](\/prorcp\/[^'"]+)['"]/i)         ||  // href: '/prorcp/...'
+        wrapperHtml.match(/fetch\(['"](\/prorcp\/[^'"]+)['"]/i)          ||  // fetch('/prorcp/...')
+        wrapperHtml.match(/\.load\(['"](\/prorcp\/[^'"]+)['"]/i)         ||  // .load('/prorcp/...')
+        wrapperHtml.match(/(?:ajax|get).*?['"](\/prorcp\/[^'"]+)['"]/i)  ||  // $.ajax / $.get
+        wrapperHtml.match(/['"](prorcp\/[^'"]+)['"]/)                       ;  // bare 'prorcp/...'
+
     if (!prorpcMatch?.[1]) {
+        // Dump first 500 chars of the wrapper response to help debug future structure changes
+        console.error('[SCRAPER] L2 FAIL — wrapper HTML snippet:', wrapperHtml.substring(0, 500));
         throw new Error('L2: /prorcp/ path not found — cloudnestra wrapper structure may have changed');
     }
 
@@ -237,11 +327,17 @@ export async function scrapeVsembed(
 
     // ── Layer 3: The PlayerJS Config ──────────────────────────────────────
     // Fetches the actual PlayerJS configuration page.
-    // CRITICAL: Referer must be cloudnestra.com — not vsembed.
+    // CRITICAL: Referer MUST be the /rcp/ wrapper URL (wrapperUrl), NOT just cloudnestra.com/
+    // Cloudnestra validates that the request came from the wrapper page before returning the player config.
+    // Confirmed via Proxyman: requests with Referer=rcp_url → 200 OK; Referer=cloudnestra.com/ → blocked.
 
     console.log(`[SCRAPER] L3 PlayerJS → ${playerUrl}`);
     const playerRes = await client.get(playerUrl, {
-        headers: buildHeaders(CLOUDNESTRA_HOST + '/'),
+        headers: buildHeaders(wrapperUrl, {
+            'Sec-Fetch-Dest': 'iframe',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',  // rcp → prorcp = same origin
+        }),
     });
     const playerHtml: string = playerRes.data;
 
@@ -273,6 +369,10 @@ export async function scrapeVsembed(
         pingParams['t'] = tokenMatch[1];
         console.log(`[SCRAPER] L3     ✔  token extracted`);
     }
+
+    // ── Quality Tag Extraction ────────────────────────────────────────────
+    // Decode the base64 `flnm` variable from the PlayerJS HTML to classify the stream.
+    const { qualityTag, resolution } = parseQualityFromFilename(playerHtml);
 
     // ── Layer 4: Data Cleaning ─────────────────────────────────────────────
     // Split " or " fallbacks, replace {vX} CDN placeholders, filter valid m3u8.
@@ -306,6 +406,8 @@ export async function scrapeVsembed(
         streamUrl: validStreams[0],
         streams: validStreams,
         source: 'vsembed-cloudnestra',
+        qualityTag,
+        resolution,
         session: {
             pingUrl,
             pingParams,

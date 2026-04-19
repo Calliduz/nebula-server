@@ -27,11 +27,16 @@ const StreamCacheSchema = new mongoose.Schema({
   
   streamUrl: { type: String },
   source: { type: String },
+  qualityTag: { type: String, default: 'UNKNOWN' },
+  resolution: { type: String, default: 'UNKNOWN' },
   subtitles: { type: Array, default: [] },
   streamExpiresAt: { type: Date },
 });
 
 StreamCacheSchema.index({ tmdbId: 1, type: 1, season: 1, episode: 1 }, { unique: true });
+// TTL index: MongoDB automatically deletes expired stream docs when streamExpiresAt is reached.
+// expireAfterSeconds: 0 means "delete exactly at the date stored in the field".
+StreamCacheSchema.index({ streamExpiresAt: 1 }, { expireAfterSeconds: 0 });
 export const StreamCache = mongoose.model('StreamCache', StreamCacheSchema);
 
 // Permanent Subtitle Cache (Aggregated from Stremio, Subscene, etc.)

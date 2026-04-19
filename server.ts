@@ -64,8 +64,39 @@ app.get("/api/stream", async (req, res) => {
     const cachedRecord = await StreamCache.findOne({ tmdbId, type: kind, season, episode }).catch(() => null);
     if (cachedRecord?.streamUrl && cachedRecord?.streamExpiresAt) {
       if (new Date() < cachedRecord.streamExpiresAt) {
-        console.log(`[STREAM] Cache HIT for ${tmdbId} S${season}E${episode}`);
-        return res.json({ streamUrl: cachedRecord.streamUrl, source: cachedRecord.source || "cache" });
+        // Liveness check — probe the .m3u8 with a HEAD request to confirm the token is still valid.
+        // Cloudnestra tokens can die early (IP rotation, CDN purge). If dead, fall through to re-scrape.
+        let linkAlive = false;
+        try {
+          const probe = await axios.head(cachedRecord.streamUrl, {
+            timeout: 4000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0',
+              'Referer': 'https://cloudnestra.com/',
+            },
+            validateStatus: (s) => s < 400,
+          });
+          linkAlive = probe.status < 400;
+        } catch {
+          linkAlive = false;
+        }
+
+        if (linkAlive) {
+          console.log(`[STREAM] Cache HIT ✔ (link alive) for ${tmdbId} S${season}E${episode}`);
+          return res.json({
+            streamUrl: cachedRecord.streamUrl,
+            source: cachedRecord.source || 'cache',
+            qualityTag: cachedRecord.qualityTag || 'UNKNOWN',
+            resolution: cachedRecord.resolution || 'UNKNOWN',
+          });
+        } else {
+          console.warn(`[STREAM] Cache HIT ✘ (dead token) for ${tmdbId} — re-scraping...`);
+          // Invalidate the dead record immediately so the TTL index doesn't hold it longer
+          await StreamCache.findOneAndUpdate(
+            { tmdbId, type: kind, season, episode },
+            { streamUrl: null, streamExpiresAt: new Date(0) },
+          ).catch(() => null);
+        }
       }
     }
 
@@ -82,19 +113,41 @@ app.get("/api/stream", async (req, res) => {
     expiresAt.setHours(expiresAt.getHours() + 4);
     await StreamCache.findOneAndUpdate(
       { tmdbId, type: kind, season, episode },
-      { streamUrl: extractedUrl, source: sourceName, streamExpiresAt: expiresAt },
+      {
+        streamUrl: extractedUrl,
+        source: sourceName,
+        qualityTag: result.qualityTag,
+        resolution: result.resolution,
+        streamExpiresAt: expiresAt,
+      },
       { upsert: true },
     ).catch(() => null);
 
     // 4. Start heartbeat ping loop to keep the stream alive for 60s intervals
     startHeartbeat(tmdbId, result.session);
 
-    console.log(`[STREAM] ✔ Success via ${sourceName}: ${extractedUrl.substring(0, 80)}...`);
-    return res.json({ streamUrl: extractedUrl, source: sourceName });
+    console.log(`[STREAM] ✔ Success via ${sourceName} [${result.qualityTag} ${result.resolution}]: ${extractedUrl.substring(0, 80)}...`);
+    return res.json({ streamUrl: extractedUrl, source: sourceName, qualityTag: result.qualityTag, resolution: result.resolution });
 
   } catch (error: any) {
     console.error(`[STREAM] ✘ Failed for tmdbId=${tmdbId}: ${error.message}`);
     return res.status(404).json({ error: error.message || "No stream sources found." });
+  }
+});
+
+// Endpoint: TV Show Details (episode counts per season)
+// Proxies TMDB so the API key never lives in the frontend bundle.
+app.get("/api/tv-details/:tmdbId", async (req, res) => {
+  const { tmdbId } = req.params;
+  if (!TMDB_API_KEY) return res.status(500).json({ error: "TMDB_API_KEY not configured" });
+  try {
+    const r = await axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}`, {
+      params: { api_key: TMDB_API_KEY },
+      timeout: 8000,
+    });
+    return res.json(r.data);
+  } catch (err: any) {
+    return res.status(err.response?.status || 500).json({ error: err.message });
   }
 });
 
