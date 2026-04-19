@@ -46,6 +46,10 @@ const connectDB = async (retryCount = 5) => {
 
 connectDB();
 
+// Endpoint: Health Check (Lightweight, No Rate Limit)
+app.get("/api/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
 // Endpoint: Fetch Media Stream
 app.get("/api/stream", async (req, res) => {
