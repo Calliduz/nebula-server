@@ -3,7 +3,8 @@ import cors from "cors";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
-import { MetadataCache } from "./models/Cache.js";
+import { MetadataCache, StreamCache, SubtitleCache } from "./models/Cache.js";
+import { getSubtitles } from "./utils/subtitles.js";
 import { scrapeVsembed, startHeartbeat, stopHeartbeat } from "./utils/scraper.js";
 
 // Load Environment Variables
@@ -60,16 +61,16 @@ app.get("/api/stream", async (req, res) => {
 
   try {
     // 1. Check the stream cache first (expires every 4 hours)
-    const cachedRecord = await MetadataCache.findOne({ tmdbId, type: kind }).catch(() => null);
+    const cachedRecord = await StreamCache.findOne({ tmdbId, type: kind, season, episode }).catch(() => null);
     if (cachedRecord?.streamUrl && cachedRecord?.streamExpiresAt) {
       if (new Date() < cachedRecord.streamExpiresAt) {
-        console.log(`[STREAM] Cache HIT for ${tmdbId}`);
-        return res.json({ streamUrl: cachedRecord.streamUrl, source: "cache" });
+        console.log(`[STREAM] Cache HIT for ${tmdbId} S${season}E${episode}`);
+        return res.json({ streamUrl: cachedRecord.streamUrl, source: cachedRecord.source || "cache" });
       }
     }
 
     // 2. Run the 4-layer vsembed → cloudnestra → m3u8 scraper
-    console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} via ${VIDSRC_EMBED_HOST}`);
+    console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST}`);
     const result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode);
 
     // Use the first (best) stream URL
@@ -79,9 +80,9 @@ app.get("/api/stream", async (req, res) => {
     // 3. Cache the result for 4 hours
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 4);
-    await MetadataCache.findOneAndUpdate(
-      { tmdbId, type: kind },
-      { streamUrl: extractedUrl, streamExpiresAt: expiresAt },
+    await StreamCache.findOneAndUpdate(
+      { tmdbId, type: kind, season, episode },
+      { streamUrl: extractedUrl, source: sourceName, streamExpiresAt: expiresAt },
       { upsert: true },
     ).catch(() => null);
 
@@ -97,6 +98,54 @@ app.get("/api/stream", async (req, res) => {
   }
 });
 
+// Endpoint: Fetch Subtitles (Lazy Load / Aggregated Background Request)
+app.get("/api/subtitles", async (req, res) => {
+  const tmdbId  = req.query.tmdbId as string;
+  const kind    = req.query.type as "movie" | "tv";
+  const season  = parseInt((req.query.season as string) || "1", 10);
+  const episode = parseInt((req.query.episode as string) || "1", 10);
+
+  if (!tmdbId || !kind) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  try {
+    // 1. Check permanent cache first
+    const cached = await SubtitleCache.findOne({ tmdbId, type: kind, season, episode });
+    if (cached && cached.subtitles?.length > 0) {
+      console.log(`[SUBS] Cache HIT for ${tmdbId} S${season}E${episode}`);
+      return res.json({ subtitles: cached.subtitles });
+    }
+
+    // 2. Aggregate from trackers in parallel
+    console.log(`[SUBS] Aggregating tracks for ${tmdbId} S${season}E${episode}...`);
+    
+    // Using allSettled so one tracker failing doesn't kill the whole request
+    const results = await Promise.allSettled([
+      getSubtitles(tmdbId, kind, season, episode),
+      // Future trackers (e.g. Subscene, OpenSubtitles Direct) would go here
+    ]);
+
+    const aggregated = results
+      .filter(r => r.status === "fulfilled")
+      .flatMap(r => (r as PromiseFulfilledResult<any[]>).value);
+
+    // 3. Save to permanent cache
+    if (aggregated.length > 0) {
+      await SubtitleCache.findOneAndUpdate(
+        { tmdbId, type: kind, season, episode },
+        { subtitles: aggregated, aggregatedAt: new Date() },
+        { upsert: true }
+      ).catch(() => null);
+    }
+
+    return res.json({ subtitles: aggregated });
+  } catch (error: any) {
+    console.warn(`[SUBS] ✘ Aggregation issue for ${tmdbId}: ${error.message}`);
+    return res.json({ subtitles: [] }); // Always return [] instead of error to prevent player crash
+  }
+});
+
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {
   const tmdbId = req.query.tmdbId as string;
@@ -109,9 +158,9 @@ app.get("/api/stream/stop", (req, res) => {
 app.post("/api/stream/flush", async (req, res) => {
   const tmdbId = req.body?.tmdbId as string;
   if (!tmdbId) return res.status(400).json({ error: "Missing tmdbId" });
-  await MetadataCache.findOneAndUpdate(
+  await StreamCache.findOneAndUpdate(
     { tmdbId },
-    { streamUrl: null, streamExpiresAt: null },
+    { streamUrl: null, streamExpiresAt: null, subtitles: [] },
     {},
   ).catch(() => null);
   return res.json({ ok: true, message: "Stream cache cleared for " + tmdbId });
