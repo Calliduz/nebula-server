@@ -16,6 +16,7 @@ app.use(express.json());
 // Initialize MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/nebula-local';
 const FANART_API_KEY = process.env.FANART_API_KEY || '';
+const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 
 const connectDB = async (retryCount = 5) => {
   try {
@@ -151,12 +152,13 @@ app.post('/api/cache/clear', async (req, res) => {
 app.get('/api/metadata', async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const isBatch = req.query.batch as string; 
-
+  const type = (req.query.type as any) || 'movie';
   if (isBatch) {
-     const ids = isBatch.split(',').filter(id => id.trim());
-     const results = await Promise.all(ids.map(async (id) => {
-       const res = await getFanartMetadata(id);
-       return { id, ...res };
+     const combos = isBatch.split(',').filter(id => id.trim());
+     const results = await Promise.all(combos.map(async (combo) => {
+       const [id, type] = combo.split(':');
+       const meta = await getFanartMetadata(id, (type as any) || 'movie');
+       return { id, ...meta };
      }));
      return res.json({ results });
   }
@@ -164,7 +166,7 @@ app.get('/api/metadata', async (req, res) => {
   if (!tmdbId) return res.status(400).json({ error: 'Missing tmdbId' });
 
   try {
-     const result = await getFanartMetadata(tmdbId);
+     const result = await getFanartMetadata(tmdbId, type);
      return res.json(result || { logoUrl: null, backgroundUrl: null });
   } catch (error: any) {
      console.error(`[METADATA ERROR] ${error.message}`);
@@ -195,47 +197,78 @@ app.get('/api/image', async (req, res) => {
   }
 });
 
-async function getFanartMetadata(tmdbId: string) {
+async function getTVDBId(tmdbId: string) {
+  try {
+    const res = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`, {
+      headers: { 'Authorization': `Bearer ${TMDB_API_KEY}` }
+    });
+    const data = await res.json();
+    return data.tvdb_id;
+  } catch (e) {
+    console.error(`[TVDB TRACE] Failed translation for ${tmdbId}`);
+    return null;
+  }
+}
+
+async function getFanartMetadata(tmdbId: string, type: 'movie' | 'tv' = 'movie') {
   if (!FANART_API_KEY || FANART_API_KEY === 'your_fanart_api_key_here') {
-    return { logoUrl: null, backgroundUrl: null }; // Disabled
+    return { logoUrl: null, backgroundUrl: null };
   }
 
-  // Check Cache
-  const cached = await MetadataCache.findOne({ tmdbId }).catch(() => null);
+  // Check Cache (Type-aware)
+  const cached = await MetadataCache.findOne({ tmdbId, type }).catch(() => null);
   if (cached && cached.logoFetchedAt) { 
+     console.log(`[CACHE HIT] ${type}:${tmdbId} -> ${cached.logoUrl ? 'Logo Found' : 'No Logo'}`);
      return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
   }
 
   try {
-    const raw = await fetch(`https://webservice.fanart.tv/v3/movies/${tmdbId}?api_key=${FANART_API_KEY}`);
+    let finalId = tmdbId;
+    if (type === 'tv') {
+      const tvdbId = await getTVDBId(tmdbId);
+      if (!tvdbId) return { logoUrl: null, backgroundUrl: null };
+      finalId = tvdbId.toString();
+    }
+
+    const endpoint = type === 'tv' ? 'tv' : 'movies';
+    const raw = await fetch(`https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`);
     const data = await raw.json();
 
     let hdLogo = null;
     let backgroundUrl = null;
 
-    if (data.hdmovieclearlogo && data.hdmovieclearlogo.length > 0) hdLogo = data.hdmovieclearlogo[0].url;
-    else if (data.movieclearlogo && data.movieclearlogo.length > 0) hdLogo = data.movieclearlogo[0].url;
+    if (type === 'tv') {
+      const logoChoices = [...(data.hdtvlogo || []), ...(data.clearlogo || [])];
+      if (logoChoices.length > 0) {
+        const enLogo = logoChoices.find((l: any) => l.lang === 'en' || !l.lang);
+        hdLogo = enLogo ? enLogo.url : logoChoices[0].url;
+      }
+      if (data.tvbackground && data.tvbackground.length > 0) backgroundUrl = data.tvbackground[0].url;
+    } else {
+      const logoChoices = [
+        ...(data.hdmovielogo || []), 
+        ...(data.movielogo || []),
+        ...(data.hdmovieclearlogo || []), 
+        ...(data.movieclearlogo || [])
+      ];
+      if (logoChoices.length > 0) {
+        // Preference: English Logo -> Fallback to first available
+        const enLogo = logoChoices.find((l: any) => l.lang === 'en' || !l.lang);
+        hdLogo = enLogo ? enLogo.url : logoChoices[0].url;
+      }
+      if (data.moviebackground && data.moviebackground.length > 0) backgroundUrl = data.moviebackground[0].url;
+    }
 
-    if (data.moviebackground && data.moviebackground.length > 0) backgroundUrl = data.moviebackground[0].url;
-    else if (data.moviethumb && data.moviethumb.length > 0) backgroundUrl = data.moviethumb[0].url;
-
-    // Save to Cache
+    // Save to Cache with Type
     await MetadataCache.findOneAndUpdate(
-      { tmdbId },
-      { logoUrl: hdLogo, backgroundUrl, logoFetchedAt: new Date() },
-      { upsert: true, returnDocument: 'after' }
+      { tmdbId, type },
+      { logoUrl: hdLogo, backgroundUrl, logoFetchedAt: new Date(), type },
+      { upsert: true }
     ).catch(() => null); 
 
     return { logoUrl: hdLogo, backgroundUrl };
 
   } catch (e: any) {
-    if (e.message.includes('404')) {
-        await MetadataCache.findOneAndUpdate(
-          { tmdbId },
-          { logoUrl: null, backgroundUrl: null, logoFetchedAt: new Date() },
-          { upsert: true, returnDocument: 'after' }
-        ).catch(() => null);
-    }
     return { logoUrl: null, backgroundUrl: null };
   }
 }
