@@ -9,6 +9,7 @@ const MetadataCacheSchema = new mongoose.Schema({
   
   // Visual Metadata (Fanart)
   logoUrl: { type: String },
+  backgroundUrl: { type: String },
   logoFetchedAt: { type: Date },
 });
 

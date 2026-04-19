@@ -17,11 +17,24 @@ app.use(express.json());
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/nebula-local';
 const FANART_API_KEY = process.env.FANART_API_KEY || '';
 
-mongoose.connect(MONGODB_URI).then(() => {
-  console.log('MongoDB Uplink Established');
-}).catch((err) => {
-  console.warn('MongoDB Uplink Failed. Running in volatile mode.', err.message);
-});
+const connectDB = async (retryCount = 5) => {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+    });
+    console.log('MongoDB Uplink Established');
+  } catch (err: any) {
+    if (retryCount > 0) {
+      console.warn(`[DB] Uplink Failed. Retrying in 5s... (${retryCount} left)`);
+      setTimeout(() => connectDB(retryCount - 1), 5000);
+    } else {
+      console.error('[DB] Uplink Failed Permanently. Running in volatile mode.', err.message);
+    }
+  }
+};
+
+connectDB();
 
 // Primary Scraper (@movie-web/providers)
 const providers = makeProviders({
@@ -109,7 +122,7 @@ app.get('/api/stream', async (req, res) => {
       await MetadataCache.findOneAndUpdate(
         { tmdbId },
         { streamUrl: extractedUrl, streamExpiresAt: expiresAt },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       ).catch(() => null);
 
       return res.json({ streamUrl: extractedUrl, source: sourceName });
@@ -129,12 +142,11 @@ app.get('/api/metadata', async (req, res) => {
   const isBatch = req.query.batch as string; 
 
   if (isBatch) {
-     const ids = isBatch.split(',');
-     const results = [];
-     for (const id of ids) {
-       const result = await getFanartMetadata(id);
-       if (result) results.push({ id, ...result });
-     }
+     const ids = isBatch.split(',').filter(id => id.trim());
+     const results = await Promise.all(ids.map(async (id) => {
+       const res = await getFanartMetadata(id);
+       return { id, ...res };
+     }));
      return res.json({ results });
   }
 
@@ -142,22 +154,45 @@ app.get('/api/metadata', async (req, res) => {
 
   try {
      const result = await getFanartMetadata(tmdbId);
-     return res.json(result || { logoUrl: null });
+     return res.json(result || { logoUrl: null, backgroundUrl: null });
   } catch (error: any) {
      console.error(`[METADATA ERROR] ${error.message}`);
      return res.status(500).json({ error: 'Failed to extract metadata' });
   }
 });
 
+// Endpoint: Image Proxy (Bypasses TMDB Blocks/CORS)
+app.get('/api/image', async (req, res) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).send('Missing url');
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Proxy upstream error');
+    const arrayBuffer = await response.arrayBuffer();
+    
+    // Pass along content type
+    const contentType = response.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    
+    // Add long caching
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    
+    res.end(Buffer.from(arrayBuffer));
+  } catch (e: any) {
+    res.status(500).send('Image proxy failed');
+  }
+});
+
 async function getFanartMetadata(tmdbId: string) {
   if (!FANART_API_KEY || FANART_API_KEY === 'your_fanart_api_key_here') {
-    return { logoUrl: null }; // Disabled
+    return { logoUrl: null, backgroundUrl: null }; // Disabled
   }
 
   // Check Cache
   const cached = await MetadataCache.findOne({ tmdbId }).catch(() => null);
-  if (cached && cached.logoFetchedAt) { // Check if we already tried, even if it failed (logoUrl could be null)
-     return { logoUrl: cached.logoUrl };
+  if (cached && cached.logoFetchedAt) { 
+     return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
   }
 
   try {
@@ -165,33 +200,32 @@ async function getFanartMetadata(tmdbId: string) {
     const data = await raw.json();
 
     let hdLogo = null;
-    if (data.hdmovieclearart && data.hdmovieclearart.length > 0) {
-      hdLogo = data.hdmovieclearart[0].url;
-    } else if (data.hdmovielogo && data.hdmovielogo.length > 0) {
-      hdLogo = data.hdmovielogo[0].url;
-    } else if (data.moviebrowser && data.moviebrowser.length > 0) {
-       hdLogo = data.moviebrowser[0].url;
-    }
+    let backgroundUrl = null;
+
+    if (data.hdmovieclearart && data.hdmovieclearart.length > 0) hdLogo = data.hdmovieclearart[0].url;
+    else if (data.hdmovielogo && data.hdmovielogo.length > 0) hdLogo = data.hdmovielogo[0].url;
+    else if (data.moviebrowser && data.moviebrowser.length > 0) hdLogo = data.moviebrowser[0].url;
+
+    if (data.moviebackground && data.moviebackground.length > 0) backgroundUrl = data.moviebackground[0].url;
 
     // Save to Cache
     await MetadataCache.findOneAndUpdate(
       { tmdbId },
-      { logoUrl: hdLogo, logoFetchedAt: new Date() },
-      { upsert: true, new: true }
-    ).catch(() => null); // Silent database fail if running volatile
+      { logoUrl: hdLogo, backgroundUrl, logoFetchedAt: new Date() },
+      { upsert: true, returnDocument: 'after' }
+    ).catch(() => null); 
 
-    return { logoUrl: hdLogo };
+    return { logoUrl: hdLogo, backgroundUrl };
 
   } catch (e: any) {
     if (e.message.includes('404')) {
-        // Logo doesn't exist on fanart, cache the null so we don't spam 404s
         await MetadataCache.findOneAndUpdate(
           { tmdbId },
-          { logoUrl: null, logoFetchedAt: new Date() },
-          { upsert: true, new: true }
+          { logoUrl: null, backgroundUrl: null, logoFetchedAt: new Date() },
+          { upsert: true, returnDocument: 'after' }
         ).catch(() => null);
     }
-    return { logoUrl: null };
+    return { logoUrl: null, backgroundUrl: null };
   }
 }
 
