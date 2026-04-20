@@ -22,6 +22,9 @@
 import axios from 'axios';
 import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
+import { SocksProxyAgent } from 'socks-proxy-agent';
+import { HttpProxyAgent } from 'http-proxy-agent';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -213,18 +216,32 @@ function parseQualityFromFilename(playerHtml: string): { qualityTag: string; res
 // ── Internal Axios factory ──────────────────────────────────────────────────
 
 /**
- * Creates a new axios instance with a shared CookieJar.
- * All requests through this instance share cookies automatically
- * (session ID, any tracking tokens, etc).
+ * Creates a new axios instance with a shared CookieJar and optional proxy.
  */
-function createSession(): { client: ReturnType<typeof wrapper>, jar: CookieJar } {
+function createSession(proxyUrl?: string): { client: ReturnType<typeof wrapper>, jar: CookieJar } {
     const jar = new CookieJar();
+    
+    let httpAgent;
+    let httpsAgent;
+
+    if (proxyUrl) {
+        if (proxyUrl.startsWith('socks')) {
+            httpsAgent = new SocksProxyAgent(proxyUrl);
+            httpAgent = httpsAgent;
+        } else {
+            httpAgent = new HttpProxyAgent(proxyUrl);
+            httpsAgent = new HttpsProxyAgent(proxyUrl);
+        }
+    }
+
     const client = wrapper(axios.create({
         jar,
         withCredentials: true,
-        timeout: 12000,
+        timeout: 15000, // Slightly longer timeout when using proxies
         responseType: 'text',
         maxRedirects: 5,
+        httpAgent,
+        httpsAgent,
     }));
     return { client, jar };
 }
@@ -248,10 +265,7 @@ function buildHeaders(referer: string, extra: Record<string, string> = {}): Reco
 // ── Main Pipeline ───────────────────────────────────────────────────────────
 
 /**
- * scrapeVsembed
- *
- * Runs the full 4-layer HTTP pipeline and returns a ScrapeResult.
- * Throws with a descriptive message on any unrecoverable failure.
+ * Entry point: Scrapes a movie or episode from the vsembed pipeline.
  */
 export async function scrapeVsembed(
     tmdbId: string,
@@ -259,9 +273,9 @@ export async function scrapeVsembed(
     embedHost: string,
     season = 1,
     episode = 1,
-): Promise<ScrapeResult> {
-
-    const { client, jar } = createSession();
+    proxyUrl?: string
+): Promise<ScrapeResult[]> {
+    const { client, jar } = createSession(proxyUrl);
     const cleanEmbedHost = embedHost.replace(/\/$/, '');
 
     // ── Layer 1: The Router ────────────────────────────────────────────────

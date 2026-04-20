@@ -3,6 +3,7 @@ import cors from "cors";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
+import fs from "fs";
 import { MetadataCache, StreamCache, SubtitleCache } from "./models/Cache.js";
 import { getSubtitles } from "./utils/subtitles.js";
 import { scrapeVsembed, startHeartbeat, stopHeartbeat } from "./utils/scraper.js";
@@ -21,6 +22,30 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 
 // VidSrc embed host — swap VIDSRC_EMBED_HOST in .env if the domain changes
 const VIDSRC_EMBED_HOST = (process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru").replace(/\/$/, "");
+
+// ── Proxy Management ────────────────────────────────────────────────────────
+const PROXIES_FILE = "./proxies_verified.json";
+let proxyPool: string[] = [];
+
+function loadProxyPool() {
+  if (fs.existsSync(PROXIES_FILE)) {
+    try {
+      proxyPool = JSON.parse(fs.readFileSync(PROXIES_FILE, "utf-8"));
+      console.log(`[PROXY] Pool loaded: ${proxyPool.length} proxies available.`);
+    } catch (e) {
+      console.error(`[PROXY] Failed to parse ${PROXIES_FILE}:`, e.message);
+    }
+  }
+}
+
+function getRandomProxy(): string | undefined {
+  if (proxyPool.length === 0) return undefined;
+  return proxyPool[Math.floor(Math.random() * proxyPool.length)];
+}
+
+loadProxyPool();
+// Optional: Auto-reload every 30 mins
+setInterval(loadProxyPool, 30 * 60 * 1000);
 
 const connectDB = async (retryCount = 5) => {
   try {
@@ -105,8 +130,9 @@ app.get("/api/stream", async (req, res) => {
     }
 
     // 2. Run the 4-layer vsembed → cloudnestra → m3u8 scraper
-    console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST}`);
-    const result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode);
+    const scraperProxy = getRandomProxy();
+    console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST}${scraperProxy ? ` (Proxy: ${scraperProxy})` : ""}`);
+    const result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode, scraperProxy);
 
     // Use the first (best) stream URL
     const extractedUrl = result.streams[0];
