@@ -418,7 +418,7 @@ app.get("/api/proxy/stream", async (req, res) => {
   }
 });
 
-// Proxy: raw segment / AES key — pass-through binary stream
+// Proxy: raw segment / AES key — pass-through binary stream (NO residential proxy — segments are CDN-direct to preserve data limits)
 app.get("/api/proxy/segment", async (req, res) => {
   const raw = req.query.url as string;
   if (!raw) return res.status(400).send("Missing url");
@@ -427,29 +427,12 @@ app.get("/api/proxy/segment", async (req, res) => {
   try { targetUrl = decodeURIComponent(raw); }
   catch { return res.status(400).send("Invalid url encoding"); }
 
-  // Extract optional proxy — passed forward from the manifest rewriter
-  let segmentProxy: string | undefined;
-  const rawProxy = req.query.nebula_proxy as string | undefined;
-  if (rawProxy) {
-    try { segmentProxy = decodeURIComponent(rawProxy); } catch {}
-  }
-
   try {
-    const config: any = {
+    const upstream = await axios.get(targetUrl, {
       headers: cdnHeaders(),
       responseType: "arraybuffer",
       timeout: 30000,
-    };
-
-    if (segmentProxy) {
-      const safeProxy = segmentProxy.endsWith("/") ? segmentProxy.slice(0, -1) : segmentProxy;
-      const JarlessAgent = createCookieAgent(HttpsProxyAgent);
-      const agent = new JarlessAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
-      config.httpAgent = agent;
-      config.httpsAgent = agent;
-    }
-
-    const upstream = await axios.get(targetUrl, config);
+    });
 
     const ct = upstream.headers["content-type"] || "video/mp2t";
     res.setHeader("Content-Type", ct);
