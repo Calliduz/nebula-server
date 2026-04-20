@@ -345,14 +345,29 @@ app.get("/api/proxy/stream", async (req, res) => {
   try { targetUrl = decodeURIComponent(raw); }
   catch { return res.status(400).send("Invalid url encoding"); }
 
-  // Extract optional proxy baked into the URL by nebula-server
+  // Extract proxy from two possible locations:
+  // 1. Baked into the target CDN URL as ?nebula_proxy=... (master playlist, set by /api/stream)
+  // 2. As a direct query param of this endpoint (?nebula_proxy=...) (variant sub-playlists, set by withProxy())
   let streamProxy: string | undefined;
-  try {
-    const urlObj = new URL(targetUrl);
-    streamProxy = urlObj.searchParams.get("nebula_proxy") || undefined;
-    urlObj.searchParams.delete("nebula_proxy");
-    targetUrl = urlObj.href;
-  } catch {}
+
+  // Check direct request param first (variant playlists)
+  const directProxy = req.query.nebula_proxy as string | undefined;
+  if (directProxy) {
+    try { streamProxy = decodeURIComponent(directProxy); } catch {}
+  }
+
+  // Fall back to baked-in param inside the target URL (master playlist)
+  if (!streamProxy) {
+    try {
+      const urlObj = new URL(targetUrl);
+      const baked = urlObj.searchParams.get("nebula_proxy");
+      if (baked) {
+        streamProxy = baked;
+        urlObj.searchParams.delete("nebula_proxy");
+        targetUrl = urlObj.href;
+      }
+    } catch {}
+  }
 
   console.log(`[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`);
 
