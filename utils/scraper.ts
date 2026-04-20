@@ -62,6 +62,8 @@ export interface ScrapeResult {
     qualityTag: string;
     /** Resolution parsed from the release filename: 4K | 1080p | 720p | 480p | UNKNOWN */
     resolution: string;
+    /** The actual proxy URL used for the scrape (if any) — needed for manifest/heartbeat consistency. */
+    proxyUsed?: string;
 }
 
 export interface HeartbeatSession {
@@ -73,6 +75,8 @@ export interface HeartbeatSession {
     pingReferer: string;
     /** Serialized cookies from the scrape session — attached to every ping. */
     cookieJar: CookieJar;
+    /** Optional proxy URL to use for the heartbeat (MUST match the scrape IP). */
+    proxyUrl?: string;
 }
 
 // ── Heartbeat Manager ───────────────────────────────────────────────────────
@@ -88,8 +92,9 @@ const activeHeartbeats = new Map<string, NodeJS.Timeout>();
  *
  * @param sessionId  Unique key (use tmdbId) — used to cancel the loop later.
  * @param session    HeartbeatSession returned by scrapeVsembed().
+ * @param proxyUrl   (Optional) The proxy used for the initial scrape.
  */
-export function startHeartbeat(sessionId: string, session: HeartbeatSession): void {
+export function startHeartbeat(sessionId: string, session: HeartbeatSession, proxyUrl?: string): void {
     if (!session.pingUrl) {
         console.log(`[HEARTBEAT] No ping URL found for session ${sessionId}. Skipping.`);
         return;
@@ -101,8 +106,17 @@ export function startHeartbeat(sessionId: string, session: HeartbeatSession): vo
     const ping = async () => {
         try {
             // Use http-cookie-agent for heartbeat too
-            const httpAgent = new HttpCookieAgent({ jar: session.cookieJar });
-            const httpsAgent = new HttpsCookieAgent({ jar: session.cookieJar });
+            const agentOptions: any = { jar: session.cookieJar };
+            
+            // If a proxy was used for the scrape, the heartbeat MUST use it too
+            // to maintain IP consistency on the CDN.
+            const actualProxy = proxyUrl || session.proxyUrl;
+            if (actualProxy) {
+                agentOptions.agent = new HttpsProxyAgent(actualProxy);
+            }
+
+            const httpAgent = new HttpCookieAgent(agentOptions);
+            const httpsAgent = new HttpsCookieAgent(agentOptions);
             const client = axios.create({ httpAgent, httpsAgent });
 
             await client.get(session.pingUrl!, {
@@ -453,11 +467,13 @@ export async function scrapeVsembed(
         source: 'vsembed-cloudnestra',
         qualityTag,
         resolution,
+        proxyUsed: proxyUrl,
         session: {
             pingUrl,
             pingParams,
             pingReferer: CLOUDNESTRA_HOST + '/',
             cookieJar: jar,
+            proxyUrl: proxyUrl,
         },
     };
 }

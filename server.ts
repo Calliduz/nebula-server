@@ -47,6 +47,25 @@ function getRandomProxy(): string | undefined {
   return proxyPool[Math.floor(Math.random() * proxyPool.length)];
 }
 
+/**
+ * Generates a sticky session URL for the residential proxy.
+ * This ensures that L1 (Router), L2 (Wrapper), and Heartbeat all use the same IP.
+ */
+function getStickyProxy(baseUrl: string | undefined): string | undefined {
+  if (!baseUrl) return undefined;
+  try {
+    const url = new URL(baseUrl);
+    // Append sessid if it's a rotating proxy (containing 'flux' or similar)
+    if (url.username && !url.username.includes("sessid")) {
+      const sessionId = Math.random().toString(36).substring(2, 10);
+      url.username = `${url.username}-sessid-${sessionId}-sesstime-5`;
+    }
+    return url.href;
+  } catch (e) {
+    return baseUrl;
+  }
+}
+
 loadProxyPool();
 // Optional: Auto-reload every 30 mins
 setInterval(loadProxyPool, 30 * 60 * 1000);
@@ -135,13 +154,14 @@ app.get("/api/stream", async (req, res) => {
 
     // 2. Run the 4-layer vsembed → cloudnestra → m3u8 scraper
     let prioritizedProxy = (RESIDENTIAL_PROXY && (Date.now() > residentialProxyCooldown)) 
-      ? RESIDENTIAL_PROXY 
+      ? getStickyProxy(RESIDENTIAL_PROXY)
       : getRandomProxy();
       
     let result;
 
     try {
-      console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST}${prioritizedProxy ? ` (Proxy: ${prioritizedProxy === RESIDENTIAL_PROXY ? 'RESIDENTIAL' : prioritizedProxy})` : ""}`);
+      const proxyLabel = prioritizedProxy === RESIDENTIAL_PROXY ? 'RESIDENTIAL' : (prioritizedProxy?.includes('sessid') ? 'RESIDENTIAL-STICKY' : (prioritizedProxy || 'NONE'));
+      console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST} (Proxy: ${proxyLabel})`);
       result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode, prioritizedProxy);
     } catch (error: any) {
       // ── Fallback Tier ──────────────────────────────────────────────────────
@@ -182,10 +202,19 @@ app.get("/api/stream", async (req, res) => {
     ).catch(() => null);
 
     // 4. Start heartbeat ping loop to keep the stream alive for 60s intervals
-    startHeartbeat(tmdbId, result.session);
+    startHeartbeat(tmdbId, result.session, result.proxyUsed);
 
     console.log(`[STREAM] ✔ Success via ${sourceName} [${result.qualityTag} ${result.resolution}]: ${extractedUrl.substring(0, 80)}...`);
-    return res.json({ streamUrl: extractedUrl, source: sourceName, qualityTag: result.qualityTag, resolution: result.resolution });
+    
+    // Add the proxy used to the streamUrl so the HLS proxy can use it for the manifest.
+    let streamUrl = extractedUrl;
+    if (result.proxyUsed) {
+      const urlObj = new URL(extractedUrl);
+      urlObj.searchParams.set("nebula_proxy", result.proxyUsed);
+      streamUrl = urlObj.href;
+    }
+
+    return res.json({ streamUrl, source: sourceName, qualityTag: result.qualityTag, resolution: result.resolution });
 
   } catch (error: any) {
     console.error(`[STREAM] ✘ Failed for tmdbId=${tmdbId}: ${error.message}`);
@@ -312,12 +341,32 @@ app.get("/api/proxy/stream", async (req, res) => {
   try { targetUrl = decodeURIComponent(raw); }
   catch { return res.status(400).send("Invalid url encoding"); }
 
+  // Extract optional proxy baked into the URL by nebula-server
+  let streamProxy: string | undefined;
   try {
-    const upstream = await axios.get(targetUrl, {
+    const urlObj = new URL(targetUrl);
+    streamProxy = urlObj.searchParams.get("nebula_proxy") || undefined;
+    urlObj.searchParams.delete("nebula_proxy");
+    targetUrl = urlObj.href;
+  } catch {}
+
+  try {
+    const config: any = {
       headers: cdnHeaders(),
       responseType: "text",
       timeout: 15000,
-    });
+    };
+
+    // Use the proxy for the manifest if one was used for the scrape (satisfies CDN IP check)
+    if (streamProxy) {
+      const { HttpCookieAgent, HttpsCookieAgent } = require("http-cookie-agent/http");
+      const { HttpsProxyAgent } = require("https-proxy-agent");
+      const agent = new HttpsProxyAgent(streamProxy);
+      config.httpAgent = new HttpCookieAgent({ agent });
+      config.httpsAgent = new HttpsCookieAgent({ agent });
+    }
+
+    const upstream = await axios.get(targetUrl, config);
 
     const manifest: string = upstream.data;
     // Rewrite every URL in the manifest through our proxy
