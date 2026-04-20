@@ -119,22 +119,29 @@ export function startHeartbeat(
 
   const ping = async () => {
     try {
-      // Use http-cookie-agent for heartbeat too
-      const agentOptions: any = { cookies: { jar: session.cookieJar } };
-
-      // If a proxy was used for the scrape, the heartbeat MUST use it too
-      // to maintain IP consistency on the CDN.
+      // Build the correct agent: proxy + cookies must be composed together.
+      // WRONG pattern: new HttpCookieAgent({ agent: new HttpsProxyAgent(...) })
+      //   — HttpCookieAgent ignores the nested .agent property, proxy is silently dropped.
+      // CORRECT pattern: createCookieAgent(HttpsProxyAgent) — same as createSession().
       const rawProxy = proxyUrl || session.proxyUrl;
+      let httpAgent: any;
+      let httpsAgent: any;
+
       if (rawProxy) {
-        // Sanitize: strip trailing slash which can break the proxy provider mapping
-        const sanitizedProxy = rawProxy.endsWith("/")
-          ? rawProxy.slice(0, -1)
-          : rawProxy;
-        agentOptions.agent = new HttpsProxyAgent(sanitizedProxy);
+        const sanitizedProxy = rawProxy.endsWith("/") ? rawProxy.slice(0, -1) : rawProxy;
+        const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
+        const proxyAgent = new HttpsCookieProxyAgent(sanitizedProxy, {
+          cookies: { jar: session.cookieJar as any },
+        });
+        // Use the same composed agent for both HTTP and HTTPS
+        httpAgent = proxyAgent;
+        httpsAgent = proxyAgent;
+      } else {
+        // No proxy — still send cookies via plain cookie agents
+        httpAgent = new HttpCookieAgent({ cookies: { jar: session.cookieJar as any } });
+        httpsAgent = new HttpsCookieAgent({ cookies: { jar: session.cookieJar as any } });
       }
 
-      const httpAgent = new HttpCookieAgent(agentOptions);
-      const httpsAgent = new HttpsCookieAgent(agentOptions);
       const client = axios.create({ httpAgent, httpsAgent });
 
       await client.get(session.pingUrl!, {

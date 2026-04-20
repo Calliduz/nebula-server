@@ -325,13 +325,14 @@ app.post("/api/stream/flush", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CDN_REFERER = "https://cloudnestra.com/";
-const PROXY_UA    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 function cdnHeaders(referer = CDN_REFERER) {
   return {
     "User-Agent": UA,
     "Referer":    referer,
     "Origin":     new URL(referer).origin,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
   };
 }
 
@@ -353,6 +354,8 @@ app.get("/api/proxy/stream", async (req, res) => {
     targetUrl = urlObj.href;
   } catch {}
 
+  console.log(`[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`);
+
   try {
     const config: any = {
       headers: cdnHeaders(),
@@ -367,6 +370,9 @@ app.get("/api/proxy/stream", async (req, res) => {
       const agent = new JarlessHttpsCookieProxyAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
       config.httpAgent = agent;
       config.httpsAgent = agent;
+      console.log(`[PROXY/stream] Using residential proxy: ${safeProxy.substring(0, 40)}...`);
+    } else {
+      console.log(`[PROXY/stream] ⚠ No proxy — CDN may reject if IP differs from scrape`);
     }
 
     const upstream = await axios.get(targetUrl, config);
@@ -413,10 +419,15 @@ app.get("/api/proxy/stream", async (req, res) => {
     return res.send(proxified);
 
   } catch (e: any) {
-    console.error(`[PROXY] manifest error: ${e.message}`);
+    const status = e?.response?.status ?? "no-response";
+    const body = String(e?.response?.data ?? "").substring(0, 200);
+    const url = targetUrl.substring(0, 100);
+    console.error(`[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${url}`);
+    if (body) console.error(`[PROXY/stream] CDN response: ${body}`);
     return res.status(502).send("Proxy upstream error");
   }
 });
+
 
 // Proxy: raw segment / AES key — pass-through binary stream (NO residential proxy — segments are CDN-direct to preserve data limits)
 app.get("/api/proxy/segment", async (req, res) => {
