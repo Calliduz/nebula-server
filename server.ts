@@ -375,7 +375,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     const config: any = {
       headers: cdnHeaders(),
       responseType: "text",
-      timeout: 15000,
+      timeout: 25000,
     };
 
     // Use the proxy for the manifest if one was used for the scrape (satisfies CDN IP check)
@@ -444,7 +444,8 @@ app.get("/api/proxy/stream", async (req, res) => {
 });
 
 
-// Proxy: raw segment / AES key — pass-through binary stream (NO residential proxy — segments are CDN-direct to preserve data limits)
+// Proxy: raw segment / AES key — pass-through binary stream
+// Uses residential proxy only when nebula_proxy is passed (IP-auth CDNs like roilandrelic.website)
 app.get("/api/proxy/segment", async (req, res) => {
   const raw = req.query.url as string;
   if (!raw) return res.status(400).send("Missing url");
@@ -453,24 +454,58 @@ app.get("/api/proxy/segment", async (req, res) => {
   try { targetUrl = decodeURIComponent(raw); }
   catch { return res.status(400).send("Invalid url encoding"); }
 
-  try {
-    const upstream = await axios.get(targetUrl, {
+  // Read the proxy param if the manifest rewriter passed one
+  const rawProxy = req.query.nebula_proxy as string | undefined;
+  let segProxy: string | undefined;
+  if (rawProxy) {
+    try { segProxy = decodeURIComponent(rawProxy); } catch {}
+  }
+
+  const buildSegmentConfig = (useProxy: boolean) => {
+    const cfg: any = {
       headers: cdnHeaders(),
       responseType: "arraybuffer",
       timeout: 30000,
-    });
+    };
+    if (useProxy && segProxy) {
+      const safeProxy = segProxy.endsWith("/") ? segProxy.slice(0, -1) : segProxy;
+      const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
+      const agent = new HttpsCookieProxyAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
+      cfg.httpAgent = agent;
+      cfg.httpsAgent = agent;
+    }
+    return cfg;
+  };
 
+  // Try direct first (saves proxy data). If 403 AND proxy available, retry through proxy.
+  try {
+    const upstream = await axios.get(targetUrl, buildSegmentConfig(false));
     const ct = upstream.headers["content-type"] || "video/mp2t";
     res.setHeader("Content-Type", ct);
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=3600");
     return res.send(Buffer.from(upstream.data));
-
-  } catch (e: any) {
-    console.error(`[PROXY] segment error: ${targetUrl.substring(0, 80)} — ${e.message}`);
+  } catch (directErr: any) {
+    const directStatus = directErr?.response?.status;
+    // Only retry through proxy on auth errors (403/401) when a proxy is available
+    if (segProxy && (directStatus === 403 || directStatus === 401)) {
+      try {
+        const upstream = await axios.get(targetUrl, buildSegmentConfig(true));
+        const ct = upstream.headers["content-type"] || "video/mp2t";
+        res.setHeader("Content-Type", ct);
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.send(Buffer.from(upstream.data));
+      } catch (proxyErr: any) {
+        console.error(`[PROXY] segment error (proxy fallback): ${targetUrl.substring(0, 80)} — ${proxyErr.message}`);
+        return res.status(502).send("Proxy segment error");
+      }
+    }
+    console.error(`[PROXY] segment error: ${targetUrl.substring(0, 80)} — ${directErr.message}`);
     return res.status(502).send("Proxy segment error");
   }
 });
+
 
 app.post("/api/cache/clear", async (req, res) => {
   try {
