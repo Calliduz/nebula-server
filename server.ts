@@ -6,7 +6,10 @@ import axios from "axios";
 import fs from "fs";
 import { MetadataCache, StreamCache, SubtitleCache } from "./models/Cache.js";
 import { getSubtitles } from "./utils/subtitles.js";
-import { scrapeVsembed, startHeartbeat, stopHeartbeat } from "./utils/scraper.js";
+import { scrapeVsembed, startHeartbeat, stopHeartbeat, UA } from "./utils/scraper.js";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { HttpCookieAgent, HttpsCookieAgent, createCookieAgent } from "http-cookie-agent/http";
+import { CookieJar } from "tough-cookie";
 
 // Load Environment Variables
 dotenv.config();
@@ -36,7 +39,7 @@ function loadProxyPool() {
     try {
       proxyPool = JSON.parse(fs.readFileSync(PROXIES_FILE, "utf-8"));
       console.log(`[PROXY] Pool loaded: ${proxyPool.length} proxies available.`);
-    } catch (e) {
+    } catch (e: any) {
       console.error(`[PROXY] Failed to parse ${PROXIES_FILE}:`, e.message);
     }
   }
@@ -202,14 +205,14 @@ app.get("/api/stream", async (req, res) => {
     ).catch(() => null);
 
     // 4. Start heartbeat ping loop to keep the stream alive for 60s intervals
-    startHeartbeat(tmdbId, result.session, result.proxyUsed);
+    startHeartbeat(tmdbId, result.session, result.proxyUsed, req.ip);
 
-    console.log(`[STREAM] ✔ Success via ${sourceName} [${result.qualityTag} ${result.resolution}]: ${extractedUrl.substring(0, 80)}...`);
+    console.log(`[STREAM] ✔ Success via ${sourceName} [${result.qualityTag} ${result.resolution}]: ${(extractedUrl ?? "").substring(0, 80)}...`);
     
     // Add the proxy used to the streamUrl so the HLS proxy can use it for the manifest.
     let streamUrl = extractedUrl;
-    if (result.proxyUsed) {
-      const urlObj = new URL(extractedUrl);
+    if (result.proxyUsed && streamUrl) {
+      const urlObj = new URL(streamUrl);
       urlObj.searchParams.set("nebula_proxy", result.proxyUsed);
       streamUrl = urlObj.href;
     }
@@ -290,7 +293,7 @@ app.get("/api/subtitles", async (req, res) => {
 app.get("/api/stream/stop", (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   if (!tmdbId) return res.status(400).json({ error: "Missing tmdbId" });
-  stopHeartbeat(tmdbId);
+  stopHeartbeat(tmdbId, req.ip);
   return res.json({ ok: true });
 });
 
@@ -326,7 +329,7 @@ const PROXY_UA    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 
 function cdnHeaders(referer = CDN_REFERER) {
   return {
-    "User-Agent": PROXY_UA,
+    "User-Agent": UA,
     "Referer":    referer,
     "Origin":     new URL(referer).origin,
   };
@@ -359,11 +362,11 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     // Use the proxy for the manifest if one was used for the scrape (satisfies CDN IP check)
     if (streamProxy) {
-      const { HttpCookieAgent, HttpsCookieAgent } = require("http-cookie-agent/http");
-      const { HttpsProxyAgent } = require("https-proxy-agent");
-      const agent = new HttpsProxyAgent(streamProxy);
-      config.httpAgent = new HttpCookieAgent({ agent });
-      config.httpsAgent = new HttpsCookieAgent({ agent });
+      const safeProxy = streamProxy.endsWith("/") ? streamProxy.slice(0, -1) : streamProxy;
+      const JarlessHttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
+      const agent = new JarlessHttpsCookieProxyAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
+      config.httpAgent = agent;
+      config.httpsAgent = agent;
     }
 
     const upstream = await axios.get(targetUrl, config);
@@ -377,15 +380,17 @@ app.get("/api/proxy/stream", async (req, res) => {
         if (!trimmed || trimmed.startsWith("#")) {
           // Rewrite URI= attributes inside tags (e.g. #EXT-X-KEY:URI="...")
           return line.replace(/URI="([^"]+)"/g, (_match, uri) => {
-            const abs = new URL(uri, targetUrl).href;
+            const abs = new URL(uri, targetUrl!).href;
             return `URI="/api/proxy/segment?url=${encodeURIComponent(abs)}"`;
           });
         }
         // Segment lines / variant playlist lines
-        const abs = new URL(trimmed, targetUrl).href;
-        const ext = trimmed.split("?")[0];
+        const variantUrl = trimmed.trim();
+        if (!variantUrl || !targetUrl) return "";
+        const abs = new URL(variantUrl, targetUrl!).href;
+        const extMatch = (variantUrl.split("?")[0] || "").split(".").pop() || "";
         // .m3u8 sub-playlists go through /stream, .ts/.aac go through /segment
-        if (ext.endsWith(".m3u8")) {
+        if (extMatch === "m3u8") {
           return `/api/proxy/stream?url=${encodeURIComponent(abs)}`;
         }
         return `/api/proxy/segment?url=${encodeURIComponent(abs)}`;
@@ -453,8 +458,10 @@ app.get("/api/metadata", async (req, res) => {
     const combos = isBatch.split(",").filter((id) => id.trim());
     const results = await Promise.all(
       combos.map(async (combo) => {
-        const [id, type] = combo.split(":");
-        const meta = await getFanartMetadata(id, (type as any) || "movie");
+        const parts = combo.split(":");
+        const id = parts[0] || "";
+        const subType = parts[1] || "movie";
+        const meta = await getFanartMetadata(id, (subType as any) || "movie");
         return { id, ...meta };
       }),
     );
