@@ -372,6 +372,16 @@ app.get("/api/proxy/stream", async (req, res) => {
     const upstream = await axios.get(targetUrl, config);
 
     const manifest: string = upstream.data;
+
+    // Build a helper that appends the proxy to a rewritten URL so every
+    // sub-playlist / segment request goes through the same residential IP.
+    const withProxy = (endpoint: string, encodedUrl: string) => {
+      if (streamProxy) {
+        return `${endpoint}?url=${encodedUrl}&nebula_proxy=${encodeURIComponent(streamProxy!)}`;
+      }
+      return `${endpoint}?url=${encodedUrl}`;
+    };
+
     // Rewrite every URL in the manifest through our proxy
     const proxified = manifest
       .split("\n")
@@ -381,7 +391,7 @@ app.get("/api/proxy/stream", async (req, res) => {
           // Rewrite URI= attributes inside tags (e.g. #EXT-X-KEY:URI="...")
           return line.replace(/URI="([^"]+)"/g, (_match, uri) => {
             const abs = new URL(uri, targetUrl!).href;
-            return `URI="/api/proxy/segment?url=${encodeURIComponent(abs)}"`;
+            return `URI="${withProxy("/api/proxy/segment", encodeURIComponent(abs))}"`;
           });
         }
         // Segment lines / variant playlist lines
@@ -391,9 +401,9 @@ app.get("/api/proxy/stream", async (req, res) => {
         const extMatch = (variantUrl.split("?")[0] || "").split(".").pop() || "";
         // .m3u8 sub-playlists go through /stream, .ts/.aac go through /segment
         if (extMatch === "m3u8") {
-          return `/api/proxy/stream?url=${encodeURIComponent(abs)}`;
+          return withProxy("/api/proxy/stream", encodeURIComponent(abs));
         }
-        return `/api/proxy/segment?url=${encodeURIComponent(abs)}`;
+        return withProxy("/api/proxy/segment", encodeURIComponent(abs));
       })
       .join("\n");
 
@@ -417,12 +427,29 @@ app.get("/api/proxy/segment", async (req, res) => {
   try { targetUrl = decodeURIComponent(raw); }
   catch { return res.status(400).send("Invalid url encoding"); }
 
+  // Extract optional proxy — passed forward from the manifest rewriter
+  let segmentProxy: string | undefined;
+  const rawProxy = req.query.nebula_proxy as string | undefined;
+  if (rawProxy) {
+    try { segmentProxy = decodeURIComponent(rawProxy); } catch {}
+  }
+
   try {
-    const upstream = await axios.get(targetUrl, {
+    const config: any = {
       headers: cdnHeaders(),
       responseType: "arraybuffer",
       timeout: 30000,
-    });
+    };
+
+    if (segmentProxy) {
+      const safeProxy = segmentProxy.endsWith("/") ? segmentProxy.slice(0, -1) : segmentProxy;
+      const JarlessAgent = createCookieAgent(HttpsProxyAgent);
+      const agent = new JarlessAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
+      config.httpAgent = agent;
+      config.httpsAgent = agent;
+    }
+
+    const upstream = await axios.get(targetUrl, config);
 
     const ct = upstream.headers["content-type"] || "video/mp2t";
     res.setHeader("Content-Type", ct);
