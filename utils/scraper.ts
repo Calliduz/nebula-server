@@ -20,8 +20,8 @@
  */
 
 import axios from 'axios';
-import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
+import { HttpCookieAgent, HttpsCookieAgent, createCookieAgent } from 'http-cookie-agent/http';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -100,7 +100,11 @@ export function startHeartbeat(sessionId: string, session: HeartbeatSession): vo
 
     const ping = async () => {
         try {
-            const client = wrapper(axios.create({ jar: session.cookieJar }));
+            // Use http-cookie-agent for heartbeat too
+            const httpAgent = new HttpCookieAgent({ jar: session.cookieJar });
+            const httpsAgent = new HttpsCookieAgent({ jar: session.cookieJar });
+            const client = axios.create({ httpAgent, httpsAgent });
+
             await client.get(session.pingUrl!, {
                 params: session.pingParams,
                 headers: {
@@ -111,8 +115,8 @@ export function startHeartbeat(sessionId: string, session: HeartbeatSession): vo
                 timeout: 8000,
             });
             console.log(`[HEARTBEAT] ♥ Ping sent for session ${sessionId}`);
-        } catch {
-            // Silent — a failed ping is non-fatal, the loop continues
+        } catch (e: any) {
+            console.error(`[HEARTBEAT] Ping failed: ${e.message}`);
         }
     };
 
@@ -217,8 +221,9 @@ function parseQualityFromFilename(playerHtml: string): { qualityTag: string; res
 
 /**
  * Creates a new axios instance with a shared CookieJar and optional proxy.
+ * Uses http-cookie-agent to combine both functionalities.
  */
-function createSession(proxyUrl?: string): { client: ReturnType<typeof wrapper>, jar: CookieJar } {
+function createSession(proxyUrl?: string): { client: typeof axios, jar: CookieJar } {
     const jar = new CookieJar();
     
     let httpAgent;
@@ -226,40 +231,61 @@ function createSession(proxyUrl?: string): { client: ReturnType<typeof wrapper>,
 
     if (proxyUrl) {
         if (proxyUrl.startsWith('socks')) {
-            httpsAgent = new SocksProxyAgent(proxyUrl);
+            const BaseAgent = SocksProxyAgent;
+            const CookieSocksAgent = createCookieAgent(BaseAgent);
+            // http-cookie-agent-created classes take (agentOptions, { jar })
+            httpsAgent = new CookieSocksAgent(proxyUrl, { jar });
             httpAgent = httpsAgent;
         } else {
-            httpAgent = new HttpProxyAgent(proxyUrl);
-            httpsAgent = new HttpsProxyAgent(proxyUrl);
+            const HttpCookieProxyAgent = createCookieAgent(HttpProxyAgent);
+            const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
+            
+            // For standard HTTP/HTTPS proxies, pass options object explicitly if string fails
+            httpAgent = new HttpCookieProxyAgent(proxyUrl, { jar });
+            httpsAgent = new HttpsCookieProxyAgent(proxyUrl, { jar });
         }
+    } else {
+        // No proxy, still need cookie support
+        httpAgent = new HttpCookieAgent({ jar });
+        httpsAgent = new HttpsCookieAgent({ jar });
     }
 
-    const client = wrapper(axios.create({
-        jar,
-        withCredentials: true,
-        timeout: 15000, // Slightly longer timeout when using proxies
+    const client = axios.create({
+        timeout: 20000, // 20s for residential/free proxy latency
         responseType: 'text',
         maxRedirects: 5,
         httpAgent,
         httpsAgent,
-    }));
+    });
+
     return { client, jar };
 }
 
 function buildHeaders(referer: string, extra: Record<string, string> = {}): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
         'User-Agent': UA,
-        'Referer': referer,
-        'Origin': new URL(referer).origin,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'iframe',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
         ...extra,
     };
+
+    if (referer) {
+        headers['Referer'] = referer;
+        // Only add Origin for POST requests or cross-site navigations that require it
+        // For simple GET, it can be a fingerprinting signal if mismatched
+    }
+
+    return headers;
 }
 
 // ── Main Pipeline ───────────────────────────────────────────────────────────
@@ -274,8 +300,13 @@ export async function scrapeVsembed(
     season = 1,
     episode = 1,
     proxyUrl?: string
-): Promise<ScrapeResult[]> {
+): Promise<ScrapeResult> {
+    console.log(`[SCRAPER] scrapeVsembed called with: tmdbId=${tmdbId}, kind=${kind}, embedHost=${embedHost}, proxyUrl=${proxyUrl}`);
     const { client, jar } = createSession(proxyUrl);
+    
+    if (!embedHost) {
+        throw new Error('embedHost is undefined in scrapeVsembed');
+    }
     const cleanEmbedHost = embedHost.replace(/\/$/, '');
 
     // ── Layer 1: The Router ────────────────────────────────────────────────
@@ -287,7 +318,7 @@ export async function scrapeVsembed(
 
     console.log(`[SCRAPER] L1 Router  → ${routerUrl}`);
     const routerRes = await client.get(routerUrl, {
-        headers: buildHeaders(cleanEmbedHost + '/'),
+        headers: buildHeaders(''), // No referer for the first hop
     });
     const routerHtml: string = routerRes.data;
 

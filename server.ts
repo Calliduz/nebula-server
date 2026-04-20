@@ -23,6 +23,10 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 // VidSrc embed host — swap VIDSRC_EMBED_HOST in .env if the domain changes
 const VIDSRC_EMBED_HOST = (process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru").replace(/\/$/, "");
 
+// Residential Proxy Fallback
+const RESIDENTIAL_PROXY = process.env.RESIDENTIAL_PROXY;
+let residentialProxyCooldown = 0;
+
 // ── Proxy Management ────────────────────────────────────────────────────────
 const PROXIES_FILE = "./proxies_verified.json";
 let proxyPool: string[] = [];
@@ -130,9 +134,33 @@ app.get("/api/stream", async (req, res) => {
     }
 
     // 2. Run the 4-layer vsembed → cloudnestra → m3u8 scraper
-    const scraperProxy = getRandomProxy();
-    console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST}${scraperProxy ? ` (Proxy: ${scraperProxy})` : ""}`);
-    const result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode, scraperProxy);
+    let prioritizedProxy = (RESIDENTIAL_PROXY && (Date.now() > residentialProxyCooldown)) 
+      ? RESIDENTIAL_PROXY 
+      : getRandomProxy();
+      
+    let result;
+
+    try {
+      console.log(`[STREAM] Scraping "${title}" (${kind}) tmdbId=${tmdbId} S${season}E${episode} via ${VIDSRC_EMBED_HOST}${prioritizedProxy ? ` (Proxy: ${prioritizedProxy === RESIDENTIAL_PROXY ? 'RESIDENTIAL' : prioritizedProxy})` : ""}`);
+      result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode, prioritizedProxy);
+    } catch (error: any) {
+      // ── Fallback Tier ──────────────────────────────────────────────────────
+      const isFallbackPossible = prioritizedProxy === RESIDENTIAL_PROXY; // If we tried residential first, fallback to pool
+      
+      if (isFallbackPossible) {
+        const fallbackProxy = getRandomProxy();
+        console.warn(`[STREAM] Residential Proxy FAILED (${error.message}). Falling back to Pool Proxy...`);
+        try {
+          result = await scrapeVsembed(tmdbId, kind, VIDSRC_EMBED_HOST, season, episode, fallbackProxy);
+          console.log(`[STREAM] Pool Fallback SUCCESS!`);
+        } catch (poolError: any) {
+          console.error(`[STREAM] Pool Proxy ALSO FAILED: ${poolError.message}`);
+          throw poolError;
+        }
+      } else {
+        throw error;
+      }
+    }
 
     // Use the first (best) stream URL
     const extractedUrl = result.streams[0];
