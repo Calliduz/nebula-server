@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
 import fs from "fs";
-import { MetadataCache, StreamCache, SubtitleCache } from "./models/Cache.js";
+import { MetadataCache, StreamCache, SubtitleCache, DiscoveryCache, DramaDetailCache } from "./models/Cache.js";
 import { getSubtitles } from "./utils/subtitles.js";
 import { 
   scrapeVsembed, 
@@ -33,6 +33,7 @@ app.use(express.json());
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/nebula-local";
 const FANART_API_KEY = process.env.FANART_API_KEY || "";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
+const ADMIN_KEY = process.env.ADMIN_KEY || "nebula-admin-2026";
 
 // VidSrc embed host — swap VIDSRC_EMBED_HOST in .env if the domain changes
 const VIDSRC_EMBED_HOST = (process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru").replace(/\/$/, "");
@@ -178,53 +179,87 @@ app.get("/api/stream", async (req, res) => {
     let proxyUsed: string | undefined = undefined;
 
     // ── Tier 0: Extreme Fast Path (KissKH API) ──────────────────────────
-    // This is our #1 priority because it is pure API (No browser/RAM needed in most cases)
     console.log(`[STREAM] Phase 0: Checking KissKH (Extreme Fast Path)...`);
     try {
+      const origin = req.query.origin as string;
       const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
       const titleNorm = normalize(title);
-      const searchQuery = (kind === 'tv') ? `${title} Season ${season}` : title;
-      const queryNorm = normalize(searchQuery);
+      
+      let match: any = null;
 
-      console.log(`[STREAM] KissKH Query: "${searchQuery}" (Normalized: "${queryNorm}")`);
-      
-      let kisskhResults = await KissKHScraper.search(searchQuery, true); // Try Hollywood first
-      if (kisskhResults.length === 0) {
-        kisskhResults = await KissKHScraper.search(title, true); // Try just title in Hollywood
-      }
-      if (kisskhResults.length === 0) {
-        kisskhResults = await KissKHScraper.search(searchQuery, false); // Fallback to ALL
-      }
-      
-      // Strict Normalized Matching
-      let match = kisskhResults.find(d => {
-        const dNorm = normalize(d.title);
-        // For TV, the result title should contain both the title and the season number normalized
-        if (kind === 'tv') {
-          return dNorm.includes(titleNorm) && dNorm.includes(normalize(`Season ${season}`));
+      if (origin === 'kisskh') {
+        console.log(`[STREAM] KissKH origin detected. Using ID ${tmdbId} directly.`);
+        match = { id: parseInt(tmdbId), title: title };
+      } else {
+        const searchQuery = (kind === 'tv') ? `${title} Season ${season}` : title;
+        const queryNorm = normalize(searchQuery);
+
+        console.log(`[STREAM] KissKH Query: "${searchQuery}" (Normalized: "${queryNorm}")`);
+        
+        let kisskhResults = await KissKHScraper.search(searchQuery, true); // Try Hollywood first
+        if (kisskhResults.length === 0) {
+          kisskhResults = await KissKHScraper.search(title, true); // Try just title
         }
-        return dNorm === titleNorm || dNorm.includes(titleNorm);
-      });
+        if (kisskhResults.length === 0) {
+          kisskhResults = await KissKHScraper.search(title, false); // Fallback to ALL
+        }
+        
+        // Flexible Matching
+        match = kisskhResults.find(d => {
+          const dNorm = normalize(d.title);
+          if (kind === 'tv') {
+            // Match title AND (Season X OR just title if no season-specific results exist)
+            const matchesTitle = dNorm.includes(titleNorm);
+            const matchesSeason = dNorm.includes(normalize(`Season ${season}`));
+            return matchesTitle && (matchesSeason || kisskhResults.length === 1);
+          }
+          return dNorm === titleNorm || dNorm.includes(titleNorm);
+        });
+      }
       
       if (match) {
         console.log(`[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`);
-        const detail = await KissKHScraper.getDramaDetail(match.id);
         
-        // Fix: Use the requested episode number for TV shows, even if KissKH labels them as "Hollywood"
+        // Check Detail Cache
+        let detail: any = null;
+        const cachedDetail = await DramaDetailCache.findOne({ dramaId: match.id });
+        if (cachedDetail) {
+          console.log(`[STREAM] KissKH Detail Cache HIT for ID ${match.id}`);
+          detail = cachedDetail.detail;
+        } else {
+          console.log(`[STREAM] KissKH Detail Cache MISS. Fetching...`);
+          detail = await KissKHScraper.getDramaDetail(match.id);
+          if (detail) {
+            const exp = new Date();
+            exp.setHours(exp.getHours() + 12);
+            await DramaDetailCache.findOneAndUpdate(
+              { dramaId: match.id },
+              { detail, expiresAt: exp },
+              { upsert: true }
+            ).catch(() => null);
+          }
+        }
+
+        if (!detail) throw new Error("Could not fetch drama details from KissKH");
+        
         const targetEpNum = (kind === 'movie') ? 0 : episode;
-        const ep = detail.episodes.find((e: any) => parseFloat(e.number) === parseFloat(targetEpNum.toString()));
+        const ep = detail.episodes.find((e: any) => {
+          const epNum = parseFloat(e.number);
+          const reqNum = parseFloat(targetEpNum.toString());
+          return epNum === reqNum || (reqNum === 1 && epNum === 0); // Handle "Episode 0" specials
+        });
         
         if (ep) {
           const kisskhMirrors = await KissKHScraper.getStream(match.id, ep.id);
           if (kisskhMirrors.length > 0) {
-            console.log(`[STREAM] Phase 0 SUCCESS ✔ KissKH found stream: ${kisskhMirrors[0].url.substring(0, 50)}...`);
+            console.log(`[STREAM] Phase 0 SUCCESS ✔ KissKH found stream`);
             mirrors.push(...kisskhMirrors);
           }
         } else {
-          console.warn(`[STREAM] KissKH: Episode ${episode} not found in episode list for ${match.title}.`);
+          console.warn(`[STREAM] KissKH: Episode ${episode} not found. Available: ${detail.episodes.length} eps.`);
         }
       } else {
-        console.warn(`[STREAM] KissKH: No title match found for "${searchQuery}" in ${kisskhResults.length} results.`);
+        console.warn(`[STREAM] KissKH: No title match found for "${title}".`);
       }
     } catch (e: any) {
       console.warn(`[STREAM] Phase 0 KissKH Error: ${e.message}`);
@@ -599,10 +634,17 @@ app.get("/api/proxy/segment", async (req, res) => {
 });
 
 
-app.post("/api/cache/clear", async (req, res) => {
+app.all("/api/cache/clear", async (req, res) => {
+  const key = req.headers["x-admin-key"] || req.query.key;
+  if (key !== ADMIN_KEY) return res.status(401).json({ error: "Unauthorized access — specify ?key= in URL" });
+  
   try {
-    await MetadataCache.deleteMany({});
-    console.log("Metadata Cache Flushed Successfully");
+    await Promise.all([
+      MetadataCache.deleteMany({}),
+      DiscoveryCache.deleteMany({}),
+      DramaDetailCache.deleteMany({})
+    ]);
+    console.log("Registry Cache Flushed Successfully");
     res.json({
       success: true,
       message: "Registry cache cleared successfully.",
@@ -642,24 +684,46 @@ app.get("/api/metadata", async (req, res) => {
   }
 });
 
-// Endpoint: KissKH Drama Discovery
+// Endpoint: KissKH Drama Discovery (with Caching)
 app.get("/api/drama/list", async (req, res) => {
   const type = parseInt(req.query.type as string) || 0;
   const country = parseInt(req.query.country as string) || 0;
   const page = parseInt(req.query.page as string) || 1;
   const order = parseInt(req.query.order as string) || 1;
 
+  const cacheKey = `discover-${country}-${type}-${page}-${order}`;
+
   try {
+    // Check Cache
+    const cached = await DiscoveryCache.findOne({ key: cacheKey });
+    if (cached) {
+      console.log(`[DISCOVERY] Cache HIT for ${cacheKey}`);
+      return res.json({ results: cached.results });
+    }
+
+    console.log(`[DISCOVERY] Cache MISS. Fetching KissKH Explore...`);
     const list = await KissKHScraper.getExploreList(type, country, page, order);
     const results = list.map(d => ({
       id: d.id,
       title: d.title,
       image: d.thumbnail,
       type: 'tv',
-      genre: 'Drama', // Default for this feed
+      genre: 'Drama',
       rating: d.rating,
+      countryId: d.countryId || (country ? parseInt(country) : 0),
+      origin: 'kisskh',
       isDrama: true
     }));
+
+    // Save to Cache (1 hour)
+    const expires = new Date();
+    expires.setHours(expires.getHours() + 1);
+    await DiscoveryCache.findOneAndUpdate(
+      { key: cacheKey },
+      { results, expiresAt: expires },
+      { upsert: true }
+    ).catch(() => null);
+
     return res.json({ results });
   } catch (e: any) {
     console.error(`[DRAMA LIST ERROR] ${e.message}`);
@@ -725,7 +789,14 @@ async function getFanartMetadata(
     () => null,
   );
   if (cached && cached.logoFetchedAt) {
-    return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
+    // If it was fetched more than 24h ago, we might want to retry if logo was null
+    const wasEmpty = !cached.logoUrl;
+    const isOld = Date.now() - new Date(cached.logoFetchedAt).getTime() > 1000 * 60 * 60 * 24;
+    
+    if (!wasEmpty || !isOld) {
+      return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
+    }
+    console.log(`[FANART] Retrying empty/old cache for ${tmdbId}`);
   }
 
   try {
@@ -739,8 +810,28 @@ async function getFanartMetadata(
     const endpoint = type === "tv" ? "tv" : "movies";
     const fanartUrl = `https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`;
 
+    console.log(`[FANART] Fetching for ${type}: ${finalId} -> ${fanartUrl.replace(FANART_API_KEY!, '***')}`);
     let raw = await fetch(fanartUrl);
-    let data = await raw.json();
+    
+    if (!raw.ok) {
+      console.warn(`[FANART] API returned ${raw.status} for ${finalId}`);
+      // Fallback: If TVDB failed or returned 404, try TMDB ID directly as some TV entries exist under TMDB ID on Fanart
+      if (type === "tv" && finalId !== tmdbId) {
+        const tmdbFanartUrl = `https://webservice.fanart.tv/v3/tv/${tmdbId}?api_key=${FANART_API_KEY}`;
+        console.log(`[FANART] Falling back to TMDB ID: ${tmdbId}`);
+        raw = await fetch(tmdbFanartUrl);
+      }
+      
+      if (!raw.ok) return { logoUrl: null, backgroundUrl: null };
+    }
+
+    let data: any = {};
+    try {
+      data = await raw.json();
+    } catch (err) {
+      console.error(`[FANART] Failed to parse JSON for ${finalId}`);
+      return { logoUrl: null, backgroundUrl: null };
+    }
 
     // Secondary Fallback for Movies: IMDB ID
     if (type === "movie" && !data.hdmovielogo && !data.movielogo) {
@@ -760,8 +851,26 @@ async function getFanartMetadata(
 
     const sortByLikes = (arr: any[] = []) =>
       [...arr].sort(
-        (a, b) => (parseInt(b.likes) || 0) - (parseInt(a.likes) || 0),
+        (a, b) => (parseInt(b.likes || b.vote_count) || 0) - (parseInt(a.likes || a.vote_count) || 0),
       );
+
+    // LAST RESORT FALLBACK: TMDB Images (if Fanart has nothing)
+    if (!data.hdtvlogo && !data.clearlogo && !data.hdmovielogo && !data.movielogo) {
+        console.log(`[FANART] No logo on Fanart for ${tmdbId}, trying TMDB fallback...`);
+        try {
+            const tmdbImgUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}/images?include_image_language=en,null`;
+            const tmdbRes = await axios.get(tmdbImgUrl, {
+                headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+            });
+            const tmdbLogos = sortByLikes(tmdbRes.data.logos || []);
+            if (tmdbLogos.length > 0) {
+                hdLogo = `https://image.tmdb.org/t/p/original${tmdbLogos[0].file_path}`;
+                console.log(`[FANART] Found TMDB logo fallback: ${hdLogo}`);
+            }
+        } catch (e) {
+            console.error(`[FANART] TMDB fallback failed for ${tmdbId}`);
+        }
+    }
 
     if (type === "tv") {
       const hdtvlogo = sortByLikes(data.hdtvlogo || []);
@@ -827,6 +936,24 @@ async function getFanartMetadata(
       { logoUrl: hdLogo, backgroundUrl, logoFetchedAt: new Date(), type },
       { upsert: true },
     ).catch(() => null);
+
+    // Final Fallback: If Fanart failed, try TMDB's own image registry for logos
+    if (!hdLogo) {
+      try {
+        const tmdbLogoUrl = `https://api.themoviedb.org/3/${type === 'tv' ? 'tv' : 'movie'}/${tmdbId}/images?include_image_language=en,null`;
+        const tmdbRes = await axios.get(tmdbLogoUrl, {
+          headers: { Authorization: `Bearer ${TMDB_API_KEY}` }
+        });
+        const logos = tmdbRes.data?.logos || [];
+        if (logos.length > 0) {
+          // Sort by vote count or width
+          const bestTmdbLogo = logos.sort((a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0))[0];
+          hdLogo = `https://image.tmdb.org/t/p/original${bestTmdbLogo.file_path}`;
+        }
+      } catch (tmdbErr) {
+        // Silently fail TMDB fallback
+      }
+    }
 
     return { logoUrl: hdLogo, backgroundUrl };
   } catch (e: any) {

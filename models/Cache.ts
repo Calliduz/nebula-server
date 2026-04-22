@@ -53,3 +53,25 @@ const SubtitleCacheSchema = new mongoose.Schema({
 
 SubtitleCacheSchema.index({ tmdbId: 1, type: 1, season: 1, episode: 1 }, { unique: true });
 export const SubtitleCache = mongoose.model('SubtitleCache', SubtitleCacheSchema);
+
+// Discovery Cache (Stores KissKH Explore results)
+const DiscoveryCacheSchema = new mongoose.Schema({
+  key: { type: String, required: true }, // e.g. "discover-8-0-1" (country-type-page)
+  results: { type: Array, default: [] },
+  expiresAt: { type: Date, required: true }
+});
+
+DiscoveryCacheSchema.index({ key: 1 }, { unique: true });
+DiscoveryCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const DiscoveryCache = mongoose.model('DiscoveryCache', DiscoveryCacheSchema);
+
+// Drama Detail Cache (Stores episode lists and metadata)
+const DramaDetailCacheSchema = new mongoose.Schema({
+  dramaId: { type: Number, required: true },
+  detail: { type: Object, required: true },
+  expiresAt: { type: Date, required: true }
+});
+
+DramaDetailCacheSchema.index({ dramaId: 1 }, { unique: true });
+DramaDetailCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const DramaDetailCache = mongoose.model('DramaDetailCache', DramaDetailCacheSchema);
