@@ -17,6 +17,8 @@ class PuppeteerPool {
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', // Corrects crashes on Render's shared memory limit
+                '--disable-gpu',           // Saves RAM by disabling hardware acceleration
                 '--disable-infobars',
                 '--window-position=0,0',
                 '--ignore-certifcate-errors',

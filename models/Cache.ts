@@ -29,6 +29,7 @@ const StreamCacheSchema = new mongoose.Schema({
   source: { type: String },
   qualityTag: { type: String, default: 'UNKNOWN' },
   resolution: { type: String, default: 'UNKNOWN' },
+  mirrors: { type: Array, default: [] }, // Array of { url, source, quality }
   subtitles: { type: Array, default: [] },
   streamExpiresAt: { type: Date },
 });

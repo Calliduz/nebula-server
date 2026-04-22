@@ -91,6 +91,17 @@ export async function hybridFetch(url: string, options: any = {}) {
     const browser = await puppeteerPool.acquire();
     const page = await browser.newPage();
     try {
+        // ── THE BOUNCER: Block heavy/useless resources ──────────────────
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+
         await page.setUserAgent(sessionStore.getHeaders()['User-Agent']);
         if (sessionStore.getHeaders()['Cookie']) {
             const cookies = sessionStore.getHeaders()['Cookie'].split('; ').map((c: string) => {
@@ -99,14 +110,19 @@ export async function hybridFetch(url: string, options: any = {}) {
             });
             await page.setCookie(...cookies).catch(() => {});
         }
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        
+        // ── FAST LOAD: Only wait for DOM, not network ────────────────────
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        
         await page.waitForFunction(() => {
             const title = document.title.toLowerCase();
             return !title.includes('just a moment') && !title.includes('cloudflare') && !title.includes('checking your browser');
-        }, { timeout: 15000 }).catch(() => {});
-        const cookies = await page.cookies();
-        const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        }, { timeout: 10000 }).catch(() => {});
+
+        const cookiesList = await page.cookies();
+        const cookieString = cookiesList.map(c => `${c.name}=${c.value}`).join('; ');
         sessionStore.update(cookieString, await page.evaluate(() => navigator.userAgent));
+        
         if (json) {
             const text = await page.evaluate(() => document.body.innerText);
             try { return JSON.parse(text); } catch { return text; }
@@ -119,21 +135,37 @@ export async function hybridFetch(url: string, options: any = {}) {
 
 // ── Embed HLS Interceptor (for fallback) ─────────────────
 // Loads an embed URL in a headless browser and intercepts the m3u8 manifest
-export async function extractHlsFromEmbed(embedUrl: string, timeoutMs = 20000): Promise<string | null> {
+export async function extractHlsFromEmbed(embedUrl: string, timeoutMs = 15000): Promise<string | null> {
     const browser = await puppeteerPool.acquire();
     const page = await browser.newPage();
     let captured: string | null = null;
 
     try {
-        // Use CDP to intercept network at a low level (captures iframes too)
-        const cdpSession = await page.target().createCDPSession();
-        await cdpSession.send('Network.enable');
-        cdpSession.on('Network.responseReceived', (params: any) => {
-            const url = params.response.url;
-            if (!captured && url.includes('.m3u8') && !url.includes('master')) {
-                captured = url;
+        // ── THE BOUNCER & THE TRAP ──────────────────────────────────
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const url = req.url();
+            const type = req.resourceType();
+
+            // 1. Block heavy stuff
+            if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
+                return req.abort();
             }
-            // Also accept master playlists
+
+            // 2. THE TRAP: Catch m3u8 as it flies by in the request stream (faster than response)
+            if (url.includes('.m3u8')) {
+                captured = url;
+                // Don't abort yet, we need to resolve the promise first
+                req.continue(); 
+                return;
+            }
+
+            req.continue();
+        });
+
+        // Also check responses for more reliability
+        page.on('response', (res) => {
+            const url = res.url();
             if (!captured && url.includes('.m3u8')) {
                 captured = url;
             }
@@ -141,30 +173,40 @@ export async function extractHlsFromEmbed(embedUrl: string, timeoutMs = 20000): 
 
         await page.setUserAgent(sessionStore.getHeaders()['User-Agent']);
         
-        // Don't wait for full load, just start intercepting
-        await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+        // ── Navigation ─────────────────────────────────────────────
+        // We use a Promise.race to allow for "Early Exit"
+        const result = await Promise.race([
+            // Path A: Load the page and simulate clicks
+            (async () => {
+                await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+                
+                // Clicking triggers more dynamic requests
+                const clickCenter = async () => {
+                    try {
+                        const { width, height } = await page.evaluate(() => ({
+                            width: window.innerWidth,
+                            height: window.innerHeight
+                        }));
+                        await page.mouse.click(Math.floor(width / 2), Math.floor(height / 2));
+                    } catch { /* silent */ }
+                };
 
-        // Simulate user clicking to play (bypasses ad overlays and triggers stream)
-        const clickCenter = async () => {
-            try {
-                const { width, height } = await page.evaluate(() => ({
-                    width: window.innerWidth,
-                    height: window.innerHeight
-                }));
-                await page.mouse.click(Math.floor(width / 2), Math.floor(height / 2));
-            } catch { /* silent */ }
-        };
-
-        // Click twice with delays
-        await clickCenter();
-        await new Promise(r => setTimeout(r, 2000));
-        await clickCenter();
-
-        // Poll for capture up to timeoutMs
-        const deadline = Date.now() + 10000;
-        while (!captured && Date.now() < deadline) {
-            await new Promise(r => setTimeout(r, 300));
-        }
+                for (let i = 0; i < 3; i++) {
+                    if (captured) break;
+                    await clickCenter();
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+            })(),
+            // Path B: Watchdog that resolves as soon as 'captured' is true
+            (async () => {
+                while (!captured) {
+                    await new Promise(r => setTimeout(r, 200));
+                    // Check if parent scope's captured was set by the listener
+                }
+            })(),
+            // Path C: Safety timeout
+            new Promise(r => setTimeout(r, timeoutMs))
+        ]);
 
         return captured;
     } catch (e: any) {

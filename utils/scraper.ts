@@ -29,6 +29,7 @@ import {
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import * as cheerio from "cheerio";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -50,25 +51,45 @@ const CDN_DOMAIN_MAP: Record<string, string> = {
 
 /** Matches a real Chrome browser on Windows. Must be consistent across all requests. */
 export const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
 // ── Types ───────────────────────────────────────────────────────────────────
+
+export interface SubtitleStream {
+  url: string;
+  lang: string;
+  languageName: string;
+  source: string;
+}
+
+export interface MirrorStream {
+  url: string;
+  source: string;
+  quality?: string;
+  headers?: Record<string, string>;
+  type?: "hls" | "mp4" | "torrent";
+  subtitles?: SubtitleStream[];
+}
 
 export interface ScrapeResult {
   /** Best-quality .m3u8 URL (first in the array). */
   streamUrl: string;
   /** All available fallback .m3u8 URLs. */
   streams: string[];
+  /** Multiple stream mirrors from different providers. */
+  mirrors?: MirrorStream[];
   /** Human-readable source identifier. */
   source: string;
   /** Heartbeat session — pass to startHeartbeat() to keep the stream alive. */
-  session: HeartbeatSession;
+  session?: HeartbeatSession;
   /** Quality tag parsed from the release filename: CAM | TC | WEBDL | WEBRIP | BLURAY | HDTC | HD | UNKNOWN */
   qualityTag: string;
   /** Resolution parsed from the release filename: 4K | 1080p | 720p | 480p | UNKNOWN */
   resolution: string;
   /** The actual proxy URL used for the scrape (if any) — needed for manifest/heartbeat consistency. */
   proxyUsed: string | undefined;
+  /** Subtitles extracted during the scrape. */
+  subtitles?: SubtitleStream[];
 }
 
 export interface HeartbeatSession {
@@ -581,4 +602,556 @@ export async function scrapeVsembed(
       proxyUrl: proxyUrl,
     },
   };
+}
+
+// ── NetMirror Scraper ───────────────────────────────────────────────────────
+
+const NETMIRROR_BASE = "https://net22.cc";
+const NETMIRROR_PLAY = "https://net52.cc";
+
+const YFLIX_BASE = "https://yflix.to";
+const YFXENC = "https://enc-dec.app/api/enc-movies-flix";
+const YFXDEC = "https://enc-dec.app/api/dec-movies-flix";
+
+const YTS_BASE = "https://yts.am/api/v2";
+
+/**
+ * Normalizes titles for search by removing years, special characters, and 'The' prefixes.
+ */
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\(\d{4}\)/g, "") // Remove (2019)
+    .replace(/\s+/g, " ")       // Normalize whitespace
+    .replace(/^the\s+/g, "")    // Remove leading 'The '
+    .replace(/[^\w\s]/g, "")    // Remove special characters
+    .trim();
+}
+
+const NETMIRROR_GUEST_TOKEN = "233123f803cf02184bf6c67e149cdd50";
+const NETMIRROR_UA = UA;
+const NETMIRROR_HEADERS = {
+  "User-Agent": UA,
+  "X-Requested-With": "XMLHttpRequest",
+  "Accept": "application/json, text/plain, */*",
+  "Referer": `${NETMIRROR_BASE}/`
+};
+
+/**
+ * Scrapes mirrors from NetMirror (Netflix/Prime/Disney/Hotstar aggregator).
+ * Uses direct handshake logic to bypass authorization blocks.
+ */
+export async function scrapeNetMirror(
+  tmdbId: string,
+  title: string,
+  kind: "movie" | "tv",
+  season?: number,
+  episode?: number
+): Promise<MirrorStream[]> {
+  const mirrors: MirrorStream[] = [];
+  const jar = new CookieJar();
+  
+  // No proxy needed for NetMirror as it doesn't block data-center IPs as aggressively
+  const client = axios.create({
+    headers: { 
+      "User-Agent": UA,
+      "X-Requested-With": "XMLHttpRequest" 
+    },
+    httpAgent: new HttpCookieAgent({ cookies: { jar: jar as any } }),
+    httpsAgent: new HttpsCookieAgent({ cookies: { jar: jar as any } }),
+    timeout: 20000,
+  });
+
+  try {
+    console.log(`[NETMIRROR] Initializing session...`);
+    console.log(`[NETMIRROR] Performing handshake/bypass on ${NETMIRROR_PLAY}...`);
+    const handshakeHeaders = {
+      "User-Agent": UA,
+      "X-Requested-With": "XMLHttpRequest",
+      "Referer": `${NETMIRROR_BASE}/`,
+      "Accept": "application/json, text/plain, */*",
+      "Connection": "keep-alive"
+    };
+
+    const handshakeRes = await client.post(`${NETMIRROR_PLAY}/tv/p.php`, "", { 
+      headers: handshakeHeaders
+    });
+
+    let globalHash = "";
+    const setCookie = handshakeRes.headers['set-cookie'] || handshakeRes.headers['Set-Cookie'] || [];
+    const cookieStrArr = Array.isArray(setCookie) ? setCookie : [setCookie];
+    for (const cookie of cookieStrArr) {
+      const match = cookie.match(/t_hash_t=([^;]+)/);
+      if (match) {
+        globalHash = decodeURIComponent(match[1]);
+        break;
+      }
+    }
+
+    const ottTypes = ["nf", "pv", "dp", "hs"];
+    let resultsFound = false;
+
+    for (const ott of ottTypes) {
+      if (resultsFound) break;
+      console.log(`[NETMIRROR] Attempting OTT type: ${ott}`);
+      
+      const bypassUrl = `${NETMIRROR_PLAY}/tv/p.php`;
+      const handshakeRes = await client.post(bypassUrl, "", {
+         headers: { "Referer": `${NETMIRROR_BASE}/` }
+      });
+      
+      const setCookie = handshakeRes.headers['set-cookie'] || [];
+      const hashMatch = setCookie.join("; ").match(/t_hash_t=([^;]+)/);
+      if (!hashMatch) continue;
+      const globalHash = decodeURIComponent(hashMatch[1]);
+      // Extract user_token automatically if not provided
+      let userToken = process.env.NETMIRROR_GUEST_TOKEN || "guest";
+      if (userToken === "guest") {
+         const mainPage = await client.get(`${NETMIRROR_BASE}/`);
+         const tokenMatch = mainPage.data.match(/user_token\s*=\s*'([^']+)'/);
+         if (tokenMatch) userToken = tokenMatch[1];
+      }
+
+      const baseCookieStr = `t_hash_t=${globalHash}; ott=${ott}; user_token=${userToken}; hd=on`;
+      
+      const query = normalizeTitle(title);
+      const searchUrl = `${NETMIRROR_BASE}/search.php?s=${encodeURIComponent(query)}&t=${Math.floor(Date.now() / 1000)}`;
+      const searchRes = await client.get(searchUrl, {
+        headers: { "Referer": `${NETMIRROR_BASE}/`, "Cookie": baseCookieStr }
+      });
+
+      if (!searchRes.data.searchResult || searchRes.data.searchResult.length === 0) continue;
+      
+      const matchFound = searchRes.data.searchResult[0];
+      const targetIdBase = matchFound.id;
+      let targetId = targetIdBase;
+
+      const postRes = await client.get(`${NETMIRROR_BASE}/post.php?id=${targetIdBase}&t=${Math.floor(Date.now() / 1000)}`, {
+        headers: { "Referer": `${NETMIRROR_BASE}/`, "Cookie": baseCookieStr }
+      });
+
+      if (kind === "tv" && season && episode && postRes.data.episodes) {
+          const episodes = postRes.data.episodes || [];
+          const epMatch = episodes.find((e: any) => {
+             if (!e) return false;
+             const sVal = String(e.s || "").match(/\d+/);
+             const eVal = String(e.ep || "").match(/\d+/);
+             return sVal && parseInt(sVal[0]) === season && eVal && parseInt(eVal[0]) === episode;
+          });
+          if (epMatch) targetId = epMatch.id;
+          else continue;
+      }
+
+      const pPostRes = await client.post(`${NETMIRROR_BASE}/play.php`, `id=${targetId}`, {
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "Referer": `${NETMIRROR_BASE}/`, "Cookie": baseCookieStr }
+      });
+      const { h } = pPostRes.data;
+      if (!h) continue;
+
+      const iUrl = `${NETMIRROR_PLAY}/play.php?id=${targetId}&${h}`;
+      const iRes = await client.get(iUrl, { 
+        headers: { ...NETMIRROR_HEADERS, "Referer": `${NETMIRROR_BASE}/post.php?id=${targetId}`, "Cookie": baseCookieStr } 
+      });
+
+      const tokenMatch = iRes.data.match(/data-h="([^"]+)"/);
+      if (!tokenMatch) continue;
+      const token = tokenMatch[1];
+
+      const pUrl = `${NETMIRROR_PLAY}/playlist.php?id=${targetId}&t=${encodeURIComponent(matchFound.t)}&tm=${Math.floor(Date.now() / 1000)}&h=${token}`;
+      const listRes = await client.get(pUrl, {
+        headers: { "Referer": `${NETMIRROR_PLAY}/`, "Cookie": baseCookieStr }
+      });
+
+      if (Array.isArray(listRes.data)) {
+        listRes.data.forEach((item: any) => {
+          if (item.sources) {
+            item.sources.forEach((src: any) => {
+              mirrors.push({
+                url: `${NETMIRROR_PLAY}${src.file.startsWith('/') ? '' : '/'}${src.file}`,
+                source: `NetMirror [${src.label}] (${ott.toUpperCase()})`,
+                quality: src.label.includes("1080") ? "1080p" : (src.label.includes("2160") ? "2160p" : "720p"),
+                type: "hls",
+                headers: { "Referer": `${NETMIRROR_PLAY}/`, "Cookie": baseCookieStr }
+              });
+            });
+          }
+        });
+        if (mirrors.length > 0) resultsFound = true;
+      }
+    }
+  } catch (err: any) {
+    console.error("[NETMIRROR] Error:", err.message);
+  }
+  return mirrors;
+}
+
+// ── YTS Scraper ─────────────────────────────────────────────────────────────
+
+/**
+ * Scrapes YTS for magnet torrents (High quality movies).
+ */
+export async function scrapeYTS(title: string): Promise<MirrorStream[]> {
+  const mirrors: MirrorStream[] = [];
+  const YTS_MIRRORS = [YTS_BASE, "https://yts.mx/api/v2"]; // Fallback mirrors if needed
+  
+  try {
+    const res = await axios.get(`${YTS_BASE}/list_movies.json?query_term=${encodeURIComponent(title)}&limit=1`, {
+      timeout: 10000,
+      headers: { "User-Agent": UA }
+    });
+
+    const body = res.data;
+    if (body.status !== "ok" || !body.data.movies || body.data.movies.length === 0) {
+      return [];
+    }
+
+    const movie = body.data.movies[0];
+    const trackers = "&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://torrent.gresille.org:80/announce&tr=p4p.arenabg.com:1337&tr=udp://tracker.leechers-paradise.org:6969";
+
+    for (const torrent of movie.torrents) {
+      const magnet = `magnet:?xt=urn:btih:${torrent.hash}&dn=${encodeURIComponent(movie.title)}&tr=${trackers}`;
+      mirrors.push({
+        source: `YTS [${torrent.quality}] (${torrent.type})`,
+        url: magnet,
+        quality: torrent.quality,
+        type: "torrent"
+      });
+    }
+
+    return mirrors;
+  } catch (err: any) {
+    console.error("[YTS] Error:", err.message);
+    return [];
+  }
+}
+
+// ── YFlix Scraper ───────────────────────────────────────────────────────────
+
+const YFLIX_UA = UA;
+
+export async function scrapeYFlix(
+  title: string,
+  kind: "movie" | "tv",
+  season?: number,
+  episode?: number
+): Promise<MirrorStream[]> {
+  /*
+   * YFlix is currently under heavy DDoS protection and refresh loops.
+   * Paused until stable bypass is implemented.
+   */
+  return [];
+}
+
+// ── Mirror Resolver Helpers ──────────────────────────────────────────────────
+
+function rot13(str: string) {
+  return (str || "").replace(/[a-zA-Z]/g, (c: any) => {
+    return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+  });
+}
+
+function atob(str: string) { return Buffer.from(str, 'base64').toString('binary'); }
+function btoa(str: string) { return Buffer.from(str, 'binary').toString('base64'); }
+
+/**
+ * Validates if a link is an actual media stream or file.
+ */
+async function probeLink(url: string, referer: string = ""): Promise<boolean> {
+  // Filter out unplayable formats immediately
+  if (url.match(/\.(mkv|avi|wmv|zip|rar|tar|7z)(\?|$)/i)) return false;
+
+  try {
+    // Many CDNs block HEAD, so we use GET but with a timeout and we only care about status.
+    const res = await axios.get(url, { 
+      timeout: 3000, 
+      headers: { "User-Agent": UA, "Referer": referer },
+      maxContentLength: 1000, 
+      validateStatus: (s) => s < 400
+    });
+    return res.status < 400;
+  } catch {
+    return false;
+  }
+}
+
+async function hubCloudExtractor(url: string, referer: string = ""): Promise<string[]> {
+  try {
+    let currentUrl = url.replace("hubcloud.ink", "hubcloud.dad");
+    const res = await axios.get(currentUrl, { headers: { "User-Agent": UA, "Referer": referer } });
+    let pageData = res.data;
+    
+    if (!currentUrl.includes("hubcloud.php")) {
+       const $ = cheerio.load(pageData);
+       let nextHref = $("#download").attr("href");
+       if (!nextHref) {
+          const match = pageData.match(/var url = '([^']*)'/);
+          if (match) nextHref = match[1];
+       }
+       if (nextHref) {
+          if (!nextHref.startsWith("http")) nextHref = new URL(currentUrl).origin + "/" + nextHref.replace(/^\//, "");
+          const res2 = await axios.get(nextHref, { headers: { "User-Agent": UA, "Referer": currentUrl } });
+          pageData = res2.data;
+       }
+    }
+
+    const $ = cheerio.load(pageData);
+    const links: string[] = [];
+    $("a.btn").each((_, el) => {
+       const href = $(el).attr("href");
+       const text = $(el).text().toLowerCase();
+       if (href && (text.includes("download") || text.includes("server") || text.includes("fsl") || text.includes("10gbps") || href.includes("pixeldrain"))) {
+          if (href.includes("pixeldrain")) {
+             links.push(href.includes("?download") ? href : `https://pixeldrain.com/api/file/${href.split('/').pop()}?download`);
+          } else {
+             links.push(href);
+          }
+       }
+    });
+    return links;
+  } catch { return []; }
+}
+
+async function getRedirectLinks(url: string): Promise<string | null> {
+  try {
+    const res = await axios.get(url, { headers: { "User-Agent": UA } });
+    const doc = res.data;
+    
+    // 1. Look for encoded tokens (Base64 -> Rot13 -> Base64 -> Final)
+    const allBase64 = doc.match(/[A-Za-z0-9+/=]{50,}/g) || [];
+    for (const token of allBase64) {
+      try {
+        const decoded = atob(rot13(atob(token)));
+        if (decoded && decoded.includes("{")) {
+           const json = JSON.parse(decoded);
+           const encodedUrl = json.o ? atob(json.o).trim() : null;
+           if (encodedUrl && encodedUrl.startsWith("http")) return encodedUrl;
+        }
+      } catch {}
+    }
+
+    // 2. Look for script/meta redirects
+    const nextMatch = doc.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]|URL\s*=\s*['"]([^'"]+)['"]/i);
+    if (nextMatch) {
+       let nextUrl = nextMatch[1] || nextMatch[2];
+       if (nextUrl && !nextUrl.startsWith("http")) {
+          const origin = new URL(url).origin;
+          nextUrl = origin + (nextUrl.startsWith("/") ? "" : "/") + nextUrl;
+       }
+       if (nextUrl && nextUrl !== url) return await getRedirectLinks(nextUrl);
+    }
+    
+    // 3. Look for "techyboy" style anchors
+    const $ = cheerio.load(doc);
+    const nextAnchor = $("a[href*='techyboy'], a[href*='gadgetsweb'], a[href*='cryptoinsights']").attr("href");
+    if (nextAnchor && nextAnchor !== url) return await getRedirectLinks(nextAnchor);
+
+    return null;
+  } catch { return null; }
+}
+
+async function resolveMirrorLink(url: string, referer: string = ""): Promise<string[]> {
+  try {
+    const hostname = new URL(url).hostname;
+    // Known redirectors
+    if (url.includes("?id=") || ["techyboy", "gadgetsweb", "cryptoinsights", "bloggingvector"].some(h => hostname.includes(h))) {
+       const resolved = await getRedirectLinks(url);
+       if (resolved) return await resolveMirrorLink(resolved, url);
+    }
+
+    if (hostname.includes("hubcloud") || hostname.includes("hubdrive")) return await hubCloudExtractor(url, referer);
+    if (hostname.includes("pixeldrain")) return [url.includes("?download") ? url : `https://pixeldrain.com/api/file/${url.split('/').pop()}?download` ];
+    
+    return [url];
+  } catch { return []; }
+}
+
+// ── HDHub4U Scraper ──────────────────────────────────────────────────────────
+
+const HDHUB_BASE = "https://new6.hdhub4u.fo";
+const HDHUB_API = "https://search.pingora.fyi/collections/post/documents/search";
+
+export async function scrapeHDHub4U(title: string, kind: string, season?: number, episode?: number): Promise<MirrorStream[]> {
+  const mirrors: MirrorStream[] = [];
+  try {
+    const query = normalizeTitle(title);
+    const today = new Date().toISOString().split("T")[0];
+    const res = await axios.get(`${HDHUB_API}?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&analytics_tag=${today}`, {
+      headers: { 
+        "x-typesense-api-key": "pingora",
+        "User-Agent": UA,
+        "Referer": `${HDHUB_BASE}/`,
+        "Cookie": "xla=s4t"
+      }
+    });
+    
+    const hits = res.data.hits || [];
+    
+    const hit = hits.find((h: any) => {
+        const hitTitle = (h.document.post_title || "").toLowerCase();
+        const normHit = normalizeTitle(hitTitle);
+        // If TV show, prioritize hits that mention the specific season
+        if (kind === "tv" && season) {
+           const sQuery = `season ${season}`;
+           const sQueryAlt = `s${season}`;
+           if (!hitTitle.includes(sQuery) && !hitTitle.includes(sQueryAlt)) return false;
+        }
+        return normHit.includes(query) || query.includes(normHit);
+    });
+    if (!hit) return [];
+    
+    const pageRes = await axios.get(HDHUB_BASE + hit.document.permalink);
+    const $ = cheerio.load(pageRes.data);
+    
+    const links: { url: string, name: string }[] = [];
+    $("a").each((_, el) => {
+       const href = $(el).attr("href");
+       const text = $(el).text().trim();
+       if (href && (href.includes("hubcloud") || href.includes("hubdrive") || href.includes("hdstream4u") || href.includes("hubstream") || text.match(/480|720|1080|2160|4k/i))) {
+          if (!href.includes(HDHUB_BASE)) {
+             // If TV show, filter by episode text or surrounding context (for tables)
+             if (kind === "tv" && episode) {
+                const epPattern = new RegExp(`(E|Episode|Ep|episode)\\s*0*${episode}(\\s|\\D|$)`, 'i');
+                const parentText = $(el).closest('tr, td, p, div').text().trim();
+                // Broader check for Season packs
+                if (epPattern.test(text) || epPattern.test(parentText) || text.toLowerCase().includes("all episodes")) {
+                   links.push({ url: href, name: text });
+                }
+             } else {
+                links.push({ url: href, name: text });
+             }
+          }
+       }
+    });
+
+    const resolvedLinks = await Promise.all(links.slice(0, 8).map(l => resolveMirrorLink(l.url)));
+    for (let i = 0; i < resolvedLinks.length; i++) {
+       const urls = resolvedLinks[i];
+       const originalName = links[i].name;
+       for (const u of urls) {
+          if (await probeLink(u)) {
+             mirrors.push({ 
+                url: u, 
+                source: "HDHub Mirror", 
+                quality: originalName.match(/2160|4k/i) ? "2160p" : (originalName.match(/1080/i) ? "1080p" : "720p")
+             });
+          }
+       }
+    }
+    return mirrors;
+  } catch { return []; }
+}
+
+// ── 4KHDHub Scraper ──────────────────────────────────────────────────────────
+
+const FOURK_BASE = "https://4khdhub.click";
+
+export async function scrapeFourKHDHub(title: string, kind: string, season?: number, episode?: number): Promise<MirrorStream[]> {
+  const mirrors: MirrorStream[] = [];
+  try {
+    // 4KHDHub WordPress search is very sensitive; try both normalized and raw
+    const query = normalizeTitle(title);
+    let res = await axios.get(`${FOURK_BASE}/?s=${encodeURIComponent(query)}`, { headers: { "User-Agent": UA } });
+    let $ = cheerio.load(res.data);
+    let firstMatch = $("a.movie-card").first().attr("href");
+    
+    if (!firstMatch) {
+       res = await axios.get(`${FOURK_BASE}/?s=${encodeURIComponent(title)}`, { headers: { "User-Agent": UA } });
+       $ = cheerio.load(res.data);
+       firstMatch = $("a.movie-card").first().attr("href");
+    }
+    
+    if (!firstMatch) return [];
+    
+    const pageRes = await axios.get(firstMatch, { headers: { "User-Agent": UA } });
+    const $p = cheerio.load(pageRes.data);
+    
+    const links: { url: string, name: string }[] = [];
+    $p("a").each((_, el) => {
+       const href = $p(el).attr("href");
+       const text = $p(el).text().trim();
+       if (href && (href.includes("hubcloud") || href.includes("hubdrive") || href.includes("hubstream") || text.match(/480|720|1080|2160|4k/i))) {
+          if (!href.includes(FOURK_BASE)) {
+             if (kind === "tv" && episode) {
+                const epPattern = new RegExp(`(E|Episode|Ep|episode)\\s*0*${episode}(\\s|\\D|$)`, 'i');
+                const parentText = $p(el).closest('tr, td, p, div').text().trim();
+                if (epPattern.test(text) || epPattern.test(parentText)) {
+                    links.push({ url: href, name: text });
+                }
+             } else {
+                links.push({ url: href, name: text });
+             }
+          }
+       }
+    });
+
+    const resolvedLinks = await Promise.all(links.slice(0, 8).map(l => resolveMirrorLink(l.url)));
+    for (let i = 0; i < resolvedLinks.length; i++) {
+       const urls = resolvedLinks[i];
+       const originalName = links[i].name;
+       for (const u of urls) {
+          if (await probeLink(u)) {
+             mirrors.push({ 
+                url: u, 
+                source: "4KHD Mirror", 
+                quality: originalName.match(/2160|4k/i) ? "2160p" : (originalName.match(/1080/i) ? "1080p" : "720p")
+             });
+          }
+       }
+    }
+    return mirrors;
+  } catch { return []; }
+}
+
+// ── Streamflix Scraper ───────────────────────────────────────────────────────
+
+const STREAMFLIX_BASE = "https://api.streamflix.app";
+
+export async function scrapeStreamflix(title: string, kind: string, season?: number, episode?: number): Promise<MirrorStream[]> {
+  const mirrors: MirrorStream[] = [];
+  try {
+    const [dataRes, configRes] = await Promise.all([
+       axios.get(`${STREAMFLIX_BASE}/data.json`),
+       axios.get(`${STREAMFLIX_BASE}/config/config-streamflixapp.json`)
+    ]);
+    
+    
+    const query = normalizeTitle(title);
+    const queryWords = query.split(/\s+/).filter(w => w.length > 2);
+    const items = (dataRes.data.data || []).filter((x: any) => {
+        const movieName = normalizeTitle(x.moviename || "");
+        // Strict word check: all long words from query must be in target name
+        return movieName === query || queryWords.every(word => movieName.includes(word));
+    });
+    
+    let item = items[0];
+    if (kind === "tv" && season && episode) {
+       const sStr = season.toString().padStart(2, "0");
+       const eStr = episode.toString().padStart(2, "0");
+       // Try multiple formats: S01E06, S1 E6, Season 1 Episode 6
+       const matched = items.find((x: any) => {
+          const n = (x.moviename || "").toLowerCase();
+          return (n.includes(`s${sStr}e${eStr}`) || 
+                  n.includes(`s${season} e${episode}`) ||
+                  (n.includes(`${season}`) && n.includes(`${episode}`)) ||
+                  n.includes(`episode ${episode}`));
+       });
+       if (!matched) return []; 
+       item = matched;
+    }
+
+    if (!item || !item.movielink) return [];
+    
+    const config = configRes.data;
+    const servers = [...(config.premium || []), ...(config.movies || []), ...(config.tv || [])];
+    
+    servers.forEach((srv: string) => {
+        mirrors.push({
+           url: srv + item.movielink,
+           source: "Streamflix Server",
+           quality: srv.includes("premium") ? "1080p" : "720p"
+        });
+    });
+    
+    return mirrors;
+  } catch { return []; }
 }
