@@ -187,9 +187,10 @@ app.get("/api/stream", async (req, res) => {
       
       let match: any = null;
 
-      if (origin === 'kisskh') {
-        console.log(`[STREAM] KissKH origin detected. Using ID ${tmdbId} directly.`);
-        match = { id: parseInt(tmdbId), title: title };
+      if (origin === 'kisskh' || tmdbId.toString().startsWith('k')) {
+        const dramaId = parseInt(tmdbId.toString().replace('k', ''));
+        console.log(`[STREAM] KissKH origin detected. Using ID ${dramaId} directly.`);
+        match = { id: dramaId, title: title };
       } else {
         const searchQuery = (kind === 'tv') ? `${title} Season ${season}` : title;
         const queryNorm = normalize(searchQuery);
@@ -243,11 +244,17 @@ app.get("/api/stream", async (req, res) => {
         if (!detail) throw new Error("Could not fetch drama details from KissKH");
         
         const targetEpNum = (kind === 'movie') ? 0 : episode;
-        const ep = detail.episodes.find((e: any) => {
+        let ep = detail.episodes.find((e: any) => {
           const epNum = parseFloat(e.number);
           const reqNum = parseFloat(targetEpNum.toString());
           return epNum === reqNum || (reqNum === 1 && epNum === 0); // Handle "Episode 0" specials
         });
+
+        // Fallback: If we can't find an exact match for the first episode/movie, take the first item in the list
+        if (!ep && detail.episodes.length > 0 && (targetEpNum === 1 || targetEpNum === 0)) {
+          console.log(`[STREAM] KissKH Fallback: Exact match failed for ep ${targetEpNum}, using first available episode.`);
+          ep = detail.episodes[0];
+        }
         
         if (ep) {
           const kisskhMirrors = await KissKHScraper.getStream(match.id, ep.id);
@@ -449,8 +456,8 @@ function cdnHeaders(targetUrl?: string) {
   if (targetUrl) {
     const lower = targetUrl.toLowerCase();
     // Auto-detect KissKH CDNs and use the correct referer
-    if (lower.includes("kisskh") || lower.includes("cdnvideo") || lower.includes("stream5.store")) {
-       referer = "https://kisskh.do/";
+    if (lower.includes("kisskh") || lower.includes("cdnvideo") || /stream\d+\.store/.test(lower) || lower.includes("stream.store")) {
+       referer = "https://kisskh.do";
     }
   }
 
@@ -704,13 +711,13 @@ app.get("/api/drama/list", async (req, res) => {
     console.log(`[DISCOVERY] Cache MISS. Fetching KissKH Explore...`);
     const list = await KissKHScraper.getExploreList(type, country, page, order);
     const results = list.map(d => ({
-      id: d.id,
+      id: `k${d.id}`,
       title: d.title,
       image: d.thumbnail,
       type: 'tv',
       genre: 'Drama',
       rating: d.rating,
-      countryId: d.countryId || (country ? parseInt(country) : 0),
+      countryId: d.countryId || (country ? parseInt(country.toString()) : 0),
       origin: 'kisskh',
       isDrama: true
     }));
@@ -728,6 +735,46 @@ app.get("/api/drama/list", async (req, res) => {
   } catch (e: any) {
     console.error(`[DRAMA LIST ERROR] ${e.message}`);
     return res.json({ results: [] });
+  }
+});
+
+app.get("/api/drama/detail/:id", async (req, res) => {
+  const { id } = req.params;
+  const dramaId = parseInt(id.replace('k', ''));
+  
+  try {
+    const cached = await DramaDetailCache.findOne({ dramaId });
+    if (cached) {
+      console.log(`[DRAMA] Cache HIT for detail ${id}`);
+      return res.json(cached.detail);
+    }
+
+    console.log(`[DRAMA] Cache MISS for detail ${id}. Fetching...`);
+    const details = await KissKHScraper.getDramaDetail(dramaId);
+    if (!details) return res.status(404).json({ error: "Drama not found" });
+    
+    // Normalize episodes
+    const normalized = {
+      ...details,
+      episodes: (details.episodes || []).map((ep: any) => ({
+        episode_number: ep.number,
+        name: `Episode ${ep.number}`,
+        overview: "",
+        still_path: details.thumbnail,
+        air_date: "",
+        id: ep.id
+      })).sort((a: any, b: any) => a.episode_number - b.episode_number)
+    };
+    
+    await DramaDetailCache.findOneAndUpdate(
+      { dramaId },
+      { detail: normalized, expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24) },
+      { upsert: true }
+    ).catch(() => null);
+    
+    return res.json(normalized);
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
   }
 });
 

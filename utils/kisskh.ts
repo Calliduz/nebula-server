@@ -5,7 +5,7 @@ import generateKissKHToken from './kisskhToken.js';
 const KISSKH_BASE = 'https://kisskh.do';
 const KISSKH_API = `${KISSKH_BASE}/api`;
 const VI_GUID = '62f176f3bb1b5b8e70e39932ad34a0c7';
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /**
  * KissKH Scraper - High Performance / Low RAM
