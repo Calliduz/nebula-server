@@ -234,46 +234,44 @@ app.get("/api/stream", async (req, res) => {
           const results = await KissKHScraper.search(strategy.q, strategy.hollywood);
           if (results.length === 0) continue;
 
+          console.log(`[KissKH] Found ${results.length} results. First 3:`, results.slice(0, 3).map(r => r.title));
+
           // Fuzzy Matching Logic
           match = results.find(d => {
-            const dNorm = normalize(d.title);
-            
-            // 1. Basic Title Match
-            if (!dNorm.includes(titleNorm)) return false;
+            const dTitle = (d.title || '').toLowerCase();
+            const qTitle = strategy.q.toLowerCase();
+            const cleanQ = qTitle.replace(/season \d+/g, '').replace(/\(\d{4}\)/g, '').trim();
+            const cleanD = dTitle.replace(/\(\d{4}\)/g, '').trim();
 
-            // 2. Year Verification (if both have years, they must match)
+            // 1. Basic Title Match
+            if (!cleanD.includes(cleanQ) && !cleanQ.includes(cleanD)) return false;
+
+            // 2. Year Verification
             const yearStr = releaseYear && releaseYear !== 'undefined' ? releaseYear : null;
             if (yearStr) {
-              const yearMatch = d.title.match(/\((19|20)\d{2}\)/);
+              const yearMatch = dTitle.match(/\((19|20)\d{2}\)/);
               if (yearMatch) {
                 const kisskhYear = yearMatch[0].replace(/[()]/g, '');
                 if (kisskhYear !== yearStr) {
-                  console.log(`[STREAM] Skipping "${d.title}" - Year mismatch (Got ${kisskhYear}, expected ${yearStr})`);
+                  console.log(`[STREAM] Skipping "${d.title}" - Year mismatch`);
                   return false;
                 }
               }
             }
 
-            // 3. Season Matching (TV only)
+            // 3. Season Matching
             if (kind === 'tv') {
               const sNum = parseInt(season.toString());
-              const seasonVariants = [
-                normalize(`Season ${sNum}`),
-                normalize(`Season ${sNum.toString().padStart(2, '0')}`),
-                `s${sNum}`,
-                `s${sNum.toString().padStart(2, '0')}`
-              ];
-              
-              const hasSeasonMatch = seasonVariants.some(v => dNorm.includes(v));
-              // If it's the only result for the title, we can be less strict if no season is found in title
-              return hasSeasonMatch || (results.length === 1 && dNorm.includes(titleNorm));
+              const hasSeason = dTitle.includes(`season ${sNum}`) || dTitle.includes(`s${sNum}`);
+              const anySeasonMatch = dTitle.match(/season (\d+)/);
+              if (anySeasonMatch && parseInt(anySeasonMatch[1]) !== sNum) return false;
             }
 
-            return true; // Movie match
+            return true;
           });
 
           if (match) {
-            console.log(`[STREAM] Match verified via strategy: "${strategy.q}"`);
+            console.log(`[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`);
           }
         }
       }
