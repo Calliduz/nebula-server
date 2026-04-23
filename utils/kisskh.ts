@@ -1,121 +1,104 @@
-import axios from 'axios';
+import { got } from 'got-scraping';
 import { type MirrorStream } from './scraper.js';
 import generateKissKHToken from './kisskhToken.js';
 
 const KISSKH_BASE = 'https://kisskh.do';
 const KISSKH_API = `${KISSKH_BASE}/api`;
 const VI_GUID = '62f176f3bb1b5b8e70e39932ad34a0c7';
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /**
- * KissKH Scraper - High Performance / Low RAM
- * Pure API Scraper (No Puppeteer/Browser needed)
+ * KissKH Scraper - Hardened Edition
+ * Uses got-scraping for JA3 Fingerprinting & HTTP/2 to bypass Cloudflare.
  */
 export class KissKHScraper {
     private static async getHeaders(referer: string = KISSKH_BASE) {
         return {
-            'User-Agent': USER_AGENT,
             'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Referer': referer,
             'Origin': KISSKH_BASE,
+            'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
         };
     }
 
-    static async search(query: string, isHollywood: boolean = true): Promise<any[]> {
+    private static async request(url: string, referer?: string) {
         try {
-            const type = isHollywood ? 4 : 0;
-            const url = `${KISSKH_API}/DramaList/Search?q=${encodeURIComponent(query)}&type=${type}`;
-            const res = await axios.get(url, { 
-                headers: await this.getHeaders(),
-                validateStatus: (s) => s < 500 // Allow 429 to be handled manually
+            const response = await got.get(url, {
+                headers: await this.getHeaders(referer),
+                http2: true,
+                timeout: { request: 10000 },
+                retry: { limit: 2 },
+                throwHttpErrors: false,
             });
 
-            if (res.status === 429) {
-                console.warn(`[KissKH] Search Rate Limited (429) - Retry in a few minutes.`);
-                return [];
-            }
-
-            return res.data || [];
-        } catch (e: any) {
-            console.error(`[KissKH] Search failed:`, e.message);
-            return [];
-        }
-    }
-
-    static async getDramaDetail(id: number): Promise<any> {
-        try {
-            const url = `${KISSKH_API}/DramaList/Drama/${id}?ispc=false`;
-            const res = await axios.get(url, { 
-                headers: await this.getHeaders(`${KISSKH_BASE}/Drama/Detail?id=${id}`),
-                validateStatus: (s) => s < 500
-            });
-
-            if (res.status === 429) {
-                console.warn(`[KissKH] Detail Rate Limited (429)`);
+            if (response.statusCode === 403 || response.statusCode === 406) {
+                console.error(`[KissKH] ✘ Blocked (Status ${response.statusCode}) - IP might be hard-blocked.`);
                 return null;
             }
 
-            return res.data;
+            if (response.statusCode === 429) {
+                console.warn(`[KissKH] ⚠ Rate Limited (429)`);
+                return null;
+            }
+
+            // Parse body safely
+            try {
+                return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+            } catch {
+                return response.body;
+            }
         } catch (e: any) {
-            console.error(`[KissKH] Detail failed:`, e.message);
+            console.error(`[KissKH] Request Error: ${e.message}`);
             return null;
         }
     }
 
-    /**
-     * Pure API Extraction: No Puppeteer needed.
-     */
+    static async search(query: string, isHollywood: boolean = true): Promise<any[]> {
+        const type = isHollywood ? 4 : 0;
+        const url = `${KISSKH_API}/DramaList/Search?q=${encodeURIComponent(query)}&type=${type}`;
+        console.log(`[KissKH] Searching: ${query} (Hollywood: ${isHollywood})`);
+        
+        const data = await this.request(url);
+        return Array.isArray(data) ? data : [];
+    }
+
+    static async getDramaDetail(id: number): Promise<any> {
+        const url = `${KISSKH_API}/DramaList/Drama/${id}?ispc=false`;
+        const referer = `${KISSKH_BASE}/Drama/Detail?id=${id}`;
+        return await this.request(url, referer);
+    }
+
     static async getStream(dramaId: number, epId: number): Promise<MirrorStream[]> {
         try {
             const pageUrl = `${KISSKH_BASE}/Drama/v?id=${dramaId}&ep=${epId}`;
-            console.log(`[KissKH] Generating token for epId: ${epId}...`);
             
-            // Using the "Golden Handshake" discovered via browser sniffer
+            // Using the "Golden Handshake" token logic
             const kkey = (generateKissKHToken as any)(
                 epId, 
-                null,        // arg2
-                "2.8.10",    // arg3
-                VI_GUID,     // arg4
-                4830201,     // arg5
-                "kisskh",    // arg6
-                "kisskh",    // arg7
-                "kisskh",    // arg8
-                "kisskh",    // arg9
-                "kisskh",    // arg10
-                "kisskh"     // arg11
+                null, "2.8.10", VI_GUID, 4830201, "kisskh", "kisskh", "kisskh", "kisskh", "kisskh", "kisskh"
             );
+            
             const apiUrl = `${KISSKH_API}/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${kkey}`;
             const subApiUrl = `${KISSKH_API}/Sub/${epId}?kkey=${kkey}`;
             
-            console.log(`[KissKH] Fetching stream and subtitles...`);
-            const [res, subRes] = await Promise.all([
-                axios.get(apiUrl, { 
-                    headers: await this.getHeaders(pageUrl),
-                    timeout: 8000,
-                    validateStatus: (s) => s < 500
-                }).catch(e => ({ status: 500, data: null })),
-                axios.get(subApiUrl, {
-                    headers: await this.getHeaders(pageUrl),
-                    timeout: 5000,
-                    validateStatus: (s) => s < 500
-                }).catch(e => ({ status: 500, data: null }))
+            console.log(`[KissKH] Fetching stream/subs for epId: ${epId}...`);
+            const [data, subData] = await Promise.all([
+                this.request(apiUrl, pageUrl),
+                this.request(subApiUrl, pageUrl)
             ]);
 
-            if ((res as any).status === 429) {
-                console.warn(`[KissKH] Stream Rate Limited (429)`);
-                return [];
-            }
-
-            const data = (res as any).data;
-            if (!data) return [];
+            if (!data || !data.Video) return [];
 
             const mirrors: MirrorStream[] = [];
             const subtitles: any[] = [];
 
-            // 1. New API Subtitles (Priority)
-            if (Array.isArray((subRes as any).data)) {
-                console.log(`[KissKH] Found ${(subRes as any).data.length} subtitles via new API.`);
-                (subRes as any).data.forEach((s: any) => {
+            if (Array.isArray(subData)) {
+                subData.forEach((s: any) => {
                     if (s.src) {
                         subtitles.push({
                             url: s.src,
@@ -127,41 +110,25 @@ export class KissKHScraper {
                 });
             }
 
-            // 2. Legacy ThirdParty subtitles (msubload.com is permanently down — skipped)
-
-            if (data.Video) {
-                mirrors.push({
-                    url: data.Video,
-                    quality: 'Auto',
-                    source: 'KissKH',
-                    type: 'hls',
-                    subtitles: subtitles.length > 0 ? subtitles : undefined
-                });
-            }
+            mirrors.push({
+                url: data.Video,
+                quality: 'Auto',
+                source: 'KissKH',
+                type: 'hls',
+                subtitles: subtitles.length > 0 ? subtitles : undefined
+            });
 
             return mirrors;
         } catch (e: any) {
-            console.error(`[KissKH] Stream API extraction failed:`, e.message);
+            console.error(`[KissKH] Stream extraction failed:`, e.message);
             return [];
         }
     }
 
     static async getExploreList(type: number = 0, country: number = 0, page: number = 1, order: number = 1): Promise<any[]> {
-        try {
-            // type: 0=All, 1=TVSeries, 2=Movie, 3=Anime, 4=Hollywood
-            // country: 0=All, 1=South Korea, 2=China, 7=Thailand, 8=Philippines, etc.
-            // order: 1=Last Update, 2=Popular, 3=Release Date
-            const url = `${KISSKH_API}/DramaList/List?page=${page}&type=${type}&sub=0&country=${country}&status=0&order=${order}`;
-            const res = await axios.get(url, { 
-                headers: await this.getHeaders(),
-                validateStatus: (s) => s < 500
-            });
-
-            if (res.status === 429) return [];
-            return res.data?.data || [];
-        } catch (e: any) {
-            console.error(`[KissKH] Explore failed:`, e.message);
-            return [];
-        }
+        const url = `${KISSKH_API}/DramaList/List?page=${page}&type=${type}&sub=0&country=${country}&status=0&order=${order}`;
+        const data = await this.request(url);
+        return data?.data || [];
     }
 }
+
