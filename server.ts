@@ -70,6 +70,8 @@ function loadProxyPool() {
     } catch (e: any) {
       console.error(`[PROXY] Failed to parse ${PROXIES_FILE}:`, e.message);
     }
+  } else {
+    console.log(`[PROXY] No proxy file found. Using direct connection.`);
   }
 }
 

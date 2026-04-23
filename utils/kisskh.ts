@@ -1,4 +1,4 @@
-import { got } from 'got-scraping';
+import { hybridFetch } from './fetcher.js';
 import { type MirrorStream } from './scraper.js';
 import generateKissKHToken from './kisskhToken.js';
 
@@ -7,70 +7,33 @@ const KISSKH_API = `${KISSKH_BASE}/api`;
 const VI_GUID = '62f176f3bb1b5b8e70e39932ad34a0c7';
 
 /**
- * KissKH Scraper - Hardened Edition
- * Uses got-scraping for JA3 Fingerprinting & HTTP/2 to bypass Cloudflare.
+ * KissKH Scraper - Hybrid Browser Edition
+ * Uses Puppeteer only when blocked, then falls back to ultra-fast HTTP.
  */
 export class KissKHScraper {
-    private static async getHeaders(referer: string = KISSKH_BASE) {
-        return {
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': referer,
-            'Origin': KISSKH_BASE,
-            'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-        };
-    }
-
-    private static async request(url: string, referer?: string) {
-        try {
-            const response = await got.get(url, {
-                headers: await this.getHeaders(referer),
-                http2: true,
-                timeout: { request: 10000 },
-                retry: { limit: 2 },
-                throwHttpErrors: false,
-            });
-
-            if (response.statusCode === 403 || response.statusCode === 406) {
-                console.error(`[KissKH] ✘ Blocked (Status ${response.statusCode}) - IP might be hard-blocked.`);
-                return null;
-            }
-
-            if (response.statusCode === 429) {
-                console.warn(`[KissKH] ⚠ Rate Limited (429)`);
-                return null;
-            }
-
-            // Parse body safely
-            try {
-                return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-            } catch {
-                return response.body;
-            }
-        } catch (e: any) {
-            console.error(`[KissKH] Request Error: ${e.message}`);
-            return null;
-        }
-    }
-
     static async search(query: string, isHollywood: boolean = true): Promise<any[]> {
         const type = isHollywood ? 4 : 0;
         const url = `${KISSKH_API}/DramaList/Search?q=${encodeURIComponent(query)}&type=${type}`;
         console.log(`[KissKH] Searching: ${query} (Hollywood: ${isHollywood})`);
         
-        const data = await this.request(url);
-        return Array.isArray(data) ? data : [];
+        try {
+            const data = await hybridFetch(url, { json: true, referer: KISSKH_BASE });
+            return Array.isArray(data) ? data : [];
+        } catch (e: any) {
+            console.error(`[KissKH] Search failed:`, e.message);
+            return [];
+        }
     }
 
     static async getDramaDetail(id: number): Promise<any> {
         const url = `${KISSKH_API}/DramaList/Drama/${id}?ispc=false`;
         const referer = `${KISSKH_BASE}/Drama/Detail?id=${id}`;
-        return await this.request(url, referer);
+        try {
+            return await hybridFetch(url, { json: true, referer });
+        } catch (e: any) {
+            console.error(`[KissKH] Detail failed:`, e.message);
+            return null;
+        }
     }
 
     static async getStream(dramaId: number, epId: number): Promise<MirrorStream[]> {
@@ -88,8 +51,8 @@ export class KissKHScraper {
             
             console.log(`[KissKH] Fetching stream/subs for epId: ${epId}...`);
             const [data, subData] = await Promise.all([
-                this.request(apiUrl, pageUrl),
-                this.request(subApiUrl, pageUrl)
+                hybridFetch(apiUrl, { json: true, referer: pageUrl }),
+                hybridFetch(subApiUrl, { json: true, referer: pageUrl })
             ]);
 
             if (!data || !data.Video) return [];
@@ -127,8 +90,12 @@ export class KissKHScraper {
 
     static async getExploreList(type: number = 0, country: number = 0, page: number = 1, order: number = 1): Promise<any[]> {
         const url = `${KISSKH_API}/DramaList/List?page=${page}&type=${type}&sub=0&country=${country}&status=0&order=${order}`;
-        const data = await this.request(url);
-        return data?.data || [];
+        try {
+            const data = await hybridFetch(url, { json: true, referer: KISSKH_BASE });
+            return data?.data || [];
+        } catch (e: any) {
+            console.error(`[KissKH] Explore failed:`, e.message);
+            return [];
+        }
     }
 }
-
