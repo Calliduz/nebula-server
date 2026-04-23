@@ -227,12 +227,19 @@ app.get("/api/stream", async (req, res) => {
           { q: title, hollywood: false } // Fallback to global search
         ];
 
+        let isAborted = false;
+        req.on('close', () => {
+          isAborted = true;
+          console.log(`[STREAM] User cancelled request. Aborting...`);
+        });
+
         for (const strategy of searchStrategies) {
-          if (match) break;
+          if (match || isAborted) break;
           console.log(`[STREAM] KissKH Search Strategy: "${strategy.q}" (Hollywood: ${strategy.hollywood})`);
           
           const results = await KissKHScraper.search(strategy.q, strategy.hollywood);
           if (results.length === 0) continue;
+          if (isAborted) break;
 
           console.log(`[KissKH] Found ${results.length} results. First 3:`, results.slice(0, 3).map(r => r.title));
 
@@ -262,7 +269,6 @@ app.get("/api/stream", async (req, res) => {
             // 3. Season Matching
             if (kind === 'tv') {
               const sNum = parseInt(season.toString());
-              const hasSeason = dTitle.includes(`season ${sNum}`) || dTitle.includes(`s${sNum}`);
               const anySeasonMatch = dTitle.match(/season (\d+)/);
               if (anySeasonMatch && parseInt(anySeasonMatch[1]) !== sNum) return false;
             }
@@ -274,6 +280,7 @@ app.get("/api/stream", async (req, res) => {
             console.log(`[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`);
           }
         }
+        if (isAborted) throw new Error("Request cancelled by user");
       }
 
       if (match) {

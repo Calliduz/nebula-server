@@ -71,92 +71,74 @@ class SessionStore {
 
 export const sessionStore = new SessionStore();
 
+let isBypassing = false;
+
 // ── Hybrid Fetch (Axios → Puppeteer on 403/530) ──────────
 export async function hybridFetch(url: string, options: any = {}) {
-    const { referer = '', json = false, forceBrowser = false, timeout = 15000 } = options;
+    const { referer = '', json = false, forceBrowser = false, timeout = 20000 } = options;
 
-    // Step 1: Try Fast HTTP first (if we have a session)
+    // 1. Try Fast HTTP (90% of requests should hit here after the first solve)
     if (!forceBrowser) {
         try {
             const headers = sessionStore.getHeaders(referer);
-            if (json) headers['Accept'] = 'application/json, text/plain, */*';
-            
-            // Use a clean axios instance for the fast path
-            const response = await axios.get(url, { 
-                headers, 
-                timeout: 8000,
-                validateStatus: s => s < 400 
-            });
+            const response = await axios.get(url, { headers, timeout: 8000 });
             return response.data;
         } catch (error: any) {
             const status = error.response?.status;
             if (status !== 403 && status !== 530 && status !== 406) throw error;
-            console.warn(`[Fetcher] 🛡️ Blocked (${status}). Engaging Browser Bypass...`);
         }
     }
 
-    // Step 2: Browser Bypass (Always-On Browser)
+    // 2. Browser Bypass (Lock to prevent multiple browsers opening)
+    if (isBypassing) {
+        console.log('[Fetcher] ⏳ Already solving a challenge. Waiting...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        return hybridFetch(url, options); // Retry HTTP path
+    }
+
+    isBypassing = true;
+    console.warn(`[Fetcher] 🛡️ Engaging Browser Bypass for: ${new URL(url).hostname}`);
+
     const browser = await puppeteerPool.acquire();
     const page = await browser.newPage();
     
     try {
-        // ── THE BOUNCER: Block heavy/useless resources (ULTRA OPTIMIZATION) ──
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            const resourceType = req.resourceType();
-            const url = req.url().toLowerCase();
-            
-            // Block images, styles, fonts, and tracking scripts
-            if (['image', 'stylesheet', 'font', 'media', 'other'].includes(resourceType) || 
-                url.includes('google-analytics') || url.includes('doubleclick') || url.includes('beacon')) {
+            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
                 req.abort();
             } else {
                 req.continue();
             }
         });
 
-        // Set realistic browser headers
-        await page.setUserAgent(sessionStore.getHeaders()['User-Agent']);
+        // Optimization: Visit HOME PAGE first to clear the whole domain
+        const origin = new URL(url).origin;
+        console.log(`[Fetcher] 🏠 Visiting Home: ${origin}`);
+        await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
         
-        // Inject existing cookies if we have them
-        if (sessionStore.getHeaders()['Cookie']) {
-            const cookies = sessionStore.getHeaders()['Cookie'].split('; ').map((c: string) => {
-                const [name, value] = c.split('=');
-                return { name, value: value || '', domain: new URL(url).hostname };
-            });
-            await page.setCookie(...cookies).catch(() => {});
-        }
-        
-        // Navigation - Fast Exit Strategy
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-        
-        // Wait for Cloudflare to clear
+        // Wait for Cloudflare to vanish
         await page.waitForFunction(() => {
-            const title = document.title.toLowerCase();
-            const bodyText = document.body.innerText.toLowerCase();
-            return !title.includes('just a moment') && 
-                   !title.includes('cloudflare') && 
-                   !bodyText.includes('checking your browser') &&
-                   !bodyText.includes('enable javascript');
-        }, { timeout: 10000 }).catch(() => {});
+            const t = document.title.toLowerCase();
+            return !t.includes('just a moment') && !t.includes('cloudflare');
+        }, { timeout: 15000 }).catch(() => {});
 
-        // Save new cookies for the next fast HTTP request
-        const cookiesList = await page.cookies();
-        const cookieString = cookiesList.map(c => `${c.name}=${c.value}`).join('; ');
-        sessionStore.update(cookieString, await page.evaluate(() => navigator.userAgent));
+        // Now that we're "in", go to the actual target
+        console.log(`[Fetcher] 🎯 Navigation to Target: ${url}`);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+        // Save session
+        const cookies = await page.cookies();
+        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
         
-        // Extract data
         if (json) {
             const text = await page.evaluate(() => document.body.innerText);
-            try { return JSON.parse(text); } catch { 
-                // Fallback: search for JSON in the text
-                const match = text.match(/\{[\s\S]*\}/);
-                return match ? JSON.parse(match[0]) : text;
-            }
+            try { return JSON.parse(text); } catch { return text; }
         }
         return await page.content();
     } finally {
-        // Always close the page, but KEEP the browser open in the pool
+        isBypassing = false;
         await page.close().catch(() => {});
     }
 }
