@@ -85,43 +85,49 @@ export class KissKHScraper {
                 "kisskh"     // arg11
             );
             const apiUrl = `${KISSKH_API}/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${kkey}`;
+            const subApiUrl = `${KISSKH_API}/Sub/${epId}?kkey=${kkey}`;
             
-            console.log(`[KissKH] Fetching stream link from API...`);
-            const res = await axios.get(apiUrl, { 
-                headers: await this.getHeaders(pageUrl),
-                timeout: 5000,
-                validateStatus: (s) => s < 500
-            });
+            console.log(`[KissKH] Fetching stream and subtitles...`);
+            const [res, subRes] = await Promise.all([
+                axios.get(apiUrl, { 
+                    headers: await this.getHeaders(pageUrl),
+                    timeout: 8000,
+                    validateStatus: (s) => s < 500
+                }).catch(e => ({ status: 500, data: null })),
+                axios.get(subApiUrl, {
+                    headers: await this.getHeaders(pageUrl),
+                    timeout: 5000,
+                    validateStatus: (s) => s < 500
+                }).catch(e => ({ status: 500, data: null }))
+            ]);
 
-            if (res.status === 429) {
+            if ((res as any).status === 429) {
                 console.warn(`[KissKH] Stream Rate Limited (429)`);
                 return [];
             }
 
-            const data = res.data;
-            const mirrors: MirrorStream[] = [];
-            const subtitles: SubtitleStream[] = [];
+            const data = (res as any).data;
+            if (!data) return [];
 
-            // Extract subtitles from ThirdParty (e.g. sbplay)
-            if (data.ThirdParty) {
-                try {
-                    const params = new URLSearchParams(data.ThirdParty.split('?')[1]);
-                    for (let i = 1; i <= 5; i++) {
-                        const subUrl = params.get(`caption_${i}`);
-                        const subLabel = params.get(`sub_${i}`) || 'English';
-                        if (subUrl && subUrl.startsWith('http')) {
-                            subtitles.push({
-                                url: subUrl,
-                                lang: subLabel.toLowerCase().slice(0, 3), // lowercase short lang
-                                languageName: subLabel,
-                                source: 'KissKH'
-                            });
-                        }
+            const mirrors: MirrorStream[] = [];
+            const subtitles: any[] = [];
+
+            // 1. New API Subtitles (Priority)
+            if (Array.isArray((subRes as any).data)) {
+                console.log(`[KissKH] Found ${(subRes as any).data.length} subtitles via new API.`);
+                (subRes as any).data.forEach((s: any) => {
+                    if (s.src) {
+                        subtitles.push({
+                            url: s.src,
+                            lang: s.land || 'en',
+                            languageName: s.label || 'English',
+                            source: 'KissKH'
+                        });
                     }
-                } catch (e) {
-                    console.error(`[KissKH] Subtitle parse failed:`, e);
-                }
+                });
             }
+
+            // 2. Legacy ThirdParty subtitles (msubload.com is permanently down — skipped)
 
             if (data.Video) {
                 mirrors.push({

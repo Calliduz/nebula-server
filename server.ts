@@ -315,12 +315,14 @@ app.get("/api/stream", async (req, res) => {
       ).catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
     }
 
-    // 4. Proxy URL injection (vsembed only really needs the nebula_proxy param)
+    // 4. Proxy URL injection — only for non-KissKH sources that used a proxy during scrape
     let finalUrl = streamUrl;
-    if (proxyUsed && finalUrl) {
-      const urlObj = new URL(finalUrl);
-      urlObj.searchParams.set("nebula_proxy", proxyUsed);
-      finalUrl = urlObj.href;
+    if (finalUrl && proxyUsed && !finalUrl.includes("cdnvideo11.shop")) {
+      try {
+        const urlObj = new URL(finalUrl);
+        urlObj.searchParams.set("nebula_proxy", proxyUsed);
+        finalUrl = urlObj.href;
+      } catch {}
     }
 
     console.log(`[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`);
@@ -329,15 +331,32 @@ app.get("/api/stream", async (req, res) => {
       streamUrl: finalUrl, 
       streams: [finalUrl],
       mirrors: mirrors.map(m => {
-        // Inject proxy if needed for the specific mirror
+        // Inject proxy if needed for the specific mirror (vsembed)
         if (m.source.includes("vsembed") && proxyUsed) {
-          const u = new URL(m.url);
-          u.searchParams.set("nebula_proxy", proxyUsed);
-          return { ...m, url: u.href };
+          try {
+            const u = new URL(m.url);
+            u.searchParams.set("nebula_proxy", proxyUsed);
+            m.url = u.href;
+          } catch {}
         }
+        // Inject subtitle proxy for .srt or KissKH subs
+        if (m.subtitles) {
+          m.subtitles = m.subtitles.map(s => {
+            if (s.url.toLowerCase().endsWith('.srt') || s.source === 'KissKH') {
+              return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
+            }
+            return s;
+          });
+        }
+
         return m;
       }),
-      subtitles: allSubtitles.length > 0 ? allSubtitles : undefined,
+      subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(s => {
+        if (s.url.toLowerCase().endsWith('.srt') || s.source === 'KissKH') {
+          return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
+        }
+        return s;
+      }),
       source: sourceName, 
       qualityTag, 
       resolution 
@@ -406,7 +425,14 @@ app.get("/api/subtitles", async (req, res) => {
       ).catch(() => null);
     }
 
-    return res.json({ subtitles: aggregated });
+    const proxied = aggregated.map(s => {
+      if (s.url.toLowerCase().endsWith('.srt')) {
+        return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
+      }
+      return s;
+    });
+
+    return res.json({ subtitles: proxied });
   } catch (error: any) {
     console.warn(`[SUBS] ✘ Aggregation issue for ${tmdbId}: ${error.message}`);
     return res.json({ subtitles: [] }); // Always return [] instead of error to prevent player crash
@@ -639,6 +665,52 @@ app.get("/api/proxy/segment", async (req, res) => {
     return res.status(502).send("Proxy segment error");
   }
 });
+
+
+// Proxy: subtitles — fetches SRT/VTT, converts SRT to VTT if needed
+app.get("/api/proxy/subtitle", async (req, res) => {
+  const raw = req.query.url as string;
+  if (!raw) return res.status(400).send("Missing url");
+
+  let targetUrl: string;
+  try { targetUrl = decodeURIComponent(raw); }
+  catch { return res.status(400).send("Invalid url encoding"); }
+
+  console.log(`[PROXY/sub] ▶ ${targetUrl.substring(0, 80)}`);
+
+  try {
+    const upstream = await axios.get(targetUrl, {
+      responseType: "text",
+      timeout: 15000,
+      headers: {
+        "User-Agent": UA,
+        "Referer": "https://kisskh.do/",
+        "Origin": "https://kisskh.do",
+      }
+    });
+
+    let content: string = upstream.data;
+
+    // SRT → VTT conversion
+    if (targetUrl.toLowerCase().endsWith(".srt") || (!content.startsWith("WEBVTT") && content.includes(" --> "))) {
+      if (!content.startsWith("WEBVTT")) {
+        content = "WEBVTT\n\n" + content;
+      }
+      // Convert SRT timestamps: 00:00:20,000 → 00:00:20.000
+      content = content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+    }
+
+    res.setHeader("Content-Type", "text/vtt");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.send(content);
+
+  } catch (e: any) {
+    console.error(`[PROXY/sub] ✘ Error: ${e.message}`);
+    return res.status(502).send("Subtitle proxy error");
+  }
+});
+
 
 
 app.all("/api/cache/clear", async (req, res) => {

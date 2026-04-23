@@ -1,4 +1,5 @@
 import axios from "axios";
+import { MetadataCache } from "../models/Cache.js";
 
 // Fetch external IMDB id using TMDB id
 export async function fetchImdbId(
@@ -8,12 +9,36 @@ export async function fetchImdbId(
   const TMDB_API_KEY = process.env.TMDB_API_KEY;
   if (!TMDB_API_KEY) return null;
 
+  // Skip for KissKH IDs (prefixed with 'k')
+  if (tmdbId.toString().startsWith('k')) return null;
+
+  // 1. Check local cache first
+  const cached = await MetadataCache.findOne({ tmdbId: tmdbId.toString() });
+  if (cached?.imdbId) return cached.imdbId;
+
   try {
-    const url = `https://api.themoviedb.org/3/${type}/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`;
-    const response = await axios.get(url, { timeout: 5000 });
-    return response.data.imdb_id || null;
-  } catch (error) {
-    console.error(`[SUBS] Failed to fetch IMDB id for ${tmdbId}`);
+    const isV4 = TMDB_API_KEY.length > 40;
+    const url = `https://api.themoviedb.org/3/${type}/${tmdbId}/external_ids${isV4 ? '' : `?api_key=${TMDB_API_KEY}`}`;
+    
+    const response = await axios.get(url, { 
+      timeout: 5000,
+      headers: isV4 ? { 'Authorization': `Bearer ${TMDB_API_KEY}` } : {}
+    });
+    
+    const imdbId = response.data.imdb_id || null;
+    
+    // 2. Persist to cache for future requests
+    if (imdbId) {
+      await MetadataCache.findOneAndUpdate(
+        { tmdbId: tmdbId.toString() },
+        { imdbId },
+        { upsert: true }
+      ).catch(() => {});
+    }
+    
+    return imdbId;
+  } catch (error: any) {
+    console.error(`[SUBS] Failed to fetch IMDB id for ${tmdbId}: ${error.message}`);
     return null;
   }
 }
