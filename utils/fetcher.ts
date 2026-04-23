@@ -103,8 +103,7 @@ export async function hybridFetch(url: string, options: any = {}) {
 
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            // Only block heavy media to ensure Cloudflare JS/CSS loads properly
-            if (['image', 'media', 'font'].includes(req.resourceType())) {
+            if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) {
                 req.abort();
             } else {
                 req.continue();
@@ -114,13 +113,21 @@ export async function hybridFetch(url: string, options: any = {}) {
         const origin = new URL(url).origin;
         console.warn(`[Fetcher] 🛡️ Engaging Browser Bypass for: ${origin}`);
 
-        // 1. Visit Home if needed
+        // Listen for cookie changes in real-time
+        const cookieTimer = setInterval(async () => {
+            const cookies = await page.cookies();
+            if (cookies.some(c => c.name === 'cf_clearance')) {
+                const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+                sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
+                console.log(`[Fetcher] ✅ cf_clearance captured!`);
+            }
+        }, 1000);
+
+        // 1. Visit Home if needed (Commit is fastest)
         const currentCookies = sessionStore.getHeaders()['Cookie'] || '';
         if (!currentCookies.includes('cf_clearance')) {
-            console.log(`[Fetcher] 🏠 Visiting Home to clear Cloudflare...`);
-            await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            
-            console.log(`[Fetcher] ⏳ Waiting for Cloudflare challenge to pass...`);
+            console.log(`[Fetcher] 🏠 Clearing Cloudflare...`);
+            await page.goto(origin, { waitUntil: 'commit', timeout: 30000 });
             
             // Turnstile Auto-Clicker Loop
             const clickInterval = setInterval(async () => {
@@ -128,54 +135,44 @@ export async function hybridFetch(url: string, options: any = {}) {
                     const iframe = await page.$('iframe');
                     if (iframe) {
                         const box = await iframe.boundingBox();
-                        if (box && box.width > 0 && box.height > 0) {
-                            console.log(`[Fetcher] 🖱️ Turnstile detected. Simulating mouse click...`);
+                        if (box && box.width > 0) {
                             await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
                         }
                     }
                 } catch (e) {}
-            }, 2000);
+            }, 1500);
 
-            // Wait for the real site to load
             await page.waitForFunction(() => {
                 const t = document.title.toLowerCase();
                 return t.includes('kisskh |') || t.includes('asian dramas & movies');
-            }, { timeout: 20000 }).catch(() => {
-                console.log(`[Fetcher] ⚠️ Cloudflare wait timed out or title mismatch, proceeding...`);
-            });
+            }, { timeout: 15000 }).catch(() => {});
 
             clearInterval(clickInterval);
         }
 
+        clearInterval(cookieTimer);
         if (signal?.aborted) throw new Error('Aborted');
 
         // 2. Navigation to Target
-        console.log(`[Fetcher] 🎯 Targeted Navigation: ${url}`);
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`[Fetcher] 🎯 Fetching API Data...`);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-        // If JSON is expected, wait for the body to contain JSON-like structure
         if (json) {
             await page.waitForFunction(() => {
                 const text = document.body.innerText.trim();
                 return text.startsWith('[') || text.startsWith('{');
-            }, { timeout: 10000 }).catch(() => {});
+            }, { timeout: 5000 }).catch(() => {});
         }
 
-        const cookies = await page.cookies();
-        const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-        sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
+        const finalCookies = await page.cookies();
+        const finalCookieStr = finalCookies.map(c => `${c.name}=${c.value}`).join('; ');
+        sessionStore.update(finalCookieStr, await page.evaluate(() => navigator.userAgent));
         
         const text = await page.evaluate(() => document.body.innerText);
         if (json) {
-            try { return JSON.parse(text); } catch (e) {
-                console.error(`[Fetcher] ✘ Failed to parse JSON. Content starts with: ${text.substring(0, 50)}`);
-                return null;
-            }
+            try { return JSON.parse(text); } catch { return null; }
         }
         return text;
-    } catch (e: any) {
-        if (e.message === 'Aborted' || signal?.aborted) return null;
-        throw e;
     } finally {
         isBypassing = false;
         await page.close().catch(() => {});

@@ -220,14 +220,6 @@ app.get("/api/stream", async (req, res) => {
         console.log(`[STREAM] KissKH origin detected. Using ID ${dramaId} directly.`);
         match = { id: dramaId, title: title };
       } else {
-        // Multi-Step Search Strategy
-        const searchStrategies = [
-          { q: (kind === 'tv') ? `${title} Season ${season}` : title, hollywood: true, type: 4 },
-          { q: title, hollywood: true, type: 4 },
-          { q: title, hollywood: false, type: 0 },
-          { q: title, hollywood: false, type: -1 } // Global Search Fallback
-        ];
-
         const controller = new AbortController();
         const signal = controller.signal;
 
@@ -236,25 +228,22 @@ app.get("/api/stream", async (req, res) => {
           console.log(`[STREAM] User cancelled request. Aborting Bouncer...`);
         });
 
-        for (const strategy of searchStrategies) {
-          if (match || signal.aborted) break;
-          console.log(`[STREAM] KissKH Search Strategy: "${strategy.q}" (Type: ${strategy.type})`);
-          
-          const results = await KissKHScraper.search(strategy.q, strategy.type === 4, signal, strategy.type);
-          if (!results || results.length === 0) continue;
-          if (signal.aborted) break;
+        // ONE BROAD SEARCH (FASTEST)
+        console.log(`[STREAM] KissKH Global Search: "${title}"`);
+        const results = await KissKHScraper.search(title, false, signal, -1);
+        
+        if (results && results.length > 0) {
+          console.log(`[KissKH] Found ${results.length} results. Processing...`);
 
-          console.log(`[KissKH] Found ${results.length} results. First 3:`, results.slice(0, 3).map(r => r.title));
-
-          // Fuzzy Matching Logic
+          // Fuzzy Matching Logic (Local Filtering)
           match = results.find(d => {
             const dTitle = (d.title || '').toLowerCase();
-            const qTitle = title.toLowerCase(); // Original title without season
+            const qTitle = title.toLowerCase();
             
             const cleanQ = qTitle.replace(/[^a-z0-9]/g, '');
             const cleanD = dTitle.replace(/season \d+/g, '').replace(/[^a-z0-9]/g, '');
 
-            // 1. Basic Title Match (Check if one contains the other)
+            // 1. Title Match
             if (!cleanD.includes(cleanQ) && !cleanQ.includes(cleanD)) return false;
 
             // 2. Year Verification
@@ -267,7 +256,7 @@ app.get("/api/stream", async (req, res) => {
               }
             }
 
-            // 3. Season Matching
+            // 3. Season Matching (TV only)
             if (kind === 'tv') {
               const sNum = parseInt(season.toString());
               const anySeasonMatch = dTitle.match(/season (\d+)/);
