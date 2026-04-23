@@ -115,19 +115,22 @@ export async function hybridFetch(url: string, options: any = {}) {
 
         // Listen for cookie changes in real-time
         const cookieTimer = setInterval(async () => {
-            const cookies = await page.cookies();
-            if (cookies.some(c => c.name === 'cf_clearance')) {
-                const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-                sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
-                console.log(`[Fetcher] ✅ cf_clearance captured!`);
-            }
+            try {
+                if (page.isClosed()) return;
+                const cookies = await page.cookies();
+                if (cookies.some(c => c.name === 'cf_clearance')) {
+                    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+                    sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
+                    console.log(`[Fetcher] ✅ cf_clearance captured!`);
+                }
+            } catch (e) {}
         }, 1000);
 
-        // 1. Visit Home if needed (Commit is fastest)
+        // 1. Visit Home if needed (domcontentloaded is fastest valid in puppeteer)
         const currentCookies = sessionStore.getHeaders()['Cookie'] || '';
         if (!currentCookies.includes('cf_clearance')) {
             console.log(`[Fetcher] 🏠 Clearing Cloudflare...`);
-            await page.goto(origin, { waitUntil: 'commit', timeout: 30000 });
+            await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
             
             // Turnstile Auto-Clicker Loop
             const clickInterval = setInterval(async () => {
