@@ -11,10 +11,10 @@ const VI_GUID = '62f176f3bb1b5b8e70e39932ad34a0c7';
  * Uses Puppeteer only when blocked, then falls back to ultra-fast HTTP.
  */
 export class KissKHScraper {
-    static async search(query: string, isHollywood: boolean = true, signal?: AbortSignal): Promise<any[]> {
-        const type = isHollywood ? 4 : 0;
+    static async search(query: string, isHollywood: boolean = true, signal?: AbortSignal, typeOverride?: number): Promise<any[]> {
+        const type = typeOverride !== undefined ? typeOverride : (isHollywood ? 4 : 0);
         const url = `${KISSKH_API}/DramaList/Search?q=${encodeURIComponent(query)}&type=${type}`;
-        console.log(`[KissKH] Searching: ${query} (Hollywood: ${isHollywood})`);
+        console.log(`[KissKH] Searching: ${query} (Type: ${type})`);
         
         try {
             const data = await hybridFetch(url, { json: true, referer: KISSKH_BASE, signal });

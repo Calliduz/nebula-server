@@ -77,7 +77,6 @@ let isBypassing = false;
 export async function hybridFetch(url: string, options: any = {}) {
     const { referer = '', json = false, forceBrowser = false, timeout = 30000, signal = null } = options;
 
-    // 1. Try Fast HTTP
     if (!forceBrowser) {
         try {
             const headers = sessionStore.getHeaders(referer);
@@ -90,8 +89,6 @@ export async function hybridFetch(url: string, options: any = {}) {
     }
 
     if (signal?.aborted) return null;
-
-    // 2. Browser Bypass Lock
     if (isBypassing) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         return hybridFetch(url, options);
@@ -114,38 +111,54 @@ export async function hybridFetch(url: string, options: any = {}) {
         });
 
         const origin = new URL(url).origin;
+        console.warn(`[Fetcher] 🛡️ Engaging Browser Bypass for: ${origin}`);
+
+        // 1. Visit Home if needed
         const currentCookies = sessionStore.getHeaders()['Cookie'] || '';
-        
-        // Only visit Home if we don't have a clearance cookie
         if (!currentCookies.includes('cf_clearance')) {
-            console.log(`[Fetcher] 🏠 No session. Visiting Home: ${origin}`);
+            console.log(`[Fetcher] 🏠 Visiting Home to clear Cloudflare...`);
             await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            await page.waitForFunction(() => !document.title.toLowerCase().includes('cloudflare'), { timeout: 15000 }).catch(() => {});
+            
+            // Wait for the "Just a moment" page to disappear
+            await page.waitForFunction(() => {
+                const t = document.title.toLowerCase();
+                const b = document.body.innerText.toLowerCase();
+                return !t.includes('just a moment') && !b.includes('checking your browser');
+            }, { timeout: 20000 }).catch(() => {});
         }
 
         if (signal?.aborted) throw new Error('Aborted');
 
+        // 2. Navigation to Target
         console.log(`[Fetcher] 🎯 Targeted Navigation: ${url}`);
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+        // If JSON is expected, wait for the body to contain JSON-like structure
+        if (json) {
+            await page.waitForFunction(() => {
+                const text = document.body.innerText.trim();
+                return text.startsWith('[') || text.startsWith('{');
+            }, { timeout: 10000 }).catch(() => {});
+        }
 
         const cookies = await page.cookies();
         const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
         sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
         
+        const text = await page.evaluate(() => document.body.innerText);
         if (json) {
-            const text = await page.evaluate(() => document.body.innerText);
-            try { return JSON.parse(text); } catch { return text; }
+            try { return JSON.parse(text); } catch (e) {
+                console.error(`[Fetcher] ✘ Failed to parse JSON. Content starts with: ${text.substring(0, 50)}`);
+                return null;
+            }
         }
-        return await page.content();
+        return text;
     } catch (e: any) {
-        if (e.message === 'Aborted' || signal?.aborted) {
-            console.log('[Fetcher] 🛑 Browser task cancelled by user.');
-            return null;
-        }
+        if (e.message === 'Aborted' || signal?.aborted) return null;
         throw e;
     } finally {
         isBypassing = false;
-        await page.close().catch(() => {}); // Close tab but keep browser ALIVE
+        await page.close().catch(() => {});
     }
 }
 

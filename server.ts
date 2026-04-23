@@ -222,9 +222,10 @@ app.get("/api/stream", async (req, res) => {
       } else {
         // Multi-Step Search Strategy
         const searchStrategies = [
-          { q: (kind === 'tv') ? `${title} Season ${season}` : title, hollywood: true },
-          { q: title, hollywood: true },
-          { q: title, hollywood: false } // Fallback to global search
+          { q: (kind === 'tv') ? `${title} Season ${season}` : title, hollywood: true, type: 4 },
+          { q: title, hollywood: true, type: 4 },
+          { q: title, hollywood: false, type: 0 },
+          { q: title, hollywood: false, type: -1 } // Global Search Fallback
         ];
 
         const controller = new AbortController();
@@ -237,9 +238,9 @@ app.get("/api/stream", async (req, res) => {
 
         for (const strategy of searchStrategies) {
           if (match || signal.aborted) break;
-          console.log(`[STREAM] KissKH Search Strategy: "${strategy.q}" (Hollywood: ${strategy.hollywood})`);
+          console.log(`[STREAM] KissKH Search Strategy: "${strategy.q}" (Type: ${strategy.type})`);
           
-          const results = await KissKHScraper.search(strategy.q, strategy.hollywood, signal);
+          const results = await KissKHScraper.search(strategy.q, strategy.type === 4, signal, strategy.type);
           if (!results || results.length === 0) continue;
           if (signal.aborted) break;
 
@@ -248,11 +249,12 @@ app.get("/api/stream", async (req, res) => {
           // Fuzzy Matching Logic
           match = results.find(d => {
             const dTitle = (d.title || '').toLowerCase();
-            const qTitle = strategy.q.toLowerCase();
-            const cleanQ = qTitle.replace(/season \d+/g, '').replace(/\(\d{4}\)/g, '').trim();
-            const cleanD = dTitle.replace(/\(\d{4}\)/g, '').trim();
+            const qTitle = title.toLowerCase(); // Original title without season
+            
+            const cleanQ = qTitle.replace(/[^a-z0-9]/g, '');
+            const cleanD = dTitle.replace(/season \d+/g, '').replace(/[^a-z0-9]/g, '');
 
-            // 1. Basic Title Match
+            // 1. Basic Title Match (Check if one contains the other)
             if (!cleanD.includes(cleanQ) && !cleanQ.includes(cleanD)) return false;
 
             // 2. Year Verification
@@ -261,10 +263,7 @@ app.get("/api/stream", async (req, res) => {
               const yearMatch = dTitle.match(/\((19|20)\d{2}\)/);
               if (yearMatch) {
                 const kisskhYear = yearMatch[0].replace(/[()]/g, '');
-                if (kisskhYear !== yearStr) {
-                  console.log(`[STREAM] Skipping "${d.title}" - Year mismatch`);
-                  return false;
-                }
+                if (kisskhYear !== yearStr) return false;
               }
             }
 
