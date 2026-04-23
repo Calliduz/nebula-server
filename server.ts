@@ -239,12 +239,13 @@ app.get("/api/stream", async (req, res) => {
             if (!dNorm.includes(titleNorm)) return false;
 
             // 2. Year Verification (if both have years, they must match)
-            if (releaseYear) {
+            const yearStr = releaseYear && releaseYear !== 'undefined' ? releaseYear : null;
+            if (yearStr) {
               const yearMatch = d.title.match(/\((19|20)\d{2}\)/);
               if (yearMatch) {
                 const kisskhYear = yearMatch[0].replace(/[()]/g, '');
-                if (kisskhYear !== releaseYear) {
-                  console.log(`[STREAM] Skipping "${d.title}" - Year mismatch (Got ${kisskhYear}, expected ${releaseYear})`);
+                if (kisskhYear !== yearStr) {
+                  console.log(`[STREAM] Skipping "${d.title}" - Year mismatch (Got ${kisskhYear}, expected ${yearStr})`);
                   return false;
                 }
               }
@@ -454,6 +455,34 @@ app.get("/api/stream", async (req, res) => {
 // Proxies TMDB so the API key never lives in the frontend bundle.
 app.get("/api/tv-details/:tmdbId", async (req, res) => {
   const { tmdbId } = req.params;
+  
+  // Handle KissKH IDs (prefixed with 'k')
+  if (tmdbId.startsWith('k')) {
+    const dramaId = parseInt(tmdbId.replace('k', ''));
+    console.log(`[DRAMA] Fetching KissKH details for proxy: ${dramaId}`);
+    try {
+      const details = await KissKHScraper.getDramaDetail(dramaId);
+      if (!details) return res.status(404).json({ error: "Drama not found" });
+      
+      // Normalize to TMDB-like structure for the frontend drawer
+      return res.json({
+        number_of_seasons: 1, // KissKH usually treats all episodes as one season or handles them differently
+        seasons: [{
+          season_number: 1,
+          episode_count: details.episodes?.length || 0,
+          name: "Season 1"
+        }],
+        episodes: (details.episodes || []).map((ep: any) => ({
+          episode_number: ep.number,
+          name: `Episode ${ep.number}`,
+          id: ep.id
+        }))
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   if (!TMDB_API_KEY)
     return res.status(500).json({ error: "TMDB_API_KEY not configured" });
   try {
@@ -681,24 +710,43 @@ app.get("/api/proxy/stream", async (req, res) => {
       .split("\n")
       .map((line) => {
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) {
-          // Rewrite URI= attributes inside tags (e.g. #EXT-X-KEY:URI="...")
-          return line.replace(/URI="([^"]+)"/g, (_match, uri) => {
-            const abs = new URL(uri, targetUrl!).href;
-            return `URI="${withProxy("/api/proxy/segment", encodeURIComponent(abs))}"`;
+        if (!trimmed) return line;
+
+        if (trimmed.startsWith("#")) {
+          // 1. Rewrite URI= attributes inside tags (quoted)
+          let newLine = line.replace(/URI="([^"]+)"/g, (_match, uri) => {
+            try {
+              const abs = new URL(uri, targetUrl!).href;
+              return `URI="${withProxy("/api/proxy/segment", encodeURIComponent(abs))}"`;
+            } catch { return _match; }
           });
+          
+          // 2. Rewrite URI= attributes (unquoted - non-standard but seen)
+          newLine = newLine.replace(/URI=([^",\s][^,\s]*)/g, (_match, uri) => {
+            try {
+              const abs = new URL(uri, targetUrl!).href;
+              return `URI=${withProxy("/api/proxy/segment", encodeURIComponent(abs))}`;
+            } catch { return _match; }
+          });
+
+          return newLine;
         }
-        // Segment lines / variant playlist lines
-        const variantUrl = trimmed.trim();
-        if (!variantUrl || !targetUrl) return "";
-        const abs = new URL(variantUrl, targetUrl!).href;
-        const extMatch =
-          (variantUrl.split("?")[0] || "").split(".").pop() || "";
-        // .m3u8 sub-playlists go through /stream, .ts/.aac go through /segment
-        if (extMatch === "m3u8") {
-          return withProxy("/api/proxy/stream", encodeURIComponent(abs));
+
+        // Segment lines / variant playlist lines (NOT starting with #)
+        try {
+          const variantUrl = trimmed;
+          const abs = new URL(variantUrl, targetUrl!).href;
+          const urlBase = variantUrl.split("?")[0] || "";
+          const ext = urlBase.split(".").pop()?.toLowerCase() || "";
+          
+          // .m3u8 sub-playlists go through /stream, others through /segment
+          if (ext === "m3u8") {
+            return withProxy("/api/proxy/stream", encodeURIComponent(abs));
+          }
+          return withProxy("/api/proxy/segment", encodeURIComponent(abs));
+        } catch {
+          return line;
         }
-        return withProxy("/api/proxy/segment", encodeURIComponent(abs));
       })
       .join("\n");
 
@@ -743,7 +791,7 @@ app.get("/api/proxy/segment", async (req, res) => {
   const buildSegmentConfig = (useProxy: boolean) => {
     const cfg: any = {
       headers: cdnHeaders(targetUrl),
-      responseType: "arraybuffer",
+      responseType: "stream",
       timeout: 30000,
     };
     if (useProxy && segProxy) {
@@ -763,22 +811,20 @@ app.get("/api/proxy/segment", async (req, res) => {
   // Try direct first (saves proxy data). If 403 AND proxy available, retry through proxy.
   try {
     const upstream = await axios.get(targetUrl, buildSegmentConfig(false));
-    const ct = upstream.headers["content-type"] || "video/mp2t";
-    res.setHeader("Content-Type", ct);
+    res.setHeader("Content-Type", upstream.headers["content-type"] || "video/mp2t");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=3600");
-    return res.send(Buffer.from(upstream.data));
+    return upstream.data.pipe(res);
   } catch (directErr: any) {
     const directStatus = directErr?.response?.status;
     // Only retry through proxy on auth errors (403/401) when a proxy is available
     if (segProxy && (directStatus === 403 || directStatus === 401)) {
       try {
         const upstream = await axios.get(targetUrl, buildSegmentConfig(true));
-        const ct = upstream.headers["content-type"] || "video/mp2t";
-        res.setHeader("Content-Type", ct);
+        res.setHeader("Content-Type", upstream.headers["content-type"] || "video/mp2t");
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Cache-Control", "public, max-age=3600");
-        return res.send(Buffer.from(upstream.data));
+        return upstream.data.pipe(res);
       } catch (proxyErr: any) {
         console.error(
           `[PROXY] segment error (proxy fallback): ${targetUrl.substring(0, 80)} — ${proxyErr.message}`,
@@ -993,18 +1039,20 @@ app.get("/api/image", async (req, res) => {
   if (!url) return res.status(400).send("Missing url");
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Proxy upstream error");
-    const arrayBuffer = await response.arrayBuffer();
-
+    const response = await axios.get(url, {
+      responseType: "stream",
+      timeout: 10000,
+      headers: { "User-Agent": UA }
+    });
+    
     // Pass along content type
-    const contentType = response.headers.get("content-type");
+    const contentType = response.headers["content-type"];
     if (contentType) res.setHeader("Content-Type", contentType);
 
     // Add long caching
     res.setHeader("Cache-Control", "public, max-age=31536000");
 
-    res.end(Buffer.from(arrayBuffer));
+    response.data.pipe(res);
   } catch (e: any) {
     res.status(500).send("Image proxy failed");
   }
