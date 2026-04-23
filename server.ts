@@ -227,19 +227,21 @@ app.get("/api/stream", async (req, res) => {
           { q: title, hollywood: false } // Fallback to global search
         ];
 
-        let isAborted = false;
+        const controller = new AbortController();
+        const signal = controller.signal;
+
         req.on('close', () => {
-          isAborted = true;
-          console.log(`[STREAM] User cancelled request. Aborting...`);
+          controller.abort();
+          console.log(`[STREAM] User cancelled request. Aborting Bouncer...`);
         });
 
         for (const strategy of searchStrategies) {
-          if (match || isAborted) break;
+          if (match || signal.aborted) break;
           console.log(`[STREAM] KissKH Search Strategy: "${strategy.q}" (Hollywood: ${strategy.hollywood})`);
           
-          const results = await KissKHScraper.search(strategy.q, strategy.hollywood);
-          if (results.length === 0) continue;
-          if (isAborted) break;
+          const results = await KissKHScraper.search(strategy.q, strategy.hollywood, signal);
+          if (!results || results.length === 0) continue;
+          if (signal.aborted) break;
 
           console.log(`[KissKH] Found ${results.length} results. First 3:`, results.slice(0, 3).map(r => r.title));
 
@@ -280,7 +282,7 @@ app.get("/api/stream", async (req, res) => {
             console.log(`[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`);
           }
         }
-        if (isAborted) throw new Error("Request cancelled by user");
+        if (signal.aborted) throw new Error("Request cancelled by user");
       }
 
       if (match) {
@@ -298,7 +300,7 @@ app.get("/api/stream", async (req, res) => {
           detail = cachedDetail.detail;
         } else {
           console.log(`[STREAM] KissKH Detail Cache MISS. Fetching...`);
-          detail = await KissKHScraper.getDramaDetail(match.id);
+          detail = await KissKHScraper.getDramaDetail(match.id, signal);
           if (detail) {
             const exp = new Date();
             exp.setHours(exp.getHours() + 12);

@@ -11,13 +11,13 @@ const VI_GUID = '62f176f3bb1b5b8e70e39932ad34a0c7';
  * Uses Puppeteer only when blocked, then falls back to ultra-fast HTTP.
  */
 export class KissKHScraper {
-    static async search(query: string, isHollywood: boolean = true): Promise<any[]> {
+    static async search(query: string, isHollywood: boolean = true, signal?: AbortSignal): Promise<any[]> {
         const type = isHollywood ? 4 : 0;
         const url = `${KISSKH_API}/DramaList/Search?q=${encodeURIComponent(query)}&type=${type}`;
         console.log(`[KissKH] Searching: ${query} (Hollywood: ${isHollywood})`);
         
         try {
-            const data = await hybridFetch(url, { json: true, referer: KISSKH_BASE });
+            const data = await hybridFetch(url, { json: true, referer: KISSKH_BASE, signal });
             return Array.isArray(data) ? data : [];
         } catch (e: any) {
             console.error(`[KissKH] Search failed:`, e.message);
@@ -25,11 +25,11 @@ export class KissKHScraper {
         }
     }
 
-    static async getDramaDetail(id: number): Promise<any> {
+    static async getDramaDetail(id: number, signal?: AbortSignal): Promise<any> {
         const url = `${KISSKH_API}/DramaList/Drama/${id}?ispc=false`;
         const referer = `${KISSKH_BASE}/Drama/Detail?id=${id}`;
         try {
-            return await hybridFetch(url, { json: true, referer });
+            return await hybridFetch(url, { json: true, referer, signal });
         } catch (e: any) {
             console.error(`[KissKH] Detail failed:`, e.message);
             return null;

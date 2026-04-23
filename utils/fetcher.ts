@@ -75,9 +75,9 @@ let isBypassing = false;
 
 // ── Hybrid Fetch (Axios → Puppeteer on 403/530) ──────────
 export async function hybridFetch(url: string, options: any = {}) {
-    const { referer = '', json = false, forceBrowser = false, timeout = 20000 } = options;
+    const { referer = '', json = false, forceBrowser = false, timeout = 30000, signal = null } = options;
 
-    // 1. Try Fast HTTP (90% of requests should hit here after the first solve)
+    // 1. Try Fast HTTP
     if (!forceBrowser) {
         try {
             const headers = sessionStore.getHeaders(referer);
@@ -89,20 +89,21 @@ export async function hybridFetch(url: string, options: any = {}) {
         }
     }
 
-    // 2. Browser Bypass (Lock to prevent multiple browsers opening)
+    if (signal?.aborted) return null;
+
+    // 2. Browser Bypass Lock
     if (isBypassing) {
-        console.log('[Fetcher] ⏳ Already solving a challenge. Waiting...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        return hybridFetch(url, options); // Retry HTTP path
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return hybridFetch(url, options);
     }
 
     isBypassing = true;
-    console.warn(`[Fetcher] 🛡️ Engaging Browser Bypass for: ${new URL(url).hostname}`);
-
     const browser = await puppeteerPool.acquire();
     const page = await browser.newPage();
     
     try {
+        if (signal?.aborted) throw new Error('Aborted');
+
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
@@ -112,22 +113,21 @@ export async function hybridFetch(url: string, options: any = {}) {
             }
         });
 
-        // Optimization: Visit HOME PAGE first to clear the whole domain
         const origin = new URL(url).origin;
-        console.log(`[Fetcher] 🏠 Visiting Home: ${origin}`);
-        await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const currentCookies = sessionStore.getHeaders()['Cookie'] || '';
         
-        // Wait for Cloudflare to vanish
-        await page.waitForFunction(() => {
-            const t = document.title.toLowerCase();
-            return !t.includes('just a moment') && !t.includes('cloudflare');
-        }, { timeout: 15000 }).catch(() => {});
+        // Only visit Home if we don't have a clearance cookie
+        if (!currentCookies.includes('cf_clearance')) {
+            console.log(`[Fetcher] 🏠 No session. Visiting Home: ${origin}`);
+            await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForFunction(() => !document.title.toLowerCase().includes('cloudflare'), { timeout: 15000 }).catch(() => {});
+        }
 
-        // Now that we're "in", go to the actual target
-        console.log(`[Fetcher] 🎯 Navigation to Target: ${url}`);
+        if (signal?.aborted) throw new Error('Aborted');
+
+        console.log(`[Fetcher] 🎯 Targeted Navigation: ${url}`);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        // Save session
         const cookies = await page.cookies();
         const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
         sessionStore.update(cookieStr, await page.evaluate(() => navigator.userAgent));
@@ -137,9 +137,15 @@ export async function hybridFetch(url: string, options: any = {}) {
             try { return JSON.parse(text); } catch { return text; }
         }
         return await page.content();
+    } catch (e: any) {
+        if (e.message === 'Aborted' || signal?.aborted) {
+            console.log('[Fetcher] 🛑 Browser task cancelled by user.');
+            return null;
+        }
+        throw e;
     } finally {
         isBypassing = false;
-        await page.close().catch(() => {});
+        await page.close().catch(() => {}); // Close tab but keep browser ALIVE
     }
 }
 
