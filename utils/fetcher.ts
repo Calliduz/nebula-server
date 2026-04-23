@@ -120,14 +120,31 @@ export async function hybridFetch(url: string, options: any = {}) {
             console.log(`[Fetcher] 🏠 Visiting Home to clear Cloudflare...`);
             await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
             
-            // Wait for the real site to load (positive check instead of negative)
             console.log(`[Fetcher] ⏳ Waiting for Cloudflare challenge to pass...`);
+            
+            // Turnstile Auto-Clicker Loop
+            const clickInterval = setInterval(async () => {
+                try {
+                    const iframe = await page.$('iframe');
+                    if (iframe) {
+                        const box = await iframe.boundingBox();
+                        if (box && box.width > 0 && box.height > 0) {
+                            console.log(`[Fetcher] 🖱️ Turnstile detected. Simulating mouse click...`);
+                            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                        }
+                    }
+                } catch (e) {}
+            }, 2000);
+
+            // Wait for the real site to load
             await page.waitForFunction(() => {
                 const t = document.title.toLowerCase();
                 return t.includes('kisskh |') || t.includes('asian dramas & movies');
             }, { timeout: 20000 }).catch(() => {
                 console.log(`[Fetcher] ⚠️ Cloudflare wait timed out or title mismatch, proceeding...`);
             });
+
+            clearInterval(clickInterval);
         }
 
         if (signal?.aborted) throw new Error('Aborted');
