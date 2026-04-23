@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
 import fs from "fs";
+import https from "https";
 import {
   MetadataCache,
   StreamCache,
@@ -618,9 +619,42 @@ function cdnHeaders(targetUrl?: string) {
     "User-Agent": UA,
     Referer: referer,
     Origin: new URL(referer).origin,
-    Accept: "*/*",
     "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "cross-site",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
   };
+}
+
+/**
+ * Creates a TLS-hardened agent that mimics a browser's JA3 fingerprint.
+ * This helps bypass CDN blocks that detect standard Node.js handshakes.
+ */
+function createHardenedAgent(proxyUrl?: string) {
+  const tlsOptions: https.AgentOptions = {
+    // Chrome-like ciphers
+    ciphers: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305",
+    honorCipherOrder: true,
+    minVersion: "TLSv1.2",
+    ecdhCurve: "X25519:P-256:P-384",
+  };
+
+  if (proxyUrl) {
+    const safeProxy = proxyUrl.endsWith("/") ? proxyUrl.slice(0, -1) : proxyUrl;
+    const JarlessHttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
+    return new JarlessHttpsCookieProxyAgent(safeProxy, {
+      ...tlsOptions,
+      cookies: { jar: new CookieJar() as any },
+    });
+  }
+
+  const JarlessHttpsCookieAgent = createCookieAgent(https.Agent);
+  return new JarlessHttpsCookieAgent({
+    ...tlsOptions,
+    cookies: { jar: new CookieJar() as any },
+  });
 }
 
 // Proxy: .m3u8 manifest — fetches and rewrites segment/variant URLs
@@ -677,10 +711,7 @@ app.get("/api/proxy/stream", async (req, res) => {
       const safeProxy = streamProxy.endsWith("/")
         ? streamProxy.slice(0, -1)
         : streamProxy;
-      const JarlessHttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
-      const agent = new JarlessHttpsCookieProxyAgent(safeProxy, {
-        cookies: { jar: new CookieJar() as any },
-      });
+      const agent = createHardenedAgent(streamProxy);
       config.httpAgent = agent;
       config.httpsAgent = agent;
       console.log(
@@ -706,8 +737,10 @@ app.get("/api/proxy/stream", async (req, res) => {
     // Build a helper that appends the proxy to a rewritten URL so every
     // sub-playlist / segment request goes through the same residential IP.
     const withProxy = (endpoint: string, encodedUrl: string) => {
-      // Use absolute URL for the proxy to avoid origin confusion
-      const currentHost = process.env.API_URL || `${req.protocol}://${req.get("host")}`;
+      // Use absolute URL for the proxy to avoid origin confusion.
+      // Render and other proxies terminate TLS, so we must check x-forwarded-proto.
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+      const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
       const proxyParam = streamProxy ? `&nebula_proxy=${encodeURIComponent(streamProxy!)}` : "";
       return `${currentHost}${endpoint}?url=${encodedUrl}${proxyParam}`;
     };
@@ -808,13 +841,12 @@ app.get("/api/proxy/segment", async (req, res) => {
       timeout: 30000,
     };
     if (useProxy && segProxy) {
-      const safeProxy = segProxy.endsWith("/")
-        ? segProxy.slice(0, -1)
-        : segProxy;
-      const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
-      const agent = new HttpsCookieProxyAgent(safeProxy, {
-        cookies: { jar: new CookieJar() as any },
-      });
+      const agent = createHardenedAgent(segProxy);
+      cfg.httpAgent = agent;
+      cfg.httpsAgent = agent;
+    } else {
+      // Even without a proxy, use a hardened agent to avoid fingerprint detection
+      const agent = createHardenedAgent();
       cfg.httpAgent = agent;
       cfg.httpsAgent = agent;
     }
@@ -1052,10 +1084,13 @@ app.get("/api/image", async (req, res) => {
   if (!url) return res.status(400).send("Missing url");
 
   try {
+    const agent = createHardenedAgent();
     const response = await axios.get(url, {
       responseType: "stream",
       timeout: 10000,
-      headers: { "User-Agent": UA }
+      headers: { "User-Agent": UA },
+      httpAgent: agent,
+      httpsAgent: agent,
     });
     
     // Pass along content type
