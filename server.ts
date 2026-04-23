@@ -4,22 +4,32 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
 import fs from "fs";
-import { MetadataCache, StreamCache, SubtitleCache, DiscoveryCache, DramaDetailCache } from "./models/Cache.js";
+import {
+  MetadataCache,
+  StreamCache,
+  SubtitleCache,
+  DiscoveryCache,
+  DramaDetailCache,
+} from "./models/Cache.js";
 import { getSubtitles } from "./utils/subtitles.js";
-import { 
-  scrapeVsembed, 
-  scrapeNetMirror, 
-  scrapeHDHub4U, 
-  scrapeFourKHDHub, 
+import {
+  scrapeVsembed,
+  scrapeNetMirror,
+  scrapeHDHub4U,
+  scrapeFourKHDHub,
   scrapeStreamflix,
-  startHeartbeat, 
-  stopHeartbeat, 
-  UA, 
-  type MirrorStream 
+  startHeartbeat,
+  stopHeartbeat,
+  UA,
+  type MirrorStream,
 } from "./utils/scraper.js";
 import { KissKHScraper } from "./utils/kisskh.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { HttpCookieAgent, HttpsCookieAgent, createCookieAgent } from "http-cookie-agent/http";
+import {
+  HttpCookieAgent,
+  HttpsCookieAgent,
+  createCookieAgent,
+} from "http-cookie-agent/http";
 import { CookieJar } from "tough-cookie";
 
 // Load Environment Variables
@@ -30,13 +40,16 @@ app.use(cors());
 app.use(express.json());
 
 // Initialize MongoDB
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/nebula-local";
+const MONGODB_URI =
+  process.env.MONGODB_URI || "mongodb://localhost:27017/nebula-local";
 const FANART_API_KEY = process.env.FANART_API_KEY || "";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 const ADMIN_KEY = process.env.ADMIN_KEY || "nebula-admin-2026";
 
 // VidSrc embed host — swap VIDSRC_EMBED_HOST in .env if the domain changes
-const VIDSRC_EMBED_HOST = (process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru").replace(/\/$/, "");
+const VIDSRC_EMBED_HOST = (
+  process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru"
+).replace(/\/$/, "");
 
 // Residential Proxy Fallback
 const RESIDENTIAL_PROXY = process.env.RESIDENTIAL_PROXY;
@@ -50,7 +63,9 @@ function loadProxyPool() {
   if (fs.existsSync(PROXIES_FILE)) {
     try {
       proxyPool = JSON.parse(fs.readFileSync(PROXIES_FILE, "utf-8"));
-      console.log(`[PROXY] Pool loaded: ${proxyPool.length} proxies available.`);
+      console.log(
+        `[PROXY] Pool loaded: ${proxyPool.length} proxies available.`,
+      );
     } catch (e: any) {
       console.error(`[PROXY] Failed to parse ${PROXIES_FILE}:`, e.message);
     }
@@ -116,11 +131,11 @@ app.get("/api/health", (req, res) => {
 
 // Endpoint: Fetch Media Stream
 app.get("/api/stream", async (req, res) => {
-  const tmdbId    = req.query.tmdbId as string;
-  const kind      = req.query.type as "movie" | "tv";
-  const title     = (req.query.title as string) || "";
-  const season    = parseInt((req.query.season as string) || "1", 10);
-  const episode   = parseInt((req.query.episode as string) || "1", 10);
+  const tmdbId = req.query.tmdbId as string;
+  const kind = req.query.type as "movie" | "tv";
+  const title = (req.query.title as string) || "";
+  const season = parseInt((req.query.season as string) || "1", 10);
+  const episode = parseInt((req.query.episode as string) || "1", 10);
 
   if (!tmdbId || !kind) {
     return res.status(400).json({ error: "Missing tmdbId or type" });
@@ -128,7 +143,12 @@ app.get("/api/stream", async (req, res) => {
 
   try {
     // 1. Check the stream cache first (expires every 4 hours)
-    const cachedRecord = await StreamCache.findOne({ tmdbId, type: kind, season, episode }).catch(() => null);
+    const cachedRecord = await StreamCache.findOne({
+      tmdbId,
+      type: kind,
+      season,
+      episode,
+    }).catch(() => null);
     if (cachedRecord?.streamUrl && cachedRecord?.streamExpiresAt) {
       if (new Date() < cachedRecord.streamExpiresAt) {
         // Liveness check — probe the .m3u8 with a HEAD request to confirm the token is still valid.
@@ -138,8 +158,8 @@ app.get("/api/stream", async (req, res) => {
           const probe = await axios.head(cachedRecord.streamUrl, {
             timeout: 4000,
             headers: {
-              'User-Agent': 'Mozilla/5.0',
-              'Referer': 'https://cloudnestra.com/',
+              "User-Agent": "Mozilla/5.0",
+              Referer: "https://cloudnestra.com/",
             },
             validateStatus: (s) => s < 400,
           });
@@ -149,16 +169,20 @@ app.get("/api/stream", async (req, res) => {
         }
 
         if (linkAlive) {
-          console.log(`[STREAM] Cache HIT ✔ (link alive) for ${tmdbId} S${season}E${episode}`);
+          console.log(
+            `[STREAM] Cache HIT ✔ (link alive) for ${tmdbId} S${season}E${episode}`,
+          );
           return res.json({
             streamUrl: cachedRecord.streamUrl,
-            source: cachedRecord.source || 'cache',
-            qualityTag: cachedRecord.qualityTag || 'UNKNOWN',
-            resolution: cachedRecord.resolution || 'UNKNOWN',
+            source: cachedRecord.source || "cache",
+            qualityTag: cachedRecord.qualityTag || "UNKNOWN",
+            resolution: cachedRecord.resolution || "UNKNOWN",
             mirrors: cachedRecord.mirrors || [],
           });
         } else {
-          console.warn(`[STREAM] Cache HIT ✘ (dead token) for ${tmdbId} — re-scraping...`);
+          console.warn(
+            `[STREAM] Cache HIT ✘ (dead token) for ${tmdbId} — re-scraping...`,
+          );
           // Invalidate the dead record immediately so the TTL index doesn't hold it longer
           await StreamCache.findOneAndUpdate(
             { tmdbId, type: kind, season, episode },
@@ -182,6 +206,7 @@ app.get("/api/stream", async (req, res) => {
     console.log(`[STREAM] Phase 0: Checking KissKH (Extreme Fast Path)...`);
     try {
       const origin = req.query.origin as string;
+      const releaseYear = req.query.releaseYear as string;
       const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
       const titleNorm = normalize(title);
       
@@ -192,38 +217,73 @@ app.get("/api/stream", async (req, res) => {
         console.log(`[STREAM] KissKH origin detected. Using ID ${dramaId} directly.`);
         match = { id: dramaId, title: title };
       } else {
-        const searchQuery = (kind === 'tv') ? `${title} Season ${season}` : title;
-        const queryNorm = normalize(searchQuery);
+        // Multi-Step Search Strategy
+        const searchStrategies = [
+          { q: (kind === 'tv') ? `${title} Season ${season}` : title, hollywood: true },
+          { q: title, hollywood: true },
+          { q: title, hollywood: false } // Fallback to global search
+        ];
 
-        console.log(`[STREAM] KissKH Query: "${searchQuery}" (Normalized: "${queryNorm}")`);
-        
-        let kisskhResults = await KissKHScraper.search(searchQuery, true); // Try Hollywood first
-        if (kisskhResults.length === 0) {
-          kisskhResults = await KissKHScraper.search(title, true); // Try just title
-        }
-        if (kisskhResults.length === 0) {
-          kisskhResults = await KissKHScraper.search(title, false); // Fallback to ALL
-        }
-        
-        // Flexible Matching
-        match = kisskhResults.find(d => {
-          const dNorm = normalize(d.title);
-          if (kind === 'tv') {
-            // Match title AND (Season X OR just title if no season-specific results exist)
-            const matchesTitle = dNorm.includes(titleNorm);
-            const matchesSeason = dNorm.includes(normalize(`Season ${season}`));
-            return matchesTitle && (matchesSeason || kisskhResults.length === 1);
+        for (const strategy of searchStrategies) {
+          if (match) break;
+          console.log(`[STREAM] KissKH Search Strategy: "${strategy.q}" (Hollywood: ${strategy.hollywood})`);
+          
+          const results = await KissKHScraper.search(strategy.q, strategy.hollywood);
+          if (results.length === 0) continue;
+
+          // Fuzzy Matching Logic
+          match = results.find(d => {
+            const dNorm = normalize(d.title);
+            
+            // 1. Basic Title Match
+            if (!dNorm.includes(titleNorm)) return false;
+
+            // 2. Year Verification (if both have years, they must match)
+            if (releaseYear) {
+              const yearMatch = d.title.match(/\((19|20)\d{2}\)/);
+              if (yearMatch) {
+                const kisskhYear = yearMatch[0].replace(/[()]/g, '');
+                if (kisskhYear !== releaseYear) {
+                  console.log(`[STREAM] Skipping "${d.title}" - Year mismatch (Got ${kisskhYear}, expected ${releaseYear})`);
+                  return false;
+                }
+              }
+            }
+
+            // 3. Season Matching (TV only)
+            if (kind === 'tv') {
+              const sNum = parseInt(season.toString());
+              const seasonVariants = [
+                normalize(`Season ${sNum}`),
+                normalize(`Season ${sNum.toString().padStart(2, '0')}`),
+                `s${sNum}`,
+                `s${sNum.toString().padStart(2, '0')}`
+              ];
+              
+              const hasSeasonMatch = seasonVariants.some(v => dNorm.includes(v));
+              // If it's the only result for the title, we can be less strict if no season is found in title
+              return hasSeasonMatch || (results.length === 1 && dNorm.includes(titleNorm));
+            }
+
+            return true; // Movie match
+          });
+
+          if (match) {
+            console.log(`[STREAM] Match verified via strategy: "${strategy.q}"`);
           }
-          return dNorm === titleNorm || dNorm.includes(titleNorm);
-        });
+        }
       }
-      
+
       if (match) {
-        console.log(`[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`);
-        
+        console.log(
+          `[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`,
+        );
+
         // Check Detail Cache
         let detail: any = null;
-        const cachedDetail = await DramaDetailCache.findOne({ dramaId: match.id });
+        const cachedDetail = await DramaDetailCache.findOne({
+          dramaId: match.id,
+        });
         if (cachedDetail) {
           console.log(`[STREAM] KissKH Detail Cache HIT for ID ${match.id}`);
           detail = cachedDetail.detail;
@@ -236,14 +296,15 @@ app.get("/api/stream", async (req, res) => {
             await DramaDetailCache.findOneAndUpdate(
               { dramaId: match.id },
               { detail, expiresAt: exp },
-              { upsert: true }
+              { upsert: true },
             ).catch(() => null);
           }
         }
 
-        if (!detail) throw new Error("Could not fetch drama details from KissKH");
-        
-        const targetEpNum = (kind === 'movie') ? 0 : episode;
+        if (!detail)
+          throw new Error("Could not fetch drama details from KissKH");
+
+        const targetEpNum = kind === "movie" ? 0 : episode;
         let ep = detail.episodes.find((e: any) => {
           const epNum = parseFloat(e.number);
           const reqNum = parseFloat(targetEpNum.toString());
@@ -251,11 +312,17 @@ app.get("/api/stream", async (req, res) => {
         });
 
         // Fallback: If we can't find an exact match for the first episode/movie, take the first item in the list
-        if (!ep && detail.episodes.length > 0 && (targetEpNum === 1 || targetEpNum === 0)) {
-          console.log(`[STREAM] KissKH Fallback: Exact match failed for ep ${targetEpNum}, using first available episode.`);
+        if (
+          !ep &&
+          detail.episodes.length > 0 &&
+          (targetEpNum === 1 || targetEpNum === 0)
+        ) {
+          console.log(
+            `[STREAM] KissKH Fallback: Exact match failed for ep ${targetEpNum}, using first available episode.`,
+          );
           ep = detail.episodes[0];
         }
-        
+
         if (ep) {
           const kisskhMirrors = await KissKHScraper.getStream(match.id, ep.id);
           if (kisskhMirrors.length > 0) {
@@ -263,7 +330,9 @@ app.get("/api/stream", async (req, res) => {
             mirrors.push(...kisskhMirrors);
           }
         } else {
-          console.warn(`[STREAM] KissKH: Episode ${episode} not found. Available: ${detail.episodes.length} eps.`);
+          console.warn(
+            `[STREAM] KissKH: Episode ${episode} not found. Available: ${detail.episodes.length} eps.`,
+          );
         }
       } else {
         console.warn(`[STREAM] KissKH: No title match found for "${title}".`);
@@ -274,7 +343,9 @@ app.get("/api/stream", async (req, res) => {
 
     // ── Tier 1 & 2 Fallbacks (Disabled by User Request) ──────────────────
     if (mirrors.length === 0) {
-      console.log(`[STREAM] Phase 0: No KissKH result found. Fallbacks are currently disabled.`);
+      console.log(
+        `[STREAM] Phase 0: No KissKH result found. Fallbacks are currently disabled.`,
+      );
     }
 
     const allSubtitles: any[] = [];
@@ -285,7 +356,7 @@ app.get("/api/stream", async (req, res) => {
       qualityTag = resolution.includes("2160") ? "4K" : "HD";
 
       // Collect all subtitles from mirrors
-      mirrors.forEach(m => {
+      mirrors.forEach((m) => {
         if (m.subtitles) {
           allSubtitles.push(...m.subtitles);
         }
@@ -303,15 +374,15 @@ app.get("/api/stream", async (req, res) => {
       expiresAt.setHours(expiresAt.getHours() + 4);
       StreamCache.findOneAndUpdate(
         { tmdbId, type: kind, season, episode },
-        { 
-          streamUrl, 
-          source: sourceName, 
-          qualityTag, 
-          resolution, 
-          mirrors, 
-          streamExpiresAt: expiresAt 
+        {
+          streamUrl,
+          source: sourceName,
+          qualityTag,
+          resolution,
+          mirrors,
+          streamExpiresAt: expiresAt,
         },
-        { upsert: true }
+        { upsert: true },
       ).catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
     }
 
@@ -325,12 +396,14 @@ app.get("/api/stream", async (req, res) => {
       } catch {}
     }
 
-    console.log(`[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`);
-    
-    return res.json({ 
-      streamUrl: finalUrl, 
+    console.log(
+      `[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`,
+    );
+
+    return res.json({
+      streamUrl: finalUrl,
       streams: [finalUrl],
-      mirrors: mirrors.map(m => {
+      mirrors: mirrors.map((m) => {
         // Inject proxy if needed for the specific mirror (vsembed)
         if (m.source.includes("vsembed") && proxyUsed) {
           try {
@@ -341,9 +414,12 @@ app.get("/api/stream", async (req, res) => {
         }
         // Inject subtitle proxy for .srt or KissKH subs
         if (m.subtitles) {
-          m.subtitles = m.subtitles.map(s => {
-            if (s.url.toLowerCase().endsWith('.srt') || s.source === 'KissKH') {
-              return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
+          m.subtitles = m.subtitles.map((s) => {
+            if (s.url.toLowerCase().endsWith(".srt") || s.source === "KissKH") {
+              return {
+                ...s,
+                url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
+              };
             }
             return s;
           });
@@ -351,20 +427,26 @@ app.get("/api/stream", async (req, res) => {
 
         return m;
       }),
-      subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(s => {
-        if (s.url.toLowerCase().endsWith('.srt') || s.source === 'KissKH') {
-          return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
-        }
-        return s;
-      }),
-      source: sourceName, 
-      qualityTag, 
-      resolution 
+      subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(
+        (s) => {
+          if (s.url.toLowerCase().endsWith(".srt") || s.source === "KissKH") {
+            return {
+              ...s,
+              url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
+            };
+          }
+          return s;
+        },
+      ),
+      source: sourceName,
+      qualityTag,
+      resolution,
     });
-
   } catch (error: any) {
     console.error(`[STREAM] ✘ Failed for tmdbId=${tmdbId}: ${error.message}`);
-    return res.status(404).json({ error: error.message || "No stream sources found." });
+    return res
+      .status(404)
+      .json({ error: error.message || "No stream sources found." });
   }
 });
 
@@ -372,7 +454,8 @@ app.get("/api/stream", async (req, res) => {
 // Proxies TMDB so the API key never lives in the frontend bundle.
 app.get("/api/tv-details/:tmdbId", async (req, res) => {
   const { tmdbId } = req.params;
-  if (!TMDB_API_KEY) return res.status(500).json({ error: "TMDB_API_KEY not configured" });
+  if (!TMDB_API_KEY)
+    return res.status(500).json({ error: "TMDB_API_KEY not configured" });
   try {
     const r = await axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}`, {
       headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
@@ -386,9 +469,9 @@ app.get("/api/tv-details/:tmdbId", async (req, res) => {
 
 // Endpoint: Fetch Subtitles (Lazy Load / Aggregated Background Request)
 app.get("/api/subtitles", async (req, res) => {
-  const tmdbId  = req.query.tmdbId as string;
-  const kind    = req.query.type as "movie" | "tv";
-  const season  = parseInt((req.query.season as string) || "1", 10);
+  const tmdbId = req.query.tmdbId as string;
+  const kind = req.query.type as "movie" | "tv";
+  const season = parseInt((req.query.season as string) || "1", 10);
   const episode = parseInt((req.query.episode as string) || "1", 10);
 
   if (!tmdbId || !kind) {
@@ -397,15 +480,22 @@ app.get("/api/subtitles", async (req, res) => {
 
   try {
     // 1. Check permanent cache first
-    const cached = await SubtitleCache.findOne({ tmdbId, type: kind, season, episode });
+    const cached = await SubtitleCache.findOne({
+      tmdbId,
+      type: kind,
+      season,
+      episode,
+    });
     if (cached && cached.subtitles?.length > 0) {
       console.log(`[SUBS] Cache HIT for ${tmdbId} S${season}E${episode}`);
       return res.json({ subtitles: cached.subtitles });
     }
 
     // 2. Aggregate from trackers in parallel
-    console.log(`[SUBS] Aggregating tracks for ${tmdbId} S${season}E${episode}...`);
-    
+    console.log(
+      `[SUBS] Aggregating tracks for ${tmdbId} S${season}E${episode}...`,
+    );
+
     // Using allSettled so one tracker failing doesn't kill the whole request
     const results = await Promise.allSettled([
       getSubtitles(tmdbId, kind, season, episode),
@@ -413,21 +503,24 @@ app.get("/api/subtitles", async (req, res) => {
     ]);
 
     const aggregated = results
-      .filter(r => r.status === "fulfilled")
-      .flatMap(r => (r as PromiseFulfilledResult<any[]>).value);
+      .filter((r) => r.status === "fulfilled")
+      .flatMap((r) => (r as PromiseFulfilledResult<any[]>).value);
 
     // 3. Save to permanent cache
     if (aggregated.length > 0) {
       await SubtitleCache.findOneAndUpdate(
         { tmdbId, type: kind, season, episode },
         { subtitles: aggregated, aggregatedAt: new Date() },
-        { upsert: true }
+        { upsert: true },
       ).catch(() => null);
     }
 
-    const proxied = aggregated.map(s => {
-      if (s.url.toLowerCase().endsWith('.srt')) {
-        return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
+    const proxied = aggregated.map((s) => {
+      if (s.url.toLowerCase().endsWith(".srt")) {
+        return {
+          ...s,
+          url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
+        };
       }
       return s;
     });
@@ -478,20 +571,25 @@ const CDN_REFERER = "https://cloudnestra.com/";
 
 function cdnHeaders(targetUrl?: string) {
   let referer = CDN_REFERER;
-  
+
   if (targetUrl) {
     const lower = targetUrl.toLowerCase();
     // Auto-detect KissKH CDNs and use the correct referer
-    if (lower.includes("kisskh") || lower.includes("cdnvideo") || /stream\d+\.store/.test(lower) || lower.includes("stream.store")) {
-       referer = "https://kisskh.do";
+    if (
+      lower.includes("kisskh") ||
+      lower.includes("cdnvideo") ||
+      /stream\d+\.store/.test(lower) ||
+      lower.includes("stream.store")
+    ) {
+      referer = "https://kisskh.do";
     }
   }
 
   return {
     "User-Agent": UA,
-    "Referer":    referer,
-    "Origin":     new URL(referer).origin,
-    "Accept": "*/*",
+    Referer: referer,
+    Origin: new URL(referer).origin,
+    Accept: "*/*",
     "Accept-Language": "en-US,en;q=0.9",
   };
 }
@@ -502,8 +600,11 @@ app.get("/api/proxy/stream", async (req, res) => {
   if (!raw) return res.status(400).send("Missing url");
 
   let targetUrl: string;
-  try { targetUrl = decodeURIComponent(raw); }
-  catch { return res.status(400).send("Invalid url encoding"); }
+  try {
+    targetUrl = decodeURIComponent(raw);
+  } catch {
+    return res.status(400).send("Invalid url encoding");
+  }
 
   // Extract proxy from two possible locations:
   // 1. Baked into the target CDN URL as ?nebula_proxy=... (master playlist, set by /api/stream)
@@ -513,7 +614,9 @@ app.get("/api/proxy/stream", async (req, res) => {
   // Check direct request param first (variant playlists)
   const directProxy = req.query.nebula_proxy as string | undefined;
   if (directProxy) {
-    try { streamProxy = decodeURIComponent(directProxy); } catch {}
+    try {
+      streamProxy = decodeURIComponent(directProxy);
+    } catch {}
   }
 
   // Fall back to baked-in param inside the target URL (master playlist)
@@ -529,7 +632,9 @@ app.get("/api/proxy/stream", async (req, res) => {
     } catch {}
   }
 
-  console.log(`[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`);
+  console.log(
+    `[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`,
+  );
 
   try {
     const config: any = {
@@ -540,14 +645,22 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     // Use the proxy for the manifest if one was used for the scrape (satisfies CDN IP check)
     if (streamProxy) {
-      const safeProxy = streamProxy.endsWith("/") ? streamProxy.slice(0, -1) : streamProxy;
+      const safeProxy = streamProxy.endsWith("/")
+        ? streamProxy.slice(0, -1)
+        : streamProxy;
       const JarlessHttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
-      const agent = new JarlessHttpsCookieProxyAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
+      const agent = new JarlessHttpsCookieProxyAgent(safeProxy, {
+        cookies: { jar: new CookieJar() as any },
+      });
       config.httpAgent = agent;
       config.httpsAgent = agent;
-      console.log(`[PROXY/stream] Using residential proxy: ${safeProxy.substring(0, 40)}...`);
+      console.log(
+        `[PROXY/stream] Using residential proxy: ${safeProxy.substring(0, 40)}...`,
+      );
     } else {
-      console.log(`[PROXY/stream] ⚠ No proxy — CDN may reject if IP differs from scrape`);
+      console.log(
+        `[PROXY/stream] ⚠ No proxy — CDN may reject if IP differs from scrape`,
+      );
     }
 
     const upstream = await axios.get(targetUrl, config);
@@ -566,7 +679,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     // Rewrite every URL in the manifest through our proxy
     const proxified = manifest
       .split("\n")
-      .map(line => {
+      .map((line) => {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#")) {
           // Rewrite URI= attributes inside tags (e.g. #EXT-X-KEY:URI="...")
@@ -579,7 +692,8 @@ app.get("/api/proxy/stream", async (req, res) => {
         const variantUrl = trimmed.trim();
         if (!variantUrl || !targetUrl) return "";
         const abs = new URL(variantUrl, targetUrl!).href;
-        const extMatch = (variantUrl.split("?")[0] || "").split(".").pop() || "";
+        const extMatch =
+          (variantUrl.split("?")[0] || "").split(".").pop() || "";
         // .m3u8 sub-playlists go through /stream, .ts/.aac go through /segment
         if (extMatch === "m3u8") {
           return withProxy("/api/proxy/stream", encodeURIComponent(abs));
@@ -592,17 +706,17 @@ app.get("/api/proxy/stream", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "no-cache");
     return res.send(proxified);
-
   } catch (e: any) {
     const status = e?.response?.status ?? "no-response";
     const body = String(e?.response?.data ?? "").substring(0, 200);
     const url = targetUrl.substring(0, 100);
-    console.error(`[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${url}`);
+    console.error(
+      `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${url}`,
+    );
     if (body) console.error(`[PROXY/stream] CDN response: ${body}`);
     return res.status(502).send("Proxy upstream error");
   }
 });
-
 
 // Proxy: raw segment / AES key — pass-through binary stream
 // Uses residential proxy only when nebula_proxy is passed (IP-auth CDNs like roilandrelic.website)
@@ -611,14 +725,19 @@ app.get("/api/proxy/segment", async (req, res) => {
   if (!raw) return res.status(400).send("Missing url");
 
   let targetUrl: string;
-  try { targetUrl = decodeURIComponent(raw); }
-  catch { return res.status(400).send("Invalid url encoding"); }
+  try {
+    targetUrl = decodeURIComponent(raw);
+  } catch {
+    return res.status(400).send("Invalid url encoding");
+  }
 
   // Read the proxy param if the manifest rewriter passed one
   const rawProxy = req.query.nebula_proxy as string | undefined;
   let segProxy: string | undefined;
   if (rawProxy) {
-    try { segProxy = decodeURIComponent(rawProxy); } catch {}
+    try {
+      segProxy = decodeURIComponent(rawProxy);
+    } catch {}
   }
 
   const buildSegmentConfig = (useProxy: boolean) => {
@@ -628,9 +747,13 @@ app.get("/api/proxy/segment", async (req, res) => {
       timeout: 30000,
     };
     if (useProxy && segProxy) {
-      const safeProxy = segProxy.endsWith("/") ? segProxy.slice(0, -1) : segProxy;
+      const safeProxy = segProxy.endsWith("/")
+        ? segProxy.slice(0, -1)
+        : segProxy;
       const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
-      const agent = new HttpsCookieProxyAgent(safeProxy, { cookies: { jar: new CookieJar() as any } });
+      const agent = new HttpsCookieProxyAgent(safeProxy, {
+        cookies: { jar: new CookieJar() as any },
+      });
       cfg.httpAgent = agent;
       cfg.httpsAgent = agent;
     }
@@ -657,15 +780,18 @@ app.get("/api/proxy/segment", async (req, res) => {
         res.setHeader("Cache-Control", "public, max-age=3600");
         return res.send(Buffer.from(upstream.data));
       } catch (proxyErr: any) {
-        console.error(`[PROXY] segment error (proxy fallback): ${targetUrl.substring(0, 80)} — ${proxyErr.message}`);
+        console.error(
+          `[PROXY] segment error (proxy fallback): ${targetUrl.substring(0, 80)} — ${proxyErr.message}`,
+        );
         return res.status(502).send("Proxy segment error");
       }
     }
-    console.error(`[PROXY] segment error: ${targetUrl.substring(0, 80)} — ${directErr.message}`);
+    console.error(
+      `[PROXY] segment error: ${targetUrl.substring(0, 80)} — ${directErr.message}`,
+    );
     return res.status(502).send("Proxy segment error");
   }
 });
-
 
 // Proxy: subtitles — fetches SRT/VTT, converts SRT to VTT if needed
 app.get("/api/proxy/subtitle", async (req, res) => {
@@ -673,8 +799,11 @@ app.get("/api/proxy/subtitle", async (req, res) => {
   if (!raw) return res.status(400).send("Missing url");
 
   let targetUrl: string;
-  try { targetUrl = decodeURIComponent(raw); }
-  catch { return res.status(400).send("Invalid url encoding"); }
+  try {
+    targetUrl = decodeURIComponent(raw);
+  } catch {
+    return res.status(400).send("Invalid url encoding");
+  }
 
   console.log(`[PROXY/sub] ▶ ${targetUrl.substring(0, 80)}`);
 
@@ -684,15 +813,18 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       timeout: 15000,
       headers: {
         "User-Agent": UA,
-        "Referer": "https://kisskh.do/",
-        "Origin": "https://kisskh.do",
-      }
+        Referer: "https://kisskh.do/",
+        Origin: "https://kisskh.do",
+      },
     });
 
     let content: string = upstream.data;
 
     // SRT → VTT conversion
-    if (targetUrl.toLowerCase().endsWith(".srt") || (!content.startsWith("WEBVTT") && content.includes(" --> "))) {
+    if (
+      targetUrl.toLowerCase().endsWith(".srt") ||
+      (!content.startsWith("WEBVTT") && content.includes(" --> "))
+    ) {
       if (!content.startsWith("WEBVTT")) {
         content = "WEBVTT\n\n" + content;
       }
@@ -704,24 +836,24 @@ app.get("/api/proxy/subtitle", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=86400");
     return res.send(content);
-
   } catch (e: any) {
     console.error(`[PROXY/sub] ✘ Error: ${e.message}`);
     return res.status(502).send("Subtitle proxy error");
   }
 });
 
-
-
 app.all("/api/cache/clear", async (req, res) => {
   const key = req.headers["x-admin-key"] || req.query.key;
-  if (key !== ADMIN_KEY) return res.status(401).json({ error: "Unauthorized access — specify ?key= in URL" });
-  
+  if (key !== ADMIN_KEY)
+    return res
+      .status(401)
+      .json({ error: "Unauthorized access — specify ?key= in URL" });
+
   try {
     await Promise.all([
       MetadataCache.deleteMany({}),
       DiscoveryCache.deleteMany({}),
-      DramaDetailCache.deleteMany({})
+      DramaDetailCache.deleteMany({}),
     ]);
     console.log("Registry Cache Flushed Successfully");
     res.json({
@@ -782,16 +914,16 @@ app.get("/api/drama/list", async (req, res) => {
 
     console.log(`[DISCOVERY] Cache MISS. Fetching KissKH Explore...`);
     const list = await KissKHScraper.getExploreList(type, country, page, order);
-    const results = list.map(d => ({
+    const results = list.map((d) => ({
       id: `k${d.id}`,
       title: d.title,
       image: d.thumbnail,
-      type: 'tv',
-      genre: 'Drama',
+      type: "tv",
+      genre: "Drama",
       rating: d.rating,
       countryId: d.countryId || (country ? parseInt(country.toString()) : 0),
-      origin: 'kisskh',
-      isDrama: true
+      origin: "kisskh",
+      isDrama: true,
     }));
 
     // Save to Cache (1 hour)
@@ -800,7 +932,7 @@ app.get("/api/drama/list", async (req, res) => {
     await DiscoveryCache.findOneAndUpdate(
       { key: cacheKey },
       { results, expiresAt: expires },
-      { upsert: true }
+      { upsert: true },
     ).catch(() => null);
 
     return res.json({ results });
@@ -812,8 +944,8 @@ app.get("/api/drama/list", async (req, res) => {
 
 app.get("/api/drama/detail/:id", async (req, res) => {
   const { id } = req.params;
-  const dramaId = parseInt(id.replace('k', ''));
-  
+  const dramaId = parseInt(id.replace("k", ""));
+
   try {
     const cached = await DramaDetailCache.findOne({ dramaId });
     if (cached) {
@@ -824,26 +956,31 @@ app.get("/api/drama/detail/:id", async (req, res) => {
     console.log(`[DRAMA] Cache MISS for detail ${id}. Fetching...`);
     const details = await KissKHScraper.getDramaDetail(dramaId);
     if (!details) return res.status(404).json({ error: "Drama not found" });
-    
+
     // Normalize episodes
     const normalized = {
       ...details,
-      episodes: (details.episodes || []).map((ep: any) => ({
-        episode_number: ep.number,
-        name: `Episode ${ep.number}`,
-        overview: "",
-        still_path: details.thumbnail,
-        air_date: "",
-        id: ep.id
-      })).sort((a: any, b: any) => a.episode_number - b.episode_number)
+      episodes: (details.episodes || [])
+        .map((ep: any) => ({
+          episode_number: ep.number,
+          name: `Episode ${ep.number}`,
+          overview: "",
+          still_path: details.thumbnail,
+          air_date: "",
+          id: ep.id,
+        }))
+        .sort((a: any, b: any) => a.episode_number - b.episode_number),
     };
-    
+
     await DramaDetailCache.findOneAndUpdate(
       { dramaId },
-      { detail: normalized, expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24) },
-      { upsert: true }
+      {
+        detail: normalized,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      },
+      { upsert: true },
     ).catch(() => null);
-    
+
     return res.json(normalized);
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -875,9 +1012,12 @@ app.get("/api/image", async (req, res) => {
 
 async function getIMDBId(tmdbId: string) {
   try {
-    const res = await axios.get(`https://api.themoviedb.org/3/movie/${tmdbId}`, {
-      headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
-    });
+    const res = await axios.get(
+      `https://api.themoviedb.org/3/movie/${tmdbId}`,
+      {
+        headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+      },
+    );
     return res.data.imdb_id;
   } catch (e) {
     return null;
@@ -886,9 +1026,12 @@ async function getIMDBId(tmdbId: string) {
 
 async function getTVDBId(tmdbId: string) {
   try {
-    const res = await axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`, {
-      headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
-    });
+    const res = await axios.get(
+      `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`,
+      {
+        headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+      },
+    );
     return res.data.tvdb_id;
   } catch (e) {
     return null;
@@ -910,8 +1053,10 @@ async function getFanartMetadata(
   if (cached && cached.logoFetchedAt) {
     // If it was fetched more than 24h ago, we might want to retry if logo was null
     const wasEmpty = !cached.logoUrl;
-    const isOld = Date.now() - new Date(cached.logoFetchedAt).getTime() > 1000 * 60 * 60 * 24;
-    
+    const isOld =
+      Date.now() - new Date(cached.logoFetchedAt).getTime() >
+      1000 * 60 * 60 * 24;
+
     if (!wasEmpty || !isOld) {
       return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
     }
@@ -929,9 +1074,11 @@ async function getFanartMetadata(
     const endpoint = type === "tv" ? "tv" : "movies";
     const fanartUrl = `https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`;
 
-    console.log(`[FANART] Fetching for ${type}: ${finalId} -> ${fanartUrl.replace(FANART_API_KEY!, '***')}`);
+    console.log(
+      `[FANART] Fetching for ${type}: ${finalId} -> ${fanartUrl.replace(FANART_API_KEY!, "***")}`,
+    );
     let raw = await fetch(fanartUrl);
-    
+
     if (!raw.ok) {
       console.warn(`[FANART] API returned ${raw.status} for ${finalId}`);
       // Fallback: If TVDB failed or returned 404, try TMDB ID directly as some TV entries exist under TMDB ID on Fanart
@@ -940,7 +1087,7 @@ async function getFanartMetadata(
         console.log(`[FANART] Falling back to TMDB ID: ${tmdbId}`);
         raw = await fetch(tmdbFanartUrl);
       }
-      
+
       if (!raw.ok) return { logoUrl: null, backgroundUrl: null };
     }
 
@@ -970,31 +1117,40 @@ async function getFanartMetadata(
 
     const sortByLikes = (arr: any[] = []) =>
       [...arr].sort(
-        (a, b) => (parseInt(b.likes || b.vote_count) || 0) - (parseInt(a.likes || a.vote_count) || 0),
+        (a, b) =>
+          (parseInt(b.likes || b.vote_count) || 0) -
+          (parseInt(a.likes || a.vote_count) || 0),
       );
 
     // LAST RESORT FALLBACK: TMDB Images (if Fanart has nothing)
-    if (!data.hdtvlogo && !data.clearlogo && !data.hdmovielogo && !data.movielogo) {
-        console.log(`[FANART] No logo on Fanart for ${tmdbId}, trying TMDB fallback...`);
-        try {
-            const tmdbImgUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}/images?include_image_language=en,null`;
-            const tmdbRes = await axios.get(tmdbImgUrl, {
-                headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
-            });
-            const tmdbLogos = sortByLikes(tmdbRes.data.logos || []);
-            if (tmdbLogos.length > 0) {
-                hdLogo = `https://image.tmdb.org/t/p/original${tmdbLogos[0].file_path}`;
-                console.log(`[FANART] Found TMDB logo fallback: ${hdLogo}`);
-            }
-        } catch (e) {
-            console.error(`[FANART] TMDB fallback failed for ${tmdbId}`);
+    if (
+      !data.hdtvlogo &&
+      !data.clearlogo &&
+      !data.hdmovielogo &&
+      !data.movielogo
+    ) {
+      console.log(
+        `[FANART] No logo on Fanart for ${tmdbId}, trying TMDB fallback...`,
+      );
+      try {
+        const tmdbImgUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}/images?include_image_language=en,null`;
+        const tmdbRes = await axios.get(tmdbImgUrl, {
+          headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+        });
+        const tmdbLogos = sortByLikes(tmdbRes.data.logos || []);
+        if (tmdbLogos.length > 0) {
+          hdLogo = `https://image.tmdb.org/t/p/original${tmdbLogos[0].file_path}`;
+          console.log(`[FANART] Found TMDB logo fallback: ${hdLogo}`);
         }
+      } catch (e) {
+        console.error(`[FANART] TMDB fallback failed for ${tmdbId}`);
+      }
     }
 
     if (type === "tv") {
       const hdtvlogo = sortByLikes(data.hdtvlogo || []);
       const clearlogo = sortByLikes(data.clearlogo || []);
-      
+
       // User Priority: HD ClearLOGO (hdtvlogo) first
       const logoChoices = [...hdtvlogo, ...clearlogo];
 
@@ -1002,7 +1158,9 @@ async function getFanartMetadata(
         // Tie-breaker: English -> Neutral -> Most Liked
         const preferred =
           logoChoices.find((l: any) => l.lang === "en") ||
-          logoChoices.find((l: any) => !l.lang || l.lang === "00" || l.lang === "") ||
+          logoChoices.find(
+            (l: any) => !l.lang || l.lang === "00" || l.lang === "",
+          ) ||
           logoChoices[0];
         hdLogo = preferred.url;
       }
@@ -1033,7 +1191,9 @@ async function getFanartMetadata(
       if (logoChoices.length > 0) {
         const preferred =
           logoChoices.find((l: any) => l.lang === "en") ||
-          logoChoices.find((l: any) => !l.lang || l.lang === "00" || l.lang === "") ||
+          logoChoices.find(
+            (l: any) => !l.lang || l.lang === "00" || l.lang === "",
+          ) ||
           logoChoices[0];
         hdLogo = preferred.url;
       }
@@ -1059,14 +1219,16 @@ async function getFanartMetadata(
     // Final Fallback: If Fanart failed, try TMDB's own image registry for logos
     if (!hdLogo) {
       try {
-        const tmdbLogoUrl = `https://api.themoviedb.org/3/${type === 'tv' ? 'tv' : 'movie'}/${tmdbId}/images?include_image_language=en,null`;
+        const tmdbLogoUrl = `https://api.themoviedb.org/3/${type === "tv" ? "tv" : "movie"}/${tmdbId}/images?include_image_language=en,null`;
         const tmdbRes = await axios.get(tmdbLogoUrl, {
-          headers: { Authorization: `Bearer ${TMDB_API_KEY}` }
+          headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
         });
         const logos = tmdbRes.data?.logos || [];
         if (logos.length > 0) {
           // Sort by vote count or width
-          const bestTmdbLogo = logos.sort((a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0))[0];
+          const bestTmdbLogo = logos.sort(
+            (a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0),
+          )[0];
           hdLogo = `https://image.tmdb.org/t/p/original${bestTmdbLogo.file_path}`;
         }
       } catch (tmdbErr) {
