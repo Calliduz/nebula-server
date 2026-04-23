@@ -103,7 +103,8 @@ export async function hybridFetch(url: string, options: any = {}) {
 
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+            // Only block heavy media to ensure Cloudflare JS/CSS loads properly
+            if (['image', 'media', 'font'].includes(req.resourceType())) {
                 req.abort();
             } else {
                 req.continue();
@@ -119,19 +120,21 @@ export async function hybridFetch(url: string, options: any = {}) {
             console.log(`[Fetcher] 🏠 Visiting Home to clear Cloudflare...`);
             await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
             
-            // Wait for the "Just a moment" page to disappear
+            // Wait for the real site to load (positive check instead of negative)
+            console.log(`[Fetcher] ⏳ Waiting for Cloudflare challenge to pass...`);
             await page.waitForFunction(() => {
                 const t = document.title.toLowerCase();
-                const b = document.body.innerText.toLowerCase();
-                return !t.includes('just a moment') && !b.includes('checking your browser');
-            }, { timeout: 20000 }).catch(() => {});
+                return t.includes('kisskh |') || t.includes('asian dramas & movies');
+            }, { timeout: 20000 }).catch(() => {
+                console.log(`[Fetcher] ⚠️ Cloudflare wait timed out or title mismatch, proceeding...`);
+            });
         }
 
         if (signal?.aborted) throw new Error('Aborted');
 
         // 2. Navigation to Target
         console.log(`[Fetcher] 🎯 Targeted Navigation: ${url}`);
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         // If JSON is expected, wait for the body to contain JSON-like structure
         if (json) {
