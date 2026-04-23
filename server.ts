@@ -693,19 +693,27 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
 
     const upstream = await axios.get(targetUrl, config);
+    const manifest = upstream.data;
+    if (typeof manifest !== "string") {
+      return res.status(502).send("Invalid manifest content");
+    }
 
-    const manifest: string = upstream.data;
+    // Use the actual final URL after redirects for resolving relative paths
+    const actualTargetUrl = (upstream.request as any)?.res?.responseUrl || (upstream.request as any)?.responseURL || targetUrl;
+    
+    console.log(`[PROXY] Rewriting manifest from: ${actualTargetUrl.substring(0, 80)}`);
 
     // Build a helper that appends the proxy to a rewritten URL so every
     // sub-playlist / segment request goes through the same residential IP.
     const withProxy = (endpoint: string, encodedUrl: string) => {
-      if (streamProxy) {
-        return `${endpoint}?url=${encodedUrl}&nebula_proxy=${encodeURIComponent(streamProxy!)}`;
-      }
-      return `${endpoint}?url=${encodedUrl}`;
+      // Use absolute URL for the proxy to avoid origin confusion
+      const currentHost = process.env.API_URL || `${req.protocol}://${req.get("host")}`;
+      const proxyParam = streamProxy ? `&nebula_proxy=${encodeURIComponent(streamProxy!)}` : "";
+      return `${currentHost}${endpoint}?url=${encodedUrl}${proxyParam}`;
     };
 
     // Rewrite every URL in the manifest through our proxy
+    let rewrittenCount = 0;
     const proxified = manifest
       .split("\n")
       .map((line) => {
@@ -713,32 +721,30 @@ app.get("/api/proxy/stream", async (req, res) => {
         if (!trimmed) return line;
 
         if (trimmed.startsWith("#")) {
-          // 1. Rewrite URI= attributes inside tags (quoted)
-          let newLine = line.replace(/URI="([^"]+)"/g, (_match, uri) => {
+          // 1. Rewrite URI= attributes inside tags (quoted or unquoted)
+          return line.replace(/URI=(?:"([^"]+)"|([^",\s][^,\s]*))/g, (_match, quoted, unquoted) => {
+            const uri = quoted || unquoted;
             try {
-              const abs = new URL(uri, targetUrl!).href;
-              return `URI="${withProxy("/api/proxy/segment", encodeURIComponent(abs))}"`;
+              const abs = new URL(uri, actualTargetUrl).href;
+              const urlBase = abs.split("?")[0] || "";
+              const ext = urlBase.split(".").pop()?.toLowerCase() || "";
+              const proxyPath = ext === "m3u8" ? "/api/proxy/stream" : "/api/proxy/segment";
+              
+              rewrittenCount++;
+              if (quoted) return `URI="${withProxy(proxyPath, encodeURIComponent(abs))}"`;
+              return `URI=${withProxy(proxyPath, encodeURIComponent(abs))}`;
             } catch { return _match; }
           });
-          
-          // 2. Rewrite URI= attributes (unquoted - non-standard but seen)
-          newLine = newLine.replace(/URI=([^",\s][^,\s]*)/g, (_match, uri) => {
-            try {
-              const abs = new URL(uri, targetUrl!).href;
-              return `URI=${withProxy("/api/proxy/segment", encodeURIComponent(abs))}`;
-            } catch { return _match; }
-          });
-
-          return newLine;
         }
 
         // Segment lines / variant playlist lines (NOT starting with #)
         try {
           const variantUrl = trimmed;
-          const abs = new URL(variantUrl, targetUrl!).href;
+          const abs = new URL(variantUrl, actualTargetUrl).href;
           const urlBase = variantUrl.split("?")[0] || "";
           const ext = urlBase.split(".").pop()?.toLowerCase() || "";
           
+          rewrittenCount++;
           // .m3u8 sub-playlists go through /stream, others through /segment
           if (ext === "m3u8") {
             return withProxy("/api/proxy/stream", encodeURIComponent(abs));
@@ -750,9 +756,16 @@ app.get("/api/proxy/stream", async (req, res) => {
       })
       .join("\n");
 
+    console.log(`[PROXY] Rewrote ${rewrittenCount} URLs in manifest.`);
+    if (rewrittenCount === 0 && manifest.length > 50) {
+      console.warn(`[PROXY] WARNING: Zero URLs rewrote in a manifest of length ${manifest.length}! Content preview: ${manifest.substring(0, 100)}`);
+    } else {
+      console.log(`[PROXY] Manifest preview (rewritten): ${proxified.substring(0, 300).replace(/\n/g, ' ')}...`);
+    }
+
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     return res.send(proxified);
   } catch (e: any) {
     const status = e?.response?.status ?? "no-response";
