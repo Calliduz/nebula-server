@@ -1,9 +1,8 @@
-import axios from 'axios';
+import { gotScraping } from 'got-scraping';
 import { getVidLinkToken } from './vidlinkToken.js';
 import { type MirrorStream, UA } from './scraper.js';
 
 const VIDLINK_BASE = 'https://vidlink.pro';
-const VIDLINK_API = `${VIDLINK_BASE}/api/b`;
 
 export class VidLinkScraper {
     /**
@@ -22,30 +21,24 @@ export class VidLinkScraper {
         try {
             console.log(`[VidLink] Generating token for ${type} ${tmdbId}${type === 'tv' ? ` S${season}E${episode}` : ''}...`);
             
-            // For VidLink, the "id" passed to getAdv is just the TMDB ID for movies,
-            // but for TV it might be different. Let's start with Movie support.
-            if (type === 'tv' && (!season || !episode)) {
-                throw new Error('Season and Episode are required for TV shows');
-            }
-
             const token = await getVidLinkToken(tmdbId);
-            
-            let apiUrl = `${VIDLINK_API}/movie/${token}?multiLang=0`;
-            let referer = `${VIDLINK_BASE}/movie/${tmdbId}`;
+            const apiUrl = `${VIDLINK_BASE}/api/b/${type}/${token}${type === 'tv' ? `/${season}/${episode}` : ''}?multiLang=0`;
 
+            let referer = `${VIDLINK_BASE}/movie/${tmdbId}`;
             if (type === 'tv') {
-                // TV API pattern: /api/b/tv/{token}/{s}/{e}
-                apiUrl = `${VIDLINK_API}/tv/${token}/${season}/${episode}?multiLang=0`;
                 referer = `${VIDLINK_BASE}/tv/${tmdbId}/${season}/${episode}`;
             }
 
-            const { data } = await axios.get(apiUrl, {
+            const response = await gotScraping.get(apiUrl, {
                 headers: {
                     'Referer': referer,
                     'User-Agent': UA
                 },
-                timeout: 10000
+                timeout: { request: 10000 }
             });
+
+            const data = JSON.parse(response.body);
+            const cookies = response.headers['set-cookie']?.join('; ') || '';
 
             if (!data || !data.stream) {
                 console.warn(`[VidLink] No stream data found in API response.`);
@@ -60,6 +53,8 @@ export class VidLinkScraper {
                 source: 'VidLink'
             })) || [];
 
+            const streamHeaders = cookies ? { cookie: cookies } : undefined;
+
             // Add the main HLS playlist if available
             if (data.stream.playlist) {
                 mirrors.push({
@@ -67,6 +62,7 @@ export class VidLinkScraper {
                     quality: 'Auto',
                     source: 'VidLink',
                     type: 'hls',
+                    headers: streamHeaders,
                     subtitles: subtitles.length > 0 ? subtitles : undefined
                 });
             }
@@ -80,13 +76,14 @@ export class VidLinkScraper {
                             quality: q.label || 'Unknown',
                             source: 'VidLink',
                             type: q.url.includes('.m3u8') ? 'hls' : 'mp4',
+                            headers: streamHeaders,
                             subtitles: subtitles.length > 0 ? subtitles : undefined
                         });
                     }
                 });
             }
 
-            console.log(`[VidLink] Successfully extracted ${mirrors.length} mirrors.`);
+            console.log(`[VidLink] Successfully extracted ${mirrors.length} mirrors (cookies: ${cookies ? 'YES' : 'NONE'}).`);
             return mirrors;
         } catch (e: any) {
             console.error(`[VidLink] Extraction failed:`, e.message);

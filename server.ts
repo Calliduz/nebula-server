@@ -32,6 +32,7 @@ import {
   HttpsCookieAgent,
   createCookieAgent,
 } from "http-cookie-agent/http";
+import { gotScraping } from "got-scraping";
 import { CookieJar } from "tough-cookie";
 
 // Load Environment Variables
@@ -509,6 +510,7 @@ const CDN_REFERER = "https://cloudnestra.com/";
 function cdnHeaders(targetUrl?: string) {
   let referer = CDN_REFERER;
   let origin = new URL(CDN_REFERER).origin;
+  let cookie: string | null = null;
 
   if (targetUrl) {
     const lower = targetUrl.toLowerCase();
@@ -525,8 +527,15 @@ function cdnHeaders(targetUrl?: string) {
       const customHeaders = urlObj.searchParams.get("headers");
       if (customHeaders) {
         const parsed = JSON.parse(customHeaders);
-        if (parsed.referer) referer = parsed.referer;
-        if (parsed.origin) origin = parsed.origin;
+        // FORCE vidlink.pro for Storm, ignore misleading url headers
+        if (lower.includes("storm.vodvidl.site")) {
+          referer = "https://vidlink.pro/";
+          origin = "https://vidlink.pro";
+        } else {
+          if (parsed.referer) referer = parsed.referer;
+          if (parsed.origin) origin = parsed.origin;
+        }
+        if (parsed.cookie) cookie = parsed.cookie;
       }
     } catch {}
 
@@ -542,17 +551,35 @@ function cdnHeaders(targetUrl?: string) {
     }
   }
 
-  return {
-    "User-Agent": UA,
+  const headers: any = {
     Referer: referer,
     Origin: origin,
-    "Accept-Language": "en-US,en;q=0.9",
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "cross-site",
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
+    "Priority": "u=1, i",
   };
+  
+  // Clean up empty headers
+  if (!headers.Origin) delete headers.Origin;
+  if (!headers.Referer) delete headers.Referer;
+
+  if (targetUrl) {
+    try {
+      const urlObj = new URL(targetUrl);
+      const targetHost = urlObj.searchParams.get("host");
+      if (targetHost) {
+        const hostObj = new URL(targetHost);
+        headers["Host"] = hostObj.hostname;
+      }
+    } catch {}
+  }
+
+  if (cookie) headers["Cookie"] = cookie;
+
+  return headers;
 }
 
 /**
@@ -560,11 +587,30 @@ function cdnHeaders(targetUrl?: string) {
  * This helps bypass CDN blocks that detect standard Node.js handshakes.
  */
 function createHardenedAgent(proxyUrl?: string) {
+  // Chrome 131 Cipher Suite
+  const ciphers = [
+    "TLS_AES_128_GCM_SHA256",
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256",
+    "ECDHE-ECDSA-AES128-GCM-SHA256",
+    "ECDHE-RSA-AES128-GCM-SHA256",
+    "ECDHE-ECDSA-AES256-GCM-SHA384",
+    "ECDHE-RSA-AES256-GCM-SHA384",
+    "ECDHE-ECDSA-CHACHA20-POLY1305",
+    "ECDHE-RSA-CHACHA20-POLY1305",
+    "ECDHE-RSA-AES128-SHA",
+    "ECDHE-RSA-AES256-SHA",
+    "AES128-GCM-SHA256",
+    "AES256-GCM-SHA384",
+    "AES128-SHA",
+    "AES256-SHA",
+  ].join(":");
+
   const tlsOptions: https.AgentOptions = {
-    // Chrome-like ciphers
-    ciphers: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305",
+    ciphers,
     honorCipherOrder: true,
     minVersion: "TLSv1.2",
+    maxVersion: "TLSv1.3",
     ecdhCurve: "X25519:P-256:P-384",
   };
 
@@ -627,39 +673,54 @@ app.get("/api/proxy/stream", async (req, res) => {
   );
 
   try {
-    const config: any = {
-      headers: cdnHeaders(targetUrl),
-      responseType: "text",
-      timeout: 25000,
+    const streamHeaders = cdnHeaders(targetUrl);
+    
+    const gotOptions: any = {
+      url: targetUrl,
+      headers: streamHeaders,
+      timeout: { request: 45000 },
+      retry: { limit: 2 },
+      throwHttpErrors: false,
+      http2: true, // Re-enable HTTP/2 for better browser parity
+      headerGeneratorOptions: {
+        browsers: [{ name: "chrome", minVersion: 130 }],
+        devices: ["desktop"],
+        operatingSystems: ["windows"],
+      }
     };
 
-    // Use the proxy for the manifest if one was used for the scrape (satisfies CDN IP check)
     if (streamProxy) {
-      const safeProxy = streamProxy.endsWith("/")
-        ? streamProxy.slice(0, -1)
-        : streamProxy;
-      const agent = createHardenedAgent(streamProxy);
-      config.httpAgent = agent;
-      config.httpsAgent = agent;
-      console.log(
-        `[PROXY/stream] Using residential proxy: ${safeProxy.substring(0, 40)}...`,
-      );
-    } else {
-      console.log(
-        `[PROXY/stream] ⚠ No proxy — CDN may reject if IP differs from scrape`,
-      );
+      gotOptions.proxyUrl = streamProxy.startsWith("http") ? streamProxy : `http://${streamProxy}`;
     }
 
-    const upstream = await axios.get(targetUrl, config);
-    const manifest = upstream.data;
+    // got-scraping handles HTTP/2 and JA3 fingerprints automatically
+    const upstream = await gotScraping(gotOptions);
+    const status = upstream.statusCode;
+    const manifest = upstream.body;
+
+    if (status >= 400) {
+      console.error(
+        `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${targetUrl.substring(0, 100)}`,
+      );
+      if (status === 403 || status === 503) {
+        console.warn(`[PROXY/stream] CDN Block detected. Response: ${manifest.substring(0, 100)}...`);
+      }
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.status(status).send(manifest);
+    }
+
+    console.log(
+      `[PROXY/stream] ✔ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${targetUrl.substring(0, 100)}`,
+    );
+
     if (typeof manifest !== "string") {
       return res.status(502).send("Invalid manifest content");
     }
 
     // Use the actual final URL after redirects for resolving relative paths
-    const actualTargetUrl = (upstream.request as any)?.res?.responseUrl || (upstream.request as any)?.responseURL || targetUrl;
+    const actualTargetUrl = upstream.redirectUrls.length > 0 ? upstream.redirectUrls[upstream.redirectUrls.length - 1] : targetUrl;
     
-    console.log(`[PROXY] Rewriting manifest from: ${actualTargetUrl.substring(0, 80)}`);
+    console.log(`[PROXY] Rewriting manifest from: ${actualTargetUrl?.substring(0, 80)}`);
 
     // Build a helper that appends the proxy to a rewritten URL so every
     // sub-playlist / segment request goes through the same residential IP.
@@ -728,11 +789,11 @@ app.get("/api/proxy/stream", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     return res.send(proxified);
   } catch (e: any) {
-    const status = e?.response?.status ?? "no-response";
-    const body = String(e?.response?.data ?? "").substring(0, 200);
+    const status = e?.response?.statusCode ?? "no-response";
+    const body = String(e?.response?.body ?? "").substring(0, 200);
     const url = targetUrl.substring(0, 100);
     console.error(
-      `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${url}`,
+      `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | error=${e.code} | message=${e.message} | url=${url}`,
     );
     if (body) console.error(`[PROXY/stream] CDN response: ${body}`);
     
@@ -763,54 +824,52 @@ app.get("/api/proxy/segment", async (req, res) => {
     } catch {}
   }
 
-  const buildSegmentConfig = (useProxy: boolean) => {
-    const cfg: any = {
+  const fetchSegment = async (targetUrl: string, useProxy: boolean): Promise<any> => {
+    const gotOptions: any = {
+      url: targetUrl,
       headers: cdnHeaders(targetUrl),
-      responseType: "stream",
-      timeout: 30000,
+      timeout: { request: 45000 },
+      retry: { limit: 2 },
+      responseType: 'buffer',
+      throwHttpErrors: false,
+      http2: true, // Re-enable HTTP/2
+      headerGeneratorOptions: {
+        browsers: [{ name: "chrome", minVersion: 130 }],
+        devices: ["desktop"],
+        operatingSystems: ["windows"],
+      }
     };
+
     if (useProxy && segProxy) {
-      const agent = createHardenedAgent(segProxy);
-      cfg.httpAgent = agent;
-      cfg.httpsAgent = agent;
-    } else {
-      // Even without a proxy, use a hardened agent to avoid fingerprint detection
-      const agent = createHardenedAgent();
-      cfg.httpAgent = agent;
-      cfg.httpsAgent = agent;
+      gotOptions.proxyUrl = segProxy.startsWith("http") ? segProxy : `http://${segProxy}`;
     }
-    return cfg;
+
+    return gotScraping(gotOptions);
   };
 
-  // Try direct first (saves proxy data). If 403 AND proxy available, retry through proxy.
   try {
-    const upstream = await axios.get(targetUrl, buildSegmentConfig(false));
-    res.setHeader("Content-Type", upstream.headers["content-type"] || "video/mp2t");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=3600");
-    return upstream.data.pipe(res);
-  } catch (directErr: any) {
-    const directStatus = directErr?.response?.status;
-    // Only retry through proxy on auth errors (403/401) when a proxy is available
-    if (segProxy && (directStatus === 403 || directStatus === 401)) {
-      try {
-        const upstream = await axios.get(targetUrl, buildSegmentConfig(true));
-        res.setHeader("Content-Type", upstream.headers["content-type"] || "video/mp2t");
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Cache-Control", "public, max-age=3600");
-        return upstream.data.pipe(res);
-      } catch (proxyErr: any) {
-        console.error(
-          `[PROXY] segment error (proxy fallback): ${targetUrl.substring(0, 80)} — ${proxyErr.message}`,
-        );
-        return res.status(502).send("Proxy segment error");
-      }
+    // Try direct first. If 403 AND proxy available, retry through proxy.
+    const response = await fetchSegment(targetUrl, false);
+    const status = response.statusCode;
+
+    if (status === 403 && segProxy) {
+      const proxyResponse = await fetchSegment(targetUrl, true);
+      res.setHeader("Content-Type", proxyResponse.headers["content-type"] || "video/mp2t");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.status(proxyResponse.statusCode).send(proxyResponse.body);
+    } else {
+      res.setHeader("Content-Type", response.headers["content-type"] || "video/mp2t");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.status(status).send(response.body);
     }
+  } catch (e: any) {
+    const status = e?.response?.statusCode ?? "no-response";
+    const url = targetUrl.substring(0, 100);
     console.error(
-      `[PROXY] segment error: ${targetUrl.substring(0, 80)} — ${directErr.message}`,
+      `[PROXY/segment] ✘ ${status} | proxy=${segProxy ? "YES" : "NONE"} | error=${e.code} | message=${e.message} | url=${url}`,
     );
     res.setHeader("Access-Control-Allow-Origin", "*");
-    return res.status(502).send("Proxy segment error");
+    res.status(502).send("Proxy segment error");
   }
 });
 
