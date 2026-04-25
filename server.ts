@@ -21,9 +21,10 @@ import {
   scrapeStreamflix,
   startHeartbeat,
   stopHeartbeat,
-  UA,
   type MirrorStream,
 } from "./utils/scraper.js";
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 import { KissKHScraper } from "./utils/kisskh.js";
 import { VidLinkScraper } from "./utils/vidlink.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -37,6 +38,199 @@ import { CookieJar } from "tough-cookie";
 
 // Load Environment Variables
 dotenv.config();
+
+import initCycleTLS from 'cycletls';
+
+let cycleTLS: any = null;
+initCycleTLS().then(c => {
+  cycleTLS = c;
+  console.log('[PROXY] 🛡️ CycleTLS JA3 Spoofer Initialized.');
+}).catch(console.error);
+
+// Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
+const proxyCache = new Map<string, { body: Buffer, headers: any, expires: number }>();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes for video segments
+
+// Warm up got-scraping to avoid delay on first request
+setTimeout(async () => {
+  try {
+    console.log('[GOT] Warming up browser fingerprints...');
+    await gotScraping.get('https://vidlink.pro', { timeout: { request: 5000 }, retry: { limit: 0 } });
+    console.log('[GOT] Warm-up complete.');
+  } catch {}
+}, 5000);
+
+/**
+ * Fetches a VidLink/Storm URL using raw Node.js https.request.
+ * IMPORTANT: This bypasses WHATWG URL normalization (used by got/fetch/axios).
+ * Storm CDN requires literal { } braces in query params — any library that
+ * parses the URL with WHATWG will encode them to %7B/%7D and get a 400.
+ */
+function fetchVidLinkRaw(rawUrl: string): Promise<{ statusCode: number; headers: any; body: Buffer, finalUrl: string }> {
+  return new Promise((resolve, reject) => {
+    // Split BEFORE the '?' so WHATWG URL never touches the query string
+    const qIdx = rawUrl.indexOf('?');
+    const baseOnly = qIdx >= 0 ? rawUrl.substring(0, qIdx) : rawUrl;
+    const rawQuery = qIdx >= 0 ? rawUrl.substring(qIdx) : '';
+
+    // Only parse the base (path) part — safe since it has no special chars
+    let parsedBase: URL;
+    try {
+      parsedBase = new URL(baseOnly);
+    } catch (e) {
+      return reject(new Error(`fetchVidLinkRaw: invalid base URL: ${baseOnly}`));
+    }
+
+    const port = parsedBase.port ? parseInt(parsedBase.port) : 443;
+    const rawPath = parsedBase.pathname + rawQuery; // preserve query string exactly
+
+    const reqOptions = {
+      hostname: parsedBase.hostname,
+      port,
+      path: rawPath,
+      method: 'GET',
+      headers: {
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.9',
+        'cache-control': 'no-cache',
+        'pragma': 'no-cache',
+        'referer': 'https://vidlink.pro/',
+        'origin': 'https://vidlink.pro',
+        'user-agent': UA,
+      },
+    };
+
+    const req = https.request(reqOptions, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => resolve({
+        statusCode: response.statusCode ?? 0,
+        headers: response.headers,
+        body: Buffer.concat(chunks),
+        finalUrl: rawUrl
+      }));
+    });
+
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('VidLink fetch timeout')); });
+    req.end();
+  });
+}
+
+
+// Helper function to safely fetch using cycletls
+async function fetchWithCycleTLS(url: string, headers: any, proxy?: string, method: string = 'get', body?: any) {
+  if (!cycleTLS) throw new Error("CycleTLS not initialized yet");
+  
+  const defaultHeaders = {
+    'accept': '*/*',
+    'accept-language': 'en-US,en;q=0.7',
+    'cache-control': 'no-cache',
+    'pragma': 'no-cache',
+    'priority': 'u=1, i',
+    'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'cross-site',
+    'user-agent': UA
+  };
+
+  // Merge headers, allowing overrides
+  const finalHeaders = {
+    ...defaultHeaders,
+    ...headers
+  };
+
+  // Remove navigate/video headers if we are doing a CORS fetch (standard for segments/manifests)
+  if (finalHeaders['sec-fetch-mode'] === 'cors') {
+    delete finalHeaders['upgrade-insecure-requests'];
+  }
+
+  const options: any = {
+    headers: finalHeaders,
+    ja3: '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-21,29-23-24,0',
+    userAgent: finalHeaders['user-agent'] || UA,
+    timeout: 30
+  };
+  
+  if (body) {
+    options.body = typeof body === 'string' ? body : JSON.stringify(body);
+  }
+
+  if (proxy) {
+    options.proxy = proxy.startsWith("http") ? proxy : `http://${proxy}`;
+  }
+
+  const res = await cycleTLS(url, options, method.toLowerCase() as any);
+  
+  if (!res) {
+    throw new Error("CycleTLS returned no response");
+  }
+
+  let bodyBuffer: Buffer;
+  if (typeof res.data === 'string') {
+    bodyBuffer = Buffer.from(res.data, 'utf-8');
+  } else if (res.data && typeof res.data === 'object') {
+    // Convert Go-style byte array object to Node Buffer
+    bodyBuffer = Buffer.from(Object.values(res.data) as number[]);
+  } else {
+    bodyBuffer = Buffer.from('');
+  }
+  
+  return {
+    statusCode: res.status || 500,
+    headers: res.headers || {},
+    body: bodyBuffer,
+    finalUrl: res.finalUrl || url
+  };
+}
+
+async function fetchWithGotScraping(url: string, headers: any, proxy?: string, method: string = 'get', body?: any) {
+  try {
+    const options: any = {
+      method: method.toUpperCase(),
+      headers: {
+        ...headers,
+        'user-agent': headers['user-agent'] || UA
+      },
+      responseType: 'buffer',
+      retry: { limit: 0 },
+      timeout: { request: 30000 },
+      http2: true
+    };
+
+    if (body) {
+      options.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+
+    if (proxy) {
+      const proxyUrl = proxy.startsWith("http") ? proxy : `http://${proxy}`;
+      options.proxyUrl = proxyUrl;
+    }
+
+    const response = await gotScraping(url, options);
+    
+    return {
+      statusCode: response.statusCode,
+      headers: response.headers,
+      body: response.body,
+      finalUrl: response.url
+    };
+  } catch (err: any) {
+    if (err.response) {
+      return {
+        statusCode: err.response.statusCode,
+        headers: err.response.headers,
+        body: err.response.body,
+        finalUrl: err.response.url
+      };
+    }
+    throw err;
+  }
+}
 
 const app = express();
 app.use(cors());
@@ -507,37 +701,56 @@ app.post("/api/stream/flush", async (req, res) => {
 
 const CDN_REFERER = "https://cloudnestra.com/";
 
-function cdnHeaders(targetUrl?: string) {
+function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
   let referer = CDN_REFERER;
   let origin = new URL(CDN_REFERER).origin;
   let cookie: string | null = null;
 
+  // Default browser headers for fetch/CORS
+  const headers: any = {
+    'accept': '*/*',
+    'accept-language': 'en-US,en;q=0.7',
+    'cache-control': 'no-cache',
+    'pragma': 'no-cache',
+    'priority': 'u=1, i',
+    'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': isManifest ? 'empty' : 'video',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'cross-site',
+    'user-agent': UA
+  };
+
   if (targetUrl) {
     const lower = targetUrl.toLowerCase();
     
-    // Auto-detect VidLink/Storm CDNs
-    if (lower.includes("storm.vodvidl.site") || lower.includes("vidlink.pro")) {
-      referer = "https://vidlink.pro/";
-      origin = "https://vidlink.pro";
-    }
-
-    // Extract embedded headers if present (VidLink style)
+    // Extract embedded headers if present (VidLink/Storm CDNs use this for inner requests)
     try {
       const urlObj = new URL(targetUrl);
       const customHeaders = urlObj.searchParams.get("headers");
+      const hostParam = urlObj.searchParams.get("host");
+
       if (customHeaders) {
         const parsed = JSON.parse(customHeaders);
-        // FORCE vidlink.pro for Storm, ignore misleading url headers
-        if (lower.includes("storm.vodvidl.site")) {
-          referer = "https://vidlink.pro/";
-          origin = "https://vidlink.pro";
-        } else {
-          if (parsed.referer) referer = parsed.referer;
-          if (parsed.origin) origin = parsed.origin;
-        }
+        if (parsed.referer) referer = parsed.referer;
+        if (parsed.origin) origin = parsed.origin;
         if (parsed.cookie) cookie = parsed.cookie;
       }
+      
+      // If a host param is provided, it might be the target host for the proxy
+      if (hostParam) {
+        // Use it only if not already set by customHeaders
+        if (referer === CDN_REFERER) referer = hostParam.endsWith('/') ? hostParam : hostParam + '/';
+        if (origin === "https://cloudnestra.com") origin = new URL(hostParam).origin;
+      }
     } catch {}
+
+    // Final overrides for specific providers that are extremely sensitive to outer Referer
+    if (lower.includes("storm.vodvidl.site") || lower.includes("vidlink.pro") || lower.includes("nightbreeze") || lower.includes("thunderleaf")) {
+      referer = "https://vidlink.pro/";
+      origin = "https://vidlink.pro";
+    }
 
     // Auto-detect KissKH CDNs
     if (
@@ -551,33 +764,10 @@ function cdnHeaders(targetUrl?: string) {
     }
   }
 
-  const headers: any = {
-    Referer: referer,
-    Origin: origin,
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site",
-    "Cache-Control": "no-cache",
-    Pragma: "no-cache",
-    "Priority": "u=1, i",
-  };
-  
-  // Clean up empty headers
-  if (!headers.Origin) delete headers.Origin;
-  if (!headers.Referer) delete headers.Referer;
+  headers["referer"] = referer;
+  headers["origin"] = origin;
 
-  if (targetUrl) {
-    try {
-      const urlObj = new URL(targetUrl);
-      const targetHost = urlObj.searchParams.get("host");
-      if (targetHost) {
-        const hostObj = new URL(targetHost);
-        headers["Host"] = hostObj.hostname;
-      }
-    } catch {}
-  }
-
-  if (cookie) headers["Cookie"] = cookie;
+  if (cookie) headers["cookie"] = cookie;
 
   return headers;
 }
@@ -635,11 +825,13 @@ app.get("/api/proxy/stream", async (req, res) => {
   const raw = req.query.url as string;
   if (!raw) return res.status(400).send("Missing url");
 
-  let targetUrl: string;
-  try {
-    targetUrl = decodeURIComponent(raw);
-  } catch {
-    return res.status(400).send("Invalid url encoding");
+  let targetUrl = raw;
+  if (!targetUrl.startsWith("http")) {
+    try {
+      targetUrl = decodeURIComponent(targetUrl);
+    } catch {
+      return res.status(400).send("Invalid url encoding");
+    }
   }
 
   // Extract proxy from two possible locations:
@@ -655,59 +847,63 @@ app.get("/api/proxy/stream", async (req, res) => {
     } catch {}
   }
 
+  console.log(`[PROXY/stream] Incoming Original URL: ${req.originalUrl}`);
+  
   // Fall back to baked-in param inside the target URL (master playlist)
   if (!streamProxy) {
-    try {
-      const urlObj = new URL(targetUrl);
-      const baked = urlObj.searchParams.get("nebula_proxy");
-      if (baked) {
-        streamProxy = baked;
-        urlObj.searchParams.delete("nebula_proxy");
-        targetUrl = urlObj.href;
-      }
-    } catch {}
+    const bakedMatch = targetUrl.match(/[\?&]nebula_proxy=([^&]+)/);
+    if (bakedMatch) {
+      try {
+        streamProxy = decodeURIComponent(bakedMatch[1]);
+        // Remove the param from the URL while preserving everything else exactly
+        targetUrl = targetUrl.replace(/[\?&]nebula_proxy=[^&]+/, '').replace(/\?$/, '').replace(/\?&/, '?');
+      } catch {}
+    }
   }
 
+  const cacheKey = targetUrl;
+  const cached = proxyCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    console.log(`[PROXY/stream] ⚡ Cache Hit: ${targetUrl.substring(0, 60)}...`);
+    res.setHeader("Content-Type", cached.headers["content-type"] || "application/vnd.apple.mpegurl");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.send(cached.body);
+  }
+
+  const startTime = Date.now();
   console.log(
     `[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`,
   );
 
   try {
-    const streamHeaders = cdnHeaders(targetUrl);
-    
-    const gotOptions: any = {
-      url: targetUrl,
-      headers: streamHeaders,
-      timeout: { request: 45000 },
-      retry: { limit: 2 },
-      throwHttpErrors: false,
-      http2: true, // Re-enable HTTP/2 for better browser parity
-      headerGeneratorOptions: {
-        browsers: [{ name: "chrome", minVersion: 130 }],
-        devices: ["desktop"],
-        operatingSystems: ["windows"],
-      }
-    };
-
-    if (streamProxy) {
-      gotOptions.proxyUrl = streamProxy.startsWith("http") ? streamProxy : `http://${streamProxy}`;
+    const isVidLink = targetUrl.includes("storm.vodvidl.site") || targetUrl.includes("vidlink.pro");
+    let upstream: any;
+    if (isVidLink) {
+      upstream = await fetchVidLinkRaw(targetUrl);
+    } else {
+      const streamHeaders = cdnHeaders(targetUrl, true);
+      upstream = await fetchWithCycleTLS(targetUrl, streamHeaders, streamProxy);
     }
-
-    // got-scraping handles HTTP/2 and JA3 fingerprints automatically
-    const upstream = await gotScraping(gotOptions);
     const status = upstream.statusCode;
-    const manifest = upstream.body;
+    const duration = Date.now() - startTime;
+    console.log(`[PROXY/stream] ◀ ${status} (${duration}ms)`);
 
     if (status >= 400) {
       console.error(
-        `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${targetUrl.substring(0, 100)}`,
+        `[PROXY/stream] ✘ ${status} | url=${targetUrl} | body=${upstream.body.toString().substring(0, 200)}`
       );
-      if (status === 403 || status === 503) {
-        console.warn(`[PROXY/stream] CDN Block detected. Response: ${manifest.substring(0, 100)}...`);
-      }
       res.setHeader("Access-Control-Allow-Origin", "*");
-      return res.status(status).send(manifest);
+      return res.status(status).send(upstream.body);
     }
+
+    const manifest = upstream.body.toString('utf-8');
+    
+    // Cache successful manifest
+    proxyCache.set(cacheKey, {
+      body: upstream.body,
+      headers: upstream.headers,
+      expires: Date.now() + CACHE_TTL
+    });
 
     console.log(
       `[PROXY/stream] ✔ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${targetUrl.substring(0, 100)}`,
@@ -718,7 +914,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
 
     // Use the actual final URL after redirects for resolving relative paths
-    const actualTargetUrl = upstream.redirectUrls.length > 0 ? upstream.redirectUrls[upstream.redirectUrls.length - 1] : targetUrl;
+    const actualTargetUrl = upstream.finalUrl;
     
     console.log(`[PROXY] Rewriting manifest from: ${actualTargetUrl?.substring(0, 80)}`);
 
@@ -808,11 +1004,13 @@ app.get("/api/proxy/segment", async (req, res) => {
   const raw = req.query.url as string;
   if (!raw) return res.status(400).send("Missing url");
 
-  let targetUrl: string;
-  try {
-    targetUrl = decodeURIComponent(raw);
-  } catch {
-    return res.status(400).send("Invalid url encoding");
+  let targetUrl = raw;
+  if (!targetUrl.startsWith("http")) {
+    try {
+      targetUrl = decodeURIComponent(targetUrl);
+    } catch {
+      return res.status(400).send("Invalid url encoding");
+    }
   }
 
   // Read the proxy param if the manifest rewriter passed one
@@ -824,27 +1022,21 @@ app.get("/api/proxy/segment", async (req, res) => {
     } catch {}
   }
 
+  const cacheKey = targetUrl;
+  const cached = proxyCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    res.setHeader("Content-Type", cached.headers["content-type"] || "video/mp2t");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.status(200).send(cached.body);
+  }
+
+  const startTime = Date.now();
   const fetchSegment = async (targetUrl: string, useProxy: boolean): Promise<any> => {
-    const gotOptions: any = {
-      url: targetUrl,
-      headers: cdnHeaders(targetUrl),
-      timeout: { request: 45000 },
-      retry: { limit: 2 },
-      responseType: 'buffer',
-      throwHttpErrors: false,
-      http2: true, // Re-enable HTTP/2
-      headerGeneratorOptions: {
-        browsers: [{ name: "chrome", minVersion: 130 }],
-        devices: ["desktop"],
-        operatingSystems: ["windows"],
-      }
-    };
-
-    if (useProxy && segProxy) {
-      gotOptions.proxyUrl = segProxy.startsWith("http") ? segProxy : `http://${segProxy}`;
+    const isVidLink = targetUrl.includes("storm.vodvidl.site") || targetUrl.includes("vidlink.pro");
+    if (isVidLink) {
+      return fetchVidLinkRaw(targetUrl);
     }
-
-    return gotScraping(gotOptions);
+    return fetchWithCycleTLS(targetUrl, cdnHeaders(targetUrl, false), useProxy ? segProxy : undefined);
   };
 
   try {
@@ -854,10 +1046,36 @@ app.get("/api/proxy/segment", async (req, res) => {
 
     if (status === 403 && segProxy) {
       const proxyResponse = await fetchSegment(targetUrl, true);
+      const duration = Date.now() - startTime;
+      console.log(`[PROXY/segment] ◀ ${proxyResponse.statusCode} (proxy, ${duration}ms)`);
+      
+      if (proxyResponse.statusCode === 200) {
+        proxyCache.set(cacheKey, {
+          body: proxyResponse.body,
+          headers: proxyResponse.headers,
+          expires: Date.now() + SEGMENT_TTL
+        });
+      }
+      
       res.setHeader("Content-Type", proxyResponse.headers["content-type"] || "video/mp2t");
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.status(proxyResponse.statusCode).send(proxyResponse.body);
     } else {
+      const duration = Date.now() - startTime;
+      if (status >= 400) {
+        console.error(`[PROXY/segment] ✘ ${status} | url=${targetUrl.substring(0, 60)}...`);
+      } else if (targetUrl.includes("storm.vodvidl.site")) {
+        console.log(`[PROXY/segment] ◀ ${status} (${duration}ms)`);
+      }
+
+      if (status === 200) {
+        proxyCache.set(cacheKey, {
+          body: response.body,
+          headers: response.headers,
+          expires: Date.now() + SEGMENT_TTL
+        });
+      }
+
       res.setHeader("Content-Type", response.headers["content-type"] || "video/mp2t");
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.status(status).send(response.body);

@@ -13,11 +13,13 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@absahmad/wreq-js": "^1.1.0",
     "@consumet/extensions": "^1.8.8",
     "@movie-web/providers": "^2.4.13",
     "axios": "^1.15.0",
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",
+    "cycletls": "^2.0.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "fuzzball": "^2.2.3",
