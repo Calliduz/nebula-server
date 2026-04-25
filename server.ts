@@ -25,6 +25,7 @@ import {
   type MirrorStream,
 } from "./utils/scraper.js";
 import { KissKHScraper } from "./utils/kisskh.js";
+import { VidLinkScraper } from "./utils/vidlink.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   HttpCookieAgent,
@@ -205,8 +206,44 @@ app.get("/api/stream", async (req, res) => {
     let streamUrl: string | null = null;
     let proxyUsed: string | undefined = undefined;
 
-    // ── Tier 0: Extreme Fast Path (KissKH API) ──────────────────────────
-    console.log(`[STREAM] Phase 0: Checking KissKH (Extreme Fast Path)...`);
+    // ── Tier 0: Direct TMDB Path (VidLink) ──────────────────────────
+    console.log(`[STREAM] Phase 0: Checking VidLink (Direct TMDB Path)...`);
+    try {
+      const vidlinkMirrors = await VidLinkScraper.getStream(
+        tmdbId.toString(),
+        kind as any,
+        parseInt(season.toString()),
+        parseInt(episode.toString())
+      );
+      if (vidlinkMirrors && vidlinkMirrors.length > 0) {
+        console.log(`[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`);
+        mirrors.push(...vidlinkMirrors);
+        streamUrl = vidlinkMirrors[0].url;
+        sourceName = "VidLink";
+
+        // Cache the result for 4 hours
+        const exp = new Date();
+        exp.setHours(exp.getHours() + 4);
+        await StreamCache.findOneAndUpdate(
+          { tmdbId, type: kind, season, episode },
+          { streamUrl, source: sourceName, mirrors: vidlinkMirrors, streamExpiresAt: exp },
+          { upsert: true }
+        ).catch(() => null);
+
+        return res.json({
+          streamUrl,
+          source: sourceName,
+          qualityTag: "UNKNOWN",
+          resolution: "UNKNOWN",
+          mirrors: vidlinkMirrors
+        });
+      }
+    } catch (e) {
+      console.error(`[STREAM] VidLink failed:`, e);
+    }
+
+    // ── Tier 1: Extreme Fast Path (KissKH API) ──────────────────────────
+    console.log(`[STREAM] Phase 1: Checking KissKH (Extreme Fast Path)...`);
     try {
       const origin = req.query.origin as string;
       const releaseYear = req.query.releaseYear as string;
