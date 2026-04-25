@@ -69,14 +69,14 @@ setTimeout(async () => {
  */
 const httpsAgent = new https.Agent({ keepAlive: true });
 
-function fetchVidLinkRaw(rawUrl: string): Promise<{ statusCode: number; headers: any; body: Buffer, finalUrl: string }> {
+function fetchVidLinkRaw(rawUrl: string, customHeaders: any = {}, redirectCount = 0): Promise<{ statusCode: number; headers: any; body: Buffer, finalUrl: string }> {
+  if (redirectCount > 5) return Promise.reject(new Error("Too many redirects"));
+
   return new Promise((resolve, reject) => {
-    // Split BEFORE the '?' so WHATWG URL never touches the query string
     const qIdx = rawUrl.indexOf('?');
     const baseOnly = qIdx >= 0 ? rawUrl.substring(0, qIdx) : rawUrl;
     const rawQuery = qIdx >= 0 ? rawUrl.substring(qIdx) : '';
 
-    // Only parse the base (path) part — safe since it has no special chars
     let parsedBase: URL;
     try {
       parsedBase = new URL(baseOnly);
@@ -85,7 +85,7 @@ function fetchVidLinkRaw(rawUrl: string): Promise<{ statusCode: number; headers:
     }
 
     const port = parsedBase.port ? parseInt(parsedBase.port) : 443;
-    const rawPath = parsedBase.pathname + rawQuery; // preserve query string exactly
+    const rawPath = parsedBase.pathname + rawQuery;
 
     const reqOptions = {
       agent: httpsAgent,
@@ -96,27 +96,32 @@ function fetchVidLinkRaw(rawUrl: string): Promise<{ statusCode: number; headers:
       headers: {
         'accept': '*/*',
         'accept-language': 'en-US,en;q=0.9',
-        'cache-control': 'no-cache',
-        'pragma': 'no-cache',
         'referer': 'https://vidlink.pro/',
         'origin': 'https://vidlink.pro',
         'user-agent': UA,
+        ...customHeaders
       },
     };
 
-    const req = https.request(reqOptions, (response) => {
+    const req = https.request(reqOptions, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
+        const location = res.headers.location;
+        if (location) {
+          const nextUrl = location.startsWith('http') ? location : new URL(location, rawUrl).href;
+          return resolve(fetchVidLinkRaw(nextUrl, customHeaders, redirectCount + 1));
+        }
+      }
+
       const chunks: Buffer[] = [];
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.on('end', () => resolve({
-        statusCode: response.statusCode ?? 0,
-        headers: response.headers,
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => resolve({
+        statusCode: res.statusCode ?? 0,
+        headers: res.headers,
         body: Buffer.concat(chunks),
         finalUrl: rawUrl
       }));
     });
 
-    req.on('error', reject);
-    req.setTimeout(30000, () => { req.destroy(); reject(new Error('VidLink fetch timeout')); });
     req.end();
   });
 }
@@ -878,13 +883,16 @@ app.get("/api/proxy/stream", async (req, res) => {
     `[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`,
   );
 
+  const passHeaders: any = {};
+  if (req.headers.range) passHeaders.range = req.headers.range;
+
   try {
     const isVidLink = targetUrl.includes("storm.vodvidl.site") || targetUrl.includes("vidlink.pro");
     let upstream: any;
     if (isVidLink) {
-      upstream = await fetchVidLinkRaw(targetUrl);
+      upstream = await fetchVidLinkRaw(targetUrl, passHeaders);
     } else {
-      const streamHeaders = cdnHeaders(targetUrl, true);
+      const streamHeaders = { ...cdnHeaders(targetUrl, true), ...passHeaders };
       upstream = await fetchWithCycleTLS(targetUrl, streamHeaders, streamProxy);
     }
     const status = upstream.statusCode;
@@ -954,6 +962,23 @@ app.get("/api/proxy/stream", async (req, res) => {
     });
 
     console.log(`[PROXY] Rewrote ${rewrittenCount} URLs in manifest.`);
+
+    // Speculative Pre-fetching: If this is a master manifest, pre-fetch the sub-playlists
+    if (proxified.includes('BANDWIDTH=') || proxified.includes('STREAM-INF')) {
+      const subPlaylistMatches = proxified.match(/\/api\/proxy\/stream\?url=([^&"'\s\n]+)/g);
+      if (subPlaylistMatches) {
+        // Pre-fetch the first 2 variants (usually high and medium quality)
+        subPlaylistMatches.slice(0, 2).forEach(match => {
+          const encoded = match.split('url=')[1];
+          if (encoded) {
+            const subUrl = decodeURIComponent(encoded);
+            if (!proxyCache.has(subUrl)) {
+              fetchVidLinkRaw(subUrl).catch(() => {});
+            }
+          }
+        });
+      }
+    }
     if (rewrittenCount === 0 && manifest.length > 50) {
       console.warn(`[PROXY] WARNING: Zero URLs rewrote in a manifest of length ${manifest.length}! Content preview: ${manifest.substring(0, 100)}`);
     } else {
@@ -1017,13 +1042,17 @@ app.get("/api/proxy/segment", async (req, res) => {
     return res.status(200).end(cached.body);
   }
 
+  const passHeaders: any = {};
+  if (req.headers.range) passHeaders.range = req.headers.range;
+
   const startTime = Date.now();
   const fetchSegment = async (targetUrl: string, useProxy: boolean): Promise<any> => {
     const isVidLink = targetUrl.includes("storm.vodvidl.site") || targetUrl.includes("vidlink.pro");
     if (isVidLink) {
-      return fetchVidLinkRaw(targetUrl);
+      return fetchVidLinkRaw(targetUrl, passHeaders);
     }
-    return fetchWithCycleTLS(targetUrl, cdnHeaders(targetUrl, false), useProxy ? segProxy : undefined);
+    const headers = { ...cdnHeaders(targetUrl, false), ...passHeaders };
+    return fetchWithCycleTLS(targetUrl, headers, useProxy ? segProxy : undefined);
   };
 
   try {
