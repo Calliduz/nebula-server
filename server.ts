@@ -48,7 +48,8 @@ const FANART_API_KEY = process.env.FANART_API_KEY || "";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 const ADMIN_KEY = process.env.ADMIN_KEY || "nebula-admin-2026";
 
-// VidSrc embed host — swap VIDSRC_EMBED_HOST in .env if the domain changes
+// app.listen(...)
+// Note: Puppeteer pool initialization removed to save resources.
 const VIDSRC_EMBED_HOST = (
   process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru"
 ).replace(/\/$/, "");
@@ -206,6 +207,14 @@ app.get("/api/stream", async (req, res) => {
     let streamUrl: string | null = null;
     let proxyUsed: string | undefined = undefined;
 
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    req.on('close', () => {
+      controller.abort();
+      console.log(`[STREAM] User cancelled request. Aborting scrapers...`);
+    });
+
     // ── Tier 0: Direct TMDB Path (VidLink) ──────────────────────────
     console.log(`[STREAM] Phase 0: Checking VidLink (Direct TMDB Path)...`);
     try {
@@ -218,7 +227,7 @@ app.get("/api/stream", async (req, res) => {
       if (vidlinkMirrors && vidlinkMirrors.length > 0) {
         console.log(`[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`);
         mirrors.push(...vidlinkMirrors);
-        streamUrl = vidlinkMirrors[0].url;
+        streamUrl = vidlinkMirrors[0]!.url;
         sourceName = "VidLink";
 
         // Cache the result for 4 hours
@@ -242,146 +251,10 @@ app.get("/api/stream", async (req, res) => {
       console.error(`[STREAM] VidLink failed:`, e);
     }
 
-    // ── Tier 1: Extreme Fast Path (KissKH API) ──────────────────────────
-    console.log(`[STREAM] Phase 1: Checking KissKH (Extreme Fast Path)...`);
-    try {
-      const origin = req.query.origin as string;
-      const releaseYear = req.query.releaseYear as string;
-      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const titleNorm = normalize(title);
-      
-      let match: any = null;
-
-      if (origin === 'kisskh' || tmdbId.toString().startsWith('k')) {
-        const dramaId = parseInt(tmdbId.toString().replace('k', ''));
-        console.log(`[STREAM] KissKH origin detected. Using ID ${dramaId} directly.`);
-        match = { id: dramaId, title: title };
-      } else {
-        const controller = new AbortController();
-        const signal = controller.signal;
-
-        req.on('close', () => {
-          controller.abort();
-          console.log(`[STREAM] User cancelled request. Aborting Bouncer...`);
-        });
-
-        // ONE BROAD SEARCH (FASTEST)
-        console.log(`[STREAM] KissKH Global Search: "${title}"`);
-        const results = await KissKHScraper.search(title, false, signal, -1);
-        
-        if (results && results.length > 0) {
-          console.log(`[KissKH] Found ${results.length} results. Processing...`);
-
-          // Fuzzy Matching Logic (Local Filtering)
-          match = results.find(d => {
-            const dTitle = (d.title || '').toLowerCase();
-            const qTitle = title.toLowerCase();
-            
-            const cleanQ = qTitle.replace(/[^a-z0-9]/g, '');
-            const cleanD = dTitle.replace(/season \d+/g, '').replace(/[^a-z0-9]/g, '');
-
-            // 1. Title Match
-            if (!cleanD.includes(cleanQ) && !cleanQ.includes(cleanD)) return false;
-
-            // 2. Year Verification
-            const yearStr = releaseYear && releaseYear !== 'undefined' ? releaseYear : null;
-            if (yearStr) {
-              const yearMatch = dTitle.match(/\((19|20)\d{2}\)/);
-              if (yearMatch) {
-                const kisskhYear = yearMatch[0].replace(/[()]/g, '');
-                if (kisskhYear !== yearStr) return false;
-              }
-            }
-
-            // 3. Season Matching (TV only)
-            if (kind === 'tv') {
-              const sNum = parseInt(season.toString());
-              const anySeasonMatch = dTitle.match(/season (\d+)/);
-              if (anySeasonMatch && parseInt(anySeasonMatch[1]) !== sNum) return false;
-            }
-
-            return true;
-          });
-
-          if (match) {
-            console.log(`[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`);
-          }
-        }
-        if (signal.aborted) throw new Error("Request cancelled by user");
-      }
-
-      if (match) {
-        console.log(
-          `[STREAM] KissKH HIT ✔ Match Found: ${match.title} (ID: ${match.id})`,
-        );
-
-        // Check Detail Cache
-        let detail: any = null;
-        const cachedDetail = await DramaDetailCache.findOne({
-          dramaId: match.id,
-        });
-        if (cachedDetail) {
-          console.log(`[STREAM] KissKH Detail Cache HIT for ID ${match.id}`);
-          detail = cachedDetail.detail;
-        } else {
-          console.log(`[STREAM] KissKH Detail Cache MISS. Fetching...`);
-          detail = await KissKHScraper.getDramaDetail(match.id, signal);
-          if (detail) {
-            const exp = new Date();
-            exp.setHours(exp.getHours() + 12);
-            await DramaDetailCache.findOneAndUpdate(
-              { dramaId: match.id },
-              { detail, expiresAt: exp },
-              { upsert: true },
-            ).catch(() => null);
-          }
-        }
-
-        if (!detail)
-          throw new Error("Could not fetch drama details from KissKH");
-
-        const targetEpNum = kind === "movie" ? 0 : episode;
-        let ep = detail.episodes.find((e: any) => {
-          const epNum = parseFloat(e.number);
-          const reqNum = parseFloat(targetEpNum.toString());
-          return epNum === reqNum || (reqNum === 1 && epNum === 0); // Handle "Episode 0" specials
-        });
-
-        // Fallback: If we can't find an exact match for the first episode/movie, take the first item in the list
-        if (
-          !ep &&
-          detail.episodes.length > 0 &&
-          (targetEpNum === 1 || targetEpNum === 0)
-        ) {
-          console.log(
-            `[STREAM] KissKH Fallback: Exact match failed for ep ${targetEpNum}, using first available episode.`,
-          );
-          ep = detail.episodes[0];
-        }
-
-        if (ep) {
-          const kisskhMirrors = await KissKHScraper.getStream(match.id, ep.id);
-          if (kisskhMirrors.length > 0) {
-            console.log(`[STREAM] Phase 0 SUCCESS ✔ KissKH found stream`);
-            mirrors.push(...kisskhMirrors);
-          }
-        } else {
-          console.warn(
-            `[STREAM] KissKH: Episode ${episode} not found. Available: ${detail.episodes.length} eps.`,
-          );
-        }
-      } else {
-        console.warn(`[STREAM] KissKH: No title match found for "${title}".`);
-      }
-    } catch (e: any) {
-      console.warn(`[STREAM] Phase 0 KissKH Error: ${e.message}`);
-    }
-
-    // ── Tier 1 & 2 Fallbacks (Disabled by User Request) ──────────────────
+    // ── Tier 1+ Fallbacks (Fully Disabled by User Request) ──────────────
     if (mirrors.length === 0) {
-      console.log(
-        `[STREAM] Phase 0: No KissKH result found. Fallbacks are currently disabled.`,
-      );
+      console.log(`[STREAM] VidLink failed and fallbacks are disabled.`);
+      throw new Error("No stream sources found. (VidLink returned no mirrors)");
     }
 
     const allSubtitles: any[] = [];

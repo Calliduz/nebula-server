@@ -5,7 +5,7 @@ import sodium from 'libsodium-wrappers';
 // globalThis.crypto is already available in Node 24.10.0
 
 // Polyfill global environment for Go WebAssembly
-if (!globalThis.fs) {
+if (!(globalThis as any).fs) {
     (globalThis as any).fs = {
         constants: { O_WRONLY: -1, O_RDWR: -1, O_CREAT: -1, O_TRUNC: -1, O_APPEND: -1, O_EXCL: -1 },
         writeSync(fd: number, buf: Uint8Array) {
@@ -128,7 +128,7 @@ class GoBridge {
                 this._goRefCounts[id] = 0;
                 this._ids.set(v, id);
             }
-            this._goRefCounts[id]++;
+            (this._goRefCounts[id] as number)++;
             let typeFlag = 0;
             switch (typeof v) {
                 case "object": if (v !== null) typeFlag = 1; break;
@@ -223,7 +223,7 @@ class GoBridge {
                 "syscall/js.finalizeRef": (sp: number) => {
                     sp >>>= 0;
                     const id = this.mem.getUint32(sp + 8, true);
-                    this._goRefCounts[id]--;
+                    (this._goRefCounts[id] as number)--;
                     if (this._goRefCounts[id] === 0) {
                         const v = this._values[id];
                         this._values[id] = null;
@@ -418,7 +418,7 @@ export async function initVidLink() {
         (globalThis as any).sodium = sodium;
 
         const go = new GoBridge();
-        const wasmPath = path.join(process.cwd(), 'scratch', 'fu.wasm');
+        const wasmPath = path.join(process.cwd(), 'utils', 'bin', 'fu.wasm');
         const wasmBuffer = fs.readFileSync(wasmPath);
         
         const { instance } = await WebAssembly.instantiate(wasmBuffer, go.importObject);
