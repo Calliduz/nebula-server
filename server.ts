@@ -508,10 +508,29 @@ const CDN_REFERER = "https://cloudnestra.com/";
 
 function cdnHeaders(targetUrl?: string) {
   let referer = CDN_REFERER;
+  let origin = new URL(CDN_REFERER).origin;
 
   if (targetUrl) {
     const lower = targetUrl.toLowerCase();
-    // Auto-detect KissKH CDNs and use the correct referer
+    
+    // Auto-detect VidLink/Storm CDNs
+    if (lower.includes("storm.vodvidl.site") || lower.includes("vidlink.pro")) {
+      referer = "https://vidlink.pro/";
+      origin = "https://vidlink.pro";
+    }
+
+    // Extract embedded headers if present (VidLink style)
+    try {
+      const urlObj = new URL(targetUrl);
+      const customHeaders = urlObj.searchParams.get("headers");
+      if (customHeaders) {
+        const parsed = JSON.parse(customHeaders);
+        if (parsed.referer) referer = parsed.referer;
+        if (parsed.origin) origin = parsed.origin;
+      }
+    } catch {}
+
+    // Auto-detect KissKH CDNs
     if (
       lower.includes("kisskh") ||
       lower.includes("cdnvideo") ||
@@ -519,13 +538,14 @@ function cdnHeaders(targetUrl?: string) {
       lower.includes("stream.store")
     ) {
       referer = "https://kisskh.do";
+      origin = "https://kisskh.do";
     }
   }
 
   return {
     "User-Agent": UA,
     Referer: referer,
-    Origin: new URL(referer).origin,
+    Origin: origin,
     "Accept-Language": "en-US,en;q=0.9",
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
@@ -715,6 +735,8 @@ app.get("/api/proxy/stream", async (req, res) => {
       `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${url}`,
     );
     if (body) console.error(`[PROXY/stream] CDN response: ${body}`);
+    
+    res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(502).send("Proxy upstream error");
   }
 });
@@ -787,6 +809,7 @@ app.get("/api/proxy/segment", async (req, res) => {
     console.error(
       `[PROXY] segment error: ${targetUrl.substring(0, 80)} — ${directErr.message}`,
     );
+    res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(502).send("Proxy segment error");
   }
 });
