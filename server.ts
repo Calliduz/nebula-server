@@ -911,63 +911,55 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     // Use the actual final URL after redirects for resolving relative paths
     const actualTargetUrl = upstream.finalUrl;
-    
-    console.log(`[PROXY] Rewriting manifest from: ${actualTargetUrl?.substring(0, 80)}`);
+    const urlObj = new URL(actualTargetUrl);
+    const origin = urlObj.origin;
+    const baseDir = actualTargetUrl.substring(0, actualTargetUrl.lastIndexOf('/') + 1);
 
-    // Build a helper that appends the proxy to a rewritten URL so every
-    // sub-playlist / segment request goes through the same residential IP.
+    // Optimized URL resolution (much faster than new URL() in a loop)
+    const fastResolve = (uri: string) => {
+      if (uri.startsWith('http')) return uri;
+      if (uri.startsWith('//')) return `https:${uri}`;
+      if (uri.startsWith('/')) return origin + uri;
+      return baseDir + uri;
+    };
+
     const withProxy = (endpoint: string, encodedUrl: string) => {
-      // Use absolute URL for the proxy to avoid origin confusion.
-      // Render and other proxies terminate TLS, so we must check x-forwarded-proto.
       const protocol = req.headers["x-forwarded-proto"] || req.protocol;
       const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
       const proxyParam = streamProxy ? `&nebula_proxy=${encodeURIComponent(streamProxy!)}` : "";
       return `${currentHost}${endpoint}?url=${encodedUrl}${proxyParam}`;
     };
 
-    // Rewrite every URL in the manifest through our proxy
+    console.log(`[PROXY] Rewriting manifest: ${actualTargetUrl.substring(0, 60)}...`);
+
     let rewrittenCount = 0;
-    const proxified = manifest
-      .split("\n")
-      .map((line) => {
-        const trimmed = line.trim();
-        if (!trimmed) return line;
+    
+    // 1. Rewrite URI= attributes in tags
+    let proxified = manifest.replace(/URI=(?:"([^"]+)"|([^",\s][^,\s]*))/g, (match, quoted, unquoted) => {
+      const uri = (quoted || unquoted).trim();
+      if (!uri) return match;
+      
+      const abs = fastResolve(uri);
+      const ext = abs.split('?')[0]?.split('.').pop()?.toLowerCase();
+      const proxyPath = ext === "m3u8" ? "/api/proxy/stream" : "/api/proxy/segment";
+      
+      rewrittenCount++;
+      const proxiedUrl = withProxy(proxyPath, encodeURIComponent(abs));
+      return quoted ? `URI="${proxiedUrl}"` : `URI=${proxiedUrl}`;
+    });
 
-        if (trimmed.startsWith("#")) {
-          // 1. Rewrite URI= attributes inside tags (quoted or unquoted)
-          return line.replace(/URI=(?:"([^"]+)"|([^",\s][^,\s]*))/g, (_match, quoted, unquoted) => {
-            const uri = quoted || unquoted;
-            try {
-              const abs = new URL(uri, actualTargetUrl).href;
-              const urlBase = abs.split("?")[0] || "";
-              const ext = urlBase.split(".").pop()?.toLowerCase() || "";
-              const proxyPath = ext === "m3u8" ? "/api/proxy/stream" : "/api/proxy/segment";
-              
-              rewrittenCount++;
-              if (quoted) return `URI="${withProxy(proxyPath, encodeURIComponent(abs))}"`;
-              return `URI=${withProxy(proxyPath, encodeURIComponent(abs))}`;
-            } catch { return _match; }
-          });
-        }
+    // 2. Rewrite segment/playlist lines (lines not starting with #)
+    proxified = proxified.replace(/^(?!#)(.+)$/gm, (match, uri) => {
+      const trimmed = uri.trim();
+      if (!trimmed) return match;
 
-        // Segment lines / variant playlist lines (NOT starting with #)
-        try {
-          const variantUrl = trimmed;
-          const abs = new URL(variantUrl, actualTargetUrl).href;
-          const urlBase = variantUrl.split("?")[0] || "";
-          const ext = urlBase.split(".").pop()?.toLowerCase() || "";
-          
-          rewrittenCount++;
-          // .m3u8 sub-playlists go through /stream, others through /segment
-          if (ext === "m3u8") {
-            return withProxy("/api/proxy/stream", encodeURIComponent(abs));
-          }
-          return withProxy("/api/proxy/segment", encodeURIComponent(abs));
-        } catch {
-          return line;
-        }
-      })
-      .join("\n");
+      const abs = fastResolve(trimmed);
+      const ext = abs.split('?')[0]?.split('.').pop()?.toLowerCase();
+      const proxyPath = ext === "m3u8" ? "/api/proxy/stream" : "/api/proxy/segment";
+
+      rewrittenCount++;
+      return withProxy(proxyPath, encodeURIComponent(abs));
+    });
 
     console.log(`[PROXY] Rewrote ${rewrittenCount} URLs in manifest.`);
     if (rewrittenCount === 0 && manifest.length > 50) {
