@@ -889,22 +889,14 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
     const status = upstream.statusCode;
     const duration = Date.now() - startTime;
-    console.log(`[PROXY/stream] ◀ ${status} (${duration}ms)`);
-
     if (status >= 400) {
-      console.error(
-        `[PROXY/stream] ✘ ${status} | url=${targetUrl} | body=${upstream.body.toString().substring(0, 200)}`
-      );
+      console.error(`[PROXY/stream] ✘ ${status} (${duration}ms) | url=${targetUrl.substring(0, 60)}...`);
       res.setHeader("Access-Control-Allow-Origin", "*");
       return res.status(status).send(upstream.body);
     }
 
     const manifest = upstream.body.toString('utf-8');
     
-    console.log(
-      `[PROXY/stream] ✔ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${targetUrl.substring(0, 100)}`,
-    );
-
     if (typeof manifest !== "string") {
       return res.status(502).send("Invalid manifest content");
     }
@@ -1022,7 +1014,7 @@ app.get("/api/proxy/segment", async (req, res) => {
   if (cached && cached.expires > Date.now()) {
     res.setHeader("Content-Type", cached.headers["content-type"] || "video/mp2t");
     res.setHeader("Access-Control-Allow-Origin", "*");
-    return res.status(200).send(cached.body);
+    return res.status(200).end(cached.body);
   }
 
   const startTime = Date.now();
@@ -1042,7 +1034,9 @@ app.get("/api/proxy/segment", async (req, res) => {
     if (status === 403 && segProxy) {
       const proxyResponse = await fetchSegment(targetUrl, true);
       const duration = Date.now() - startTime;
-      console.log(`[PROXY/segment] ◀ ${proxyResponse.statusCode} (proxy, ${duration}ms)`);
+      if (proxyResponse.statusCode >= 400) {
+        console.log(`[PROXY/segment] ◀ ${proxyResponse.statusCode} (proxy, ${duration}ms)`);
+      }
       
       if (proxyResponse.statusCode === 200) {
         proxyCache.set(cacheKey, {
@@ -1059,8 +1053,6 @@ app.get("/api/proxy/segment", async (req, res) => {
       const duration = Date.now() - startTime;
       if (status >= 400) {
         console.error(`[PROXY/segment] ✘ ${status} | url=${targetUrl.substring(0, 60)}...`);
-      } else if (targetUrl.includes("storm.vodvidl.site")) {
-        console.log(`[PROXY/segment] ◀ ${status} (${duration}ms)`);
       }
 
       if (status === 200) {
@@ -1073,7 +1065,7 @@ app.get("/api/proxy/segment", async (req, res) => {
 
       res.setHeader("Content-Type", response.headers["content-type"] || "video/mp2t");
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.status(status).send(response.body);
+      res.status(status).end(response.body);
     }
   } catch (e: any) {
     const status = e?.response?.statusCode ?? "no-response";
