@@ -67,6 +67,8 @@ setTimeout(async () => {
  * Storm CDN requires literal { } braces in query params — any library that
  * parses the URL with WHATWG will encode them to %7B/%7D and get a 400.
  */
+const httpsAgent = new https.Agent({ keepAlive: true });
+
 function fetchVidLinkRaw(rawUrl: string): Promise<{ statusCode: number; headers: any; body: Buffer, finalUrl: string }> {
   return new Promise((resolve, reject) => {
     // Split BEFORE the '?' so WHATWG URL never touches the query string
@@ -86,6 +88,7 @@ function fetchVidLinkRaw(rawUrl: string): Promise<{ statusCode: number; headers:
     const rawPath = parsedBase.pathname + rawQuery; // preserve query string exactly
 
     const reqOptions = {
+      agent: httpsAgent,
       hostname: parsedBase.hostname,
       port,
       path: rawPath,
@@ -898,13 +901,6 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     const manifest = upstream.body.toString('utf-8');
     
-    // Cache successful manifest
-    proxyCache.set(cacheKey, {
-      body: upstream.body,
-      headers: upstream.headers,
-      expires: Date.now() + CACHE_TTL
-    });
-
     console.log(
       `[PROXY/stream] ✔ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | url=${targetUrl.substring(0, 100)}`,
     );
@@ -979,6 +975,13 @@ app.get("/api/proxy/stream", async (req, res) => {
     } else {
       console.log(`[PROXY] Manifest preview (rewritten): ${proxified.substring(0, 300).replace(/\n/g, ' ')}...`);
     }
+
+    // Cache successful rewritten manifest
+    proxyCache.set(cacheKey, {
+      body: Buffer.from(proxified, 'utf-8'),
+      headers: upstream.headers,
+      expires: Date.now() + CACHE_TTL
+    });
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Access-Control-Allow-Origin", "*");
