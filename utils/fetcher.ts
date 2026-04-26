@@ -99,6 +99,9 @@ export async function hybridFetch(url: string, options: any = {}) {
     puppeteerPool.trackPageOpen();
     const page = await browser.newPage();
     
+    let cookieTimer: NodeJS.Timeout | null = null;
+    let clickInterval: NodeJS.Timeout | null = null;
+
     try {
         if (signal?.aborted) throw new Error('Aborted');
 
@@ -115,7 +118,7 @@ export async function hybridFetch(url: string, options: any = {}) {
         console.warn(`[Fetcher] 🛡️ Engaging Browser Bypass for: ${origin}`);
 
         // Listen for cookie changes in real-time
-        const cookieTimer = setInterval(async () => {
+        cookieTimer = setInterval(async () => {
             try {
                 if (page.isClosed()) return;
                 const cookies = await page.cookies();
@@ -134,7 +137,7 @@ export async function hybridFetch(url: string, options: any = {}) {
             await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
             
             // Turnstile Auto-Clicker Loop
-            const clickInterval = setInterval(async () => {
+            clickInterval = setInterval(async () => {
                 try {
                     const iframe = await page.$('iframe');
                     if (iframe) {
@@ -151,10 +154,10 @@ export async function hybridFetch(url: string, options: any = {}) {
                 return t.includes('kisskh |') || t.includes('asian dramas & movies');
             }, { timeout: 15000 }).catch(() => {});
 
-            clearInterval(clickInterval);
+            if (clickInterval) clearInterval(clickInterval);
         }
 
-        clearInterval(cookieTimer);
+        if (cookieTimer) clearInterval(cookieTimer);
         if (signal?.aborted) throw new Error('Aborted');
 
         // 2. Navigation to Target
@@ -178,6 +181,8 @@ export async function hybridFetch(url: string, options: any = {}) {
         }
         return text;
     } finally {
+        if (cookieTimer) clearInterval(cookieTimer);
+        if (clickInterval) clearInterval(clickInterval);
         isBypassing = false;
         await page.close().catch(() => {});
         puppeteerPool.trackPageClose();
