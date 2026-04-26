@@ -47,8 +47,14 @@ class PuppeteerPool {
         return this.browser;
     }
 
-    trackPageOpen() { this.activePages++; }
-    trackPageClose() { this.activePages = Math.max(0, this.activePages - 1); }
+    trackPageOpen() { 
+        this.activePages++; 
+        console.log(`[Browser] Page Opened. Active: ${this.activePages}`);
+    }
+    trackPageClose() { 
+        this.activePages = Math.max(0, this.activePages - 1); 
+        console.log(`[Browser] Page Closed. Active: ${this.activePages}`);
+    }
 
     async shutdown() {
         if (this.browser) {
