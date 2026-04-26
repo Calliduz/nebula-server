@@ -7,8 +7,16 @@ puppeteer.use(StealthPlugin());
 class PuppeteerPool {
     private browser: Browser | null = null;
     private initializing: Promise<Browser> | null = null;
+    private requestCount = 0;
+    private readonly MAX_REQUESTS = 50;
+    private activePages = 0;
 
     async acquire(): Promise<Browser> {
+        this.requestCount++;
+        if (this.browser && this.requestCount >= this.MAX_REQUESTS && this.activePages === 0) {
+            console.log(`[Browser] Request limit reached (${this.requestCount}). Restarting...`);
+            await this.shutdown();
+        }
         if (this.browser) return this.browser;
         if (this.initializing) return this.initializing;
 
@@ -33,15 +41,20 @@ class PuppeteerPool {
         this.browser.on('disconnected', () => {
             console.log('[Browser] Instance disconnected. Purging from pool.');
             this.browser = null;
+            this.activePages = 0;
         });
 
         return this.browser;
     }
 
+    trackPageOpen() { this.activePages++; }
+    trackPageClose() { this.activePages = Math.max(0, this.activePages - 1); }
+
     async shutdown() {
         if (this.browser) {
-            await this.browser.close();
+            try { await this.browser.close(); } catch (e) {}
             this.browser = null;
+            this.activePages = 0;
         }
     }
 }

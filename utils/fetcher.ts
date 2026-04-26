@@ -96,6 +96,7 @@ export async function hybridFetch(url: string, options: any = {}) {
 
     isBypassing = true;
     const browser = await puppeteerPool.acquire();
+    puppeteerPool.trackPageOpen();
     const page = await browser.newPage();
     
     try {
@@ -179,6 +180,7 @@ export async function hybridFetch(url: string, options: any = {}) {
     } finally {
         isBypassing = false;
         await page.close().catch(() => {});
+        puppeteerPool.trackPageClose();
     }
 }
 
@@ -186,6 +188,7 @@ export async function hybridFetch(url: string, options: any = {}) {
 // Loads an embed URL in a headless browser and intercepts the m3u8 manifest
 export async function extractHlsFromEmbed(embedUrl: string, timeoutMs = 15000): Promise<string | null> {
     const browser = await puppeteerPool.acquire();
+    puppeteerPool.trackPageOpen();
     const page = await browser.newPage();
     let captured: string | null = null;
 
@@ -263,6 +266,7 @@ export async function extractHlsFromEmbed(embedUrl: string, timeoutMs = 15000): 
         return null;
     } finally {
         await page.close().catch(() => {});
+        puppeteerPool.trackPageClose();
     }
 }
 

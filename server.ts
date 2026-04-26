@@ -50,7 +50,26 @@ initCycleTLS().then(c => {
 // Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
 const proxyCache = new Map<string, { body: Buffer, headers: any, expires: number }>();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes for video segments
+const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes for video segments (unused for RAM cache now)
+
+// Pruning logic to prevent memory leaks in proxyCache
+setInterval(() => {
+  const now = Date.now();
+  let pruned = 0;
+  for (const [key, val] of proxyCache.entries()) {
+    if (val.expires < now) {
+      proxyCache.delete(key);
+      pruned++;
+    }
+  }
+  if (pruned > 0) console.log(`[CACHE] Pruned ${pruned} expired entries from proxyCache.`);
+}, 5 * 60 * 1000); // Every 5 minutes
+
+// Memory Monitor
+setInterval(() => {
+  const used = process.memoryUsage();
+  console.log(`[MEMORY] RSS: ${(used.rss / 1024 / 1024).toFixed(2)} MB | Heap: ${(used.heapUsed / 1024 / 1024).toFixed(2)} MB / ${(used.heapTotal / 1024 / 1024).toFixed(2)} MB`);
+}, 10 * 60 * 1000); // Every 10 minutes
 
 // Warm up got-scraping to avoid delay on first request
 setTimeout(async () => {
@@ -1068,11 +1087,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       }
       
       if (proxyResponse.statusCode === 200) {
-        proxyCache.set(cacheKey, {
-          body: proxyResponse.body,
-          headers: proxyResponse.headers,
-          expires: Date.now() + SEGMENT_TTL
-        });
+        // No longer caching segments in RAM to prevent OOM
       }
       
       res.setHeader("Content-Type", proxyResponse.headers["content-type"] || "video/mp2t");
@@ -1085,11 +1100,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       }
 
       if (status === 200) {
-        proxyCache.set(cacheKey, {
-          body: response.body,
-          headers: response.headers,
-          expires: Date.now() + SEGMENT_TTL
-        });
+        // No longer caching segments in RAM to prevent OOM
       }
 
       res.setHeader("Content-Type", response.headers["content-type"] || "video/mp2t");
