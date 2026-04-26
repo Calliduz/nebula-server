@@ -107,8 +107,7 @@ export interface HeartbeatSession {
 
 // ── Heartbeat Manager ───────────────────────────────────────────────────────
 
-/** Map of active heartbeat loops keyed by a session ID (tmdbId). */
-const activeHeartbeats = new Map<string, NodeJS.Timeout>();
+const activeHeartbeats = new Map<string, { interval: NodeJS.Timeout; timeout: NodeJS.Timeout }>();
 
 /**
  * startHeartbeat
@@ -187,21 +186,20 @@ export function startHeartbeat(
   // Send the first ping immediately, then every 55 seconds (5s buffer before their 60s kill)
   ping();
   const interval = setInterval(ping, 55_000);
-  activeHeartbeats.set(compositeKey, interval);
 
   // Safety Kill: Automatically stop heartbeats after 4 hours to prevent "zombie" loops
   // if the user closes the tab without notifying the server.
-  setTimeout(
+  const safetyTimeout = setTimeout(
     () => {
-      if (activeHeartbeats.get(compositeKey) === interval) {
-        console.log(
-          `[HEARTBEAT] Hard timeout (4h) reached for session ${compositeKey}. Stopping.`,
-        );
-        stopHeartbeat(sessionId, userIp);
-      }
+      console.log(
+        `[HEARTBEAT] Hard timeout (4h) reached for session ${compositeKey}. Stopping.`,
+      );
+      stopHeartbeat(sessionId, userIp);
     },
     4 * 60 * 60 * 1000,
   );
+
+  activeHeartbeats.set(compositeKey, { interval, timeout: safetyTimeout });
 
   console.log(
     `[HEARTBEAT] Started for session ${sessionId} (IP: ${userIp}) (Safety timeout: 4h)`,
@@ -218,9 +216,10 @@ export function startHeartbeat(
  */
 export function stopHeartbeat(sessionId: string, userIp = "direct"): void {
   const compositeKey = `${sessionId}:${userIp}`;
-  const interval = activeHeartbeats.get(compositeKey);
-  if (interval) {
-    clearInterval(interval);
+  const record = activeHeartbeats.get(compositeKey);
+  if (record) {
+    clearInterval(record.interval);
+    clearTimeout(record.timeout);
     activeHeartbeats.delete(compositeKey);
     console.log(`[HEARTBEAT] Stopped for session ${compositeKey}`);
   }
