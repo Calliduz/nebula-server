@@ -1086,14 +1086,11 @@ app.get("/api/proxy/segment", async (req, res) => {
   }
 
   const cacheKey = targetUrl;
-  const cached = proxyCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) {
-    cacheHits++;
-    res.setHeader("Content-Type", cached.headers["content-type"] || "video/mp2t");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    return res.status(200).end(cached.body);
-  }
-  cacheMisses++;
+  // We explicitly DO NOT check or set cache for segments to prevent OOM crashes.
+  // Video segments are too large (2-10MB each) to keep in a Node.js memory Map.
+  // cacheHits++; // Removed to reflect disabled cache
+  // cacheMisses++; // Removed to reflect disabled cache
+
 
   const passHeaders: any = {};
   if (req.headers.range) passHeaders.range = req.headers.range;
@@ -1120,13 +1117,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         console.log(`[PROXY/segment] ◀ ${proxyResponse.statusCode} (proxy, ${duration}ms)`);
       }
       
-      if (proxyResponse.statusCode === 200) {
-        setProxyCache(cacheKey, {
-          body: proxyResponse.body,
-          headers: proxyResponse.headers,
-          expires: Date.now() + SEGMENT_TTL
-        });
-      }
+      // DO NOT cache the segment body here to prevent OOM
       
       res.setHeader("Content-Type", proxyResponse.headers["content-type"] || "video/mp2t");
       res.setHeader("Access-Control-Allow-Origin", "*");
@@ -1138,13 +1129,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         console.error(`[PROXY/segment] ✘ ${status} | duration=${duration}ms | body=${errorBody} | url=${targetUrl.substring(0, 60)}...`);
       }
 
-      if (status === 200) {
-        setProxyCache(cacheKey, {
-          body: response.body,
-          headers: response.headers,
-          expires: Date.now() + SEGMENT_TTL
-        });
-      }
+      // DO NOT cache the segment body here to prevent OOM
 
       res.setHeader("Content-Type", response.headers["content-type"] || "video/mp2t");
       res.setHeader("Access-Control-Allow-Origin", "*");
