@@ -8,7 +8,7 @@ class PuppeteerPool {
     private browser: Browser | null = null;
     private initializing: Promise<Browser> | null = null;
     private requestCount = 0;
-    private readonly MAX_REQUESTS = 50;
+    private readonly MAX_REQUESTS = 100;
     private activePages = 0;
 
     async acquire(): Promise<Browser> {
@@ -52,9 +52,21 @@ class PuppeteerPool {
 
     async shutdown() {
         if (this.browser) {
-            try { await this.browser.close(); } catch (e) {}
-            this.browser = null;
+            console.log('[Browser] Shutting down instance...');
+            const browserRef = this.browser;
+            this.browser = null; // Prevent new acquisitions
             this.activePages = 0;
+
+            try {
+                // Racing close against a 5s timeout to prevent hanging the process
+                await Promise.race([
+                    browserRef.close(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Browser close timeout')), 5000))
+                ]);
+                console.log('[Browser] Shutdown successful.');
+            } catch (e: any) {
+                console.error('[Browser] Shutdown forced/timed out:', e.message);
+            }
         }
     }
 }

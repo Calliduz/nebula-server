@@ -51,15 +51,20 @@ initCycleTLS().then(c => {
 const proxyCache = new Map<string, { body: Buffer, headers: any, expires: number }>();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes
-const MAX_CACHE_ENTRIES = 150; // Strictly limit to ~300-500MB RAM usage
+const MAX_CACHE_ENTRIES = 50; // Strictly limit to ~150-250MB RAM usage
 
 function setProxyCache(key: string, value: { body: Buffer, headers: any, expires: number }) {
   if (proxyCache.size >= MAX_CACHE_ENTRIES) {
     const oldestKey = proxyCache.keys().next().value;
-    if (oldestKey) proxyCache.delete(oldestKey);
+    if (oldestKey) {
+      proxyCache.delete(oldestKey);
+    }
   }
   proxyCache.set(key, value);
 }
+
+let cacheHits = 0;
+let cacheMisses = 0;
 
 // Pruning logic to prevent memory leaks in proxyCache
 setInterval(() => {
@@ -77,8 +82,11 @@ setInterval(() => {
 // Memory Monitor
 setInterval(() => {
   const used = process.memoryUsage();
-  console.log(`[MEMORY] RSS: ${(used.rss / 1024 / 1024).toFixed(2)} MB | Heap: ${(used.heapUsed / 1024 / 1024).toFixed(2)} MB / ${(used.heapTotal / 1024 / 1024).toFixed(2)} MB`);
-}, 10 * 60 * 1000); // Every 10 minutes
+  const hitRate = cacheHits + cacheMisses > 0 ? ((cacheHits / (cacheHits + cacheMisses)) * 100).toFixed(1) : 0;
+  console.log(`[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | Cache: ${proxyCache.size}/${MAX_CACHE_ENTRIES} | HitRate: ${hitRate}%`);
+  // Reset counters periodically to see current performance
+  if (cacheHits + cacheMisses > 1000) { cacheHits = 0; cacheMisses = 0; }
+}, 5 * 60 * 1000); // Every 5 minutes
 
 // Warm up got-scraping to avoid delay on first request
 setTimeout(async () => {
@@ -1065,10 +1073,12 @@ app.get("/api/proxy/segment", async (req, res) => {
   const cacheKey = targetUrl;
   const cached = proxyCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) {
+    cacheHits++;
     res.setHeader("Content-Type", cached.headers["content-type"] || "video/mp2t");
     res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(200).end(cached.body);
   }
+  cacheMisses++;
 
   const passHeaders: any = {};
   if (req.headers.range) passHeaders.range = req.headers.range;
@@ -1109,7 +1119,8 @@ app.get("/api/proxy/segment", async (req, res) => {
     } else {
       const duration = Date.now() - startTime;
       if (status >= 400) {
-        console.error(`[PROXY/segment] ✘ ${status} | url=${targetUrl.substring(0, 60)}...`);
+        const errorBody = String(response.body || "").substring(0, 100);
+        console.error(`[PROXY/segment] ✘ ${status} | duration=${duration}ms | body=${errorBody} | url=${targetUrl.substring(0, 60)}...`);
       }
 
       if (status === 200) {
