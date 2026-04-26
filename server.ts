@@ -50,7 +50,16 @@ initCycleTLS().then(c => {
 // Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
 const proxyCache = new Map<string, { body: Buffer, headers: any, expires: number }>();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes for video segments (unused for RAM cache now)
+const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes
+const MAX_CACHE_ENTRIES = 150; // Strictly limit to ~300-500MB RAM usage
+
+function setProxyCache(key: string, value: { body: Buffer, headers: any, expires: number }) {
+  if (proxyCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = proxyCache.keys().next().value;
+    if (oldestKey) proxyCache.delete(oldestKey);
+  }
+  proxyCache.set(key, value);
+}
 
 // Pruning logic to prevent memory leaks in proxyCache
 setInterval(() => {
@@ -62,7 +71,7 @@ setInterval(() => {
       pruned++;
     }
   }
-  if (pruned > 0) console.log(`[CACHE] Pruned ${pruned} expired entries from proxyCache.`);
+  if (pruned > 0) console.log(`[CACHE] Pruned ${pruned} expired entries from proxyCache. Size: ${proxyCache.size}`);
 }, 5 * 60 * 1000); // Every 5 minutes
 
 // Memory Monitor
@@ -1005,7 +1014,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
 
     // Cache successful rewritten manifest
-    proxyCache.set(cacheKey, {
+    setProxyCache(cacheKey, {
       body: Buffer.from(proxified, 'utf-8'),
       headers: upstream.headers,
       expires: Date.now() + CACHE_TTL
@@ -1087,7 +1096,11 @@ app.get("/api/proxy/segment", async (req, res) => {
       }
       
       if (proxyResponse.statusCode === 200) {
-        // No longer caching segments in RAM to prevent OOM
+        setProxyCache(cacheKey, {
+          body: proxyResponse.body,
+          headers: proxyResponse.headers,
+          expires: Date.now() + SEGMENT_TTL
+        });
       }
       
       res.setHeader("Content-Type", proxyResponse.headers["content-type"] || "video/mp2t");
@@ -1100,7 +1113,11 @@ app.get("/api/proxy/segment", async (req, res) => {
       }
 
       if (status === 200) {
-        // No longer caching segments in RAM to prevent OOM
+        setProxyCache(cacheKey, {
+          body: response.body,
+          headers: response.headers,
+          expires: Date.now() + SEGMENT_TTL
+        });
       }
 
       res.setHeader("Content-Type", response.headers["content-type"] || "video/mp2t");
