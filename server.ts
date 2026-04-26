@@ -51,7 +51,7 @@ initCycleTLS().then(c => {
 const proxyCache = new Map<string, { body: Buffer, headers: any, expires: number }>();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes
-const MAX_CACHE_ENTRIES = 50; // Strictly limit to ~150-250MB RAM usage
+const MAX_CACHE_ENTRIES = 100; // Increased to 100 now that we are in production mode (saves network)
 
 function setProxyCache(key: string, value: { body: Buffer, headers: any, expires: number }) {
   if (proxyCache.size >= MAX_CACHE_ENTRIES) {
@@ -103,7 +103,11 @@ setTimeout(async () => {
  * Storm CDN requires literal { } braces in query params — any library that
  * parses the URL with WHATWG will encode them to %7B/%7D and get a 400.
  */
-const httpsAgent = new https.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ 
+  keepAlive: true, 
+  maxSockets: 32,      // Limit concurrent connections to avoid flooding Oracle network
+  timeout: 10000      // 10s timeout
+});
 
 function fetchVidLinkRaw(rawUrl: string, customHeaders: any = {}, redirectCount = 0): Promise<{ statusCode: number; headers: any; body: Buffer, finalUrl: string }> {
   if (redirectCount > 5) return Promise.reject(new Error("Too many redirects"));
@@ -156,6 +160,17 @@ function fetchVidLinkRaw(rawUrl: string, customHeaders: any = {}, redirectCount 
         body: Buffer.concat(chunks),
         finalUrl: rawUrl
       }));
+    });
+
+    req.on('error', (err) => {
+      console.error(`[FETCH/raw] ✘ Request error: ${err.message} | url=${baseOnly}...`);
+      reject(err);
+    });
+
+    // Add a strict 15s timeout to avoid hanging the Node.js event loop
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error("Request timeout"));
     });
 
     req.end();
