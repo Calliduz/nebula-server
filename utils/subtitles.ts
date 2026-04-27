@@ -64,12 +64,22 @@ export async function getSubtitles(
     const response = await axios.get(url, { timeout: 8000 });
     const subs = response.data?.subtitles || [];
     
+    // Deduplicate by language (first one is usually highest rated)
+    const dedupedMap = new Map();
+    for (const sub of subs) {
+      if (!dedupedMap.has(sub.lang)) {
+        dedupedMap.set(sub.lang, sub);
+      }
+    }
+    const dedupedSubs = Array.from(dedupedMap.values());
+
     // Map the Stremio response to a clean payload
-    return subs.map((sub: any) => ({
+    return dedupedSubs.map((sub: any) => ({
       id: sub.id,
       url: sub.url,
       lang: sub.lang, // ISO string e.g. "eng", "fre"
       languageName: getLanguageName(sub.lang),
+      source: 'OpenSubtitles',
     }));
   } catch (error) {
     console.error(`[SUBS] Failed to fetch subtitles for ${imdbId}`);
@@ -77,45 +87,64 @@ export async function getSubtitles(
   }
 }
 
-function getLanguageName(iso: string) {
+export function getLanguageName(iso: string) {
+  const key = iso.toLowerCase().trim().substring(0, 3);
   const map: Record<string, string> = {
     eng: "English",
+    en: "English",
     fre: "French",
+    fra: "French",
     spa: "Spanish",
+    esp: "Spanish",
     ger: "German",
+    deu: "German",
     ita: "Italian",
     por: "Portuguese",
     rus: "Russian",
     chi: "Chinese",
+    zho: "Chinese",
     jpn: "Japanese",
+    nld: "Dutch",
+    dut: "Dutch",
+    nl: "Dutch",
     kor: "Korean",
     ara: "Arabic",
-    hin: "Hindi",
-    pol: "Polish",
     tur: "Turkish",
-    dut: "Dutch",
+    pol: "Polish",
     swe: "Swedish",
     dan: "Danish",
     fin: "Finnish",
     nor: "Norwegian",
-    cze: "Czech",
+    ind: "Indonesian",
+    vie: "Vietnamese",
+    tha: "Thai",
+    hin: "Hindi",
+    ben: "Bengali",
+    pun: "Punjabi",
+    per: "Persian",
+    fas: "Persian",
+    heb: "Hebrew",
     gre: "Greek",
+    ell: "Greek",
+    cze: "Czech",
+    ces: "Czech",
     hun: "Hungarian",
     rum: "Romanian",
+    ron: "Romanian",
     bul: "Bulgarian",
-    srp: "Serbian",
     hrv: "Croatian",
-    slv: "Slovenian",
+    srp: "Serbian",
+    slo: "Slovak",
     slk: "Slovak",
+    slv: "Slovenian",
+    est: "Estonian",
+    lav: "Latvian",
+    lit: "Lithuanian",
     ukr: "Ukrainian",
-    tha: "Thai",
-    vie: "Vietnamese",
-    ind: "Indonesian",
-    msa: "Malay",
-    tgl: "Tagalog",
-    heb: "Hebrew",
-    fas: "Persian",
-    urd: "Urdu",
+    pob: "Portuguese (BR)",
+    "pt-br": "Portuguese (BR)",
+    bra: "Portuguese (BR)",
+    pt: "Portuguese",
   };
-  return map[iso.toLowerCase()] || iso;
+  return map[key] || map[iso.toLowerCase().substring(0, 2)] || iso;
 }

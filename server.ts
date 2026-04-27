@@ -431,12 +431,38 @@ app.get("/api/stream", async (req, res) => {
           console.log(
             `[STREAM] Cache HIT ✔ (link alive) for ${tmdbId} S${season}E${episode}`,
           );
+
+          // Re-extract subtitles from mirrors for cache hit
+          const allSubtitles: any[] = [];
+          if (cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
+            const subMap = new Map();
+            cachedRecord.mirrors.forEach((m: any) => {
+              if (m.subtitles) {
+                m.subtitles.forEach((s: any) => {
+                  if (!subMap.has(s.url)) subMap.set(s.url, s);
+                });
+              }
+            });
+            allSubtitles.push(...subMap.values());
+          }
+
           return res.json({
             streamUrl: cachedRecord.streamUrl,
             source: cachedRecord.source || "cache",
             qualityTag: cachedRecord.qualityTag || "UNKNOWN",
             resolution: cachedRecord.resolution || "UNKNOWN",
             mirrors: cachedRecord.mirrors || [],
+            subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(
+              (s) => {
+                if (s.url.startsWith("http")) {
+                  return {
+                    ...s,
+                    url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
+                  };
+                }
+                return s;
+              },
+            ),
           });
         } else {
           console.warn(
@@ -481,25 +507,6 @@ app.get("/api/stream", async (req, res) => {
       if (vidlinkMirrors && vidlinkMirrors.length > 0) {
         console.log(`[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`);
         mirrors.push(...vidlinkMirrors);
-        streamUrl = vidlinkMirrors[0]!.url;
-        sourceName = "VidLink";
-
-        // Cache the result for 4 hours
-        const exp = new Date();
-        exp.setHours(exp.getHours() + 4);
-        await StreamCache.findOneAndUpdate(
-          { tmdbId, type: kind, season, episode },
-          { streamUrl, source: sourceName, mirrors: vidlinkMirrors, streamExpiresAt: exp },
-          { upsert: true }
-        ).catch(() => null);
-
-        return res.json({
-          streamUrl,
-          source: sourceName,
-          qualityTag: "UNKNOWN",
-          resolution: "UNKNOWN",
-          mirrors: vidlinkMirrors
-        });
       }
     } catch (e) {
       console.error(`[STREAM] VidLink failed:`, e);
@@ -518,12 +525,16 @@ app.get("/api/stream", async (req, res) => {
       resolution = mirrors[0].quality || "1080p";
       qualityTag = resolution.includes("2160") ? "4K" : "HD";
 
-      // Collect all subtitles from mirrors
+      // Collect all subtitles from mirrors, deduplicating by URL
+      const subMap = new Map();
       mirrors.forEach((m) => {
         if (m.subtitles) {
-          allSubtitles.push(...m.subtitles);
+          m.subtitles.forEach((s: any) => {
+            if (!subMap.has(s.url)) subMap.set(s.url, s);
+          });
         }
       });
+      allSubtitles.push(...subMap.values());
     }
 
     if (mirrors.length === 0) {
@@ -575,10 +586,10 @@ app.get("/api/stream", async (req, res) => {
             m.url = u.href;
           } catch {}
         }
-        // Inject subtitle proxy for .srt or KissKH subs
+        // Inject subtitle proxy for all external subs
         if (m.subtitles) {
           m.subtitles = m.subtitles.map((s) => {
-            if (s.url.toLowerCase().endsWith(".srt") || s.source === "KissKH") {
+            if (s.url.startsWith("http")) {
               return {
                 ...s,
                 url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
@@ -592,7 +603,7 @@ app.get("/api/stream", async (req, res) => {
       }),
       subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(
         (s) => {
-          if (s.url.toLowerCase().endsWith(".srt") || s.source === "KissKH") {
+          if (s.url.startsWith("http")) {
             return {
               ...s,
               url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
@@ -707,7 +718,7 @@ app.get("/api/subtitles", async (req, res) => {
     }
 
     const proxied = aggregated.map((s) => {
-      if (s.url.toLowerCase().endsWith(".srt")) {
+      if (s.url.startsWith("http")) {
         return {
           ...s,
           url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
@@ -1161,14 +1172,19 @@ app.get("/api/proxy/subtitle", async (req, res) => {
   console.log(`[PROXY/sub] ▶ ${targetUrl.substring(0, 80)}`);
 
   try {
+    const headers: any = { "User-Agent": UA };
+    if (targetUrl.includes("kisskh")) {
+      headers.Referer = "https://kisskh.do/";
+      headers.Origin = "https://kisskh.do";
+    } else if (targetUrl.includes("vidlink") || targetUrl.includes("storm.vodvidl.site")) {
+      headers.Referer = "https://vidlink.pro/";
+      headers.Origin = "https://vidlink.pro";
+    }
+
     const upstream = await axios.get(targetUrl, {
       responseType: "text",
       timeout: 15000,
-      headers: {
-        "User-Agent": UA,
-        Referer: "https://kisskh.do/",
-        Origin: "https://kisskh.do",
-      },
+      headers
     });
 
     let content: string = upstream.data;
@@ -1207,6 +1223,8 @@ app.all("/api/cache/clear", async (req, res) => {
       MetadataCache.deleteMany({}),
       DiscoveryCache.deleteMany({}),
       DramaDetailCache.deleteMany({}),
+      SubtitleCache.deleteMany({}),
+      StreamCache.deleteMany({}),
     ]);
     console.log("Registry Cache Flushed Successfully");
     res.json({

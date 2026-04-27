@@ -1,6 +1,7 @@
 import { gotScraping } from 'got-scraping';
 import { getVidLinkToken } from './vidlinkToken.js';
 import { type MirrorStream, UA } from './scraper.js';
+import { getLanguageName } from './subtitles.js';
 
 const VIDLINK_BASE = 'https://vidlink.pro';
 
@@ -49,9 +50,15 @@ export class VidLinkScraper {
             const subtitles = data.subtitles?.map((s: any) => ({
                 url: s.url,
                 lang: s.lang,
-                languageName: s.label || s.lang,
+                languageName: s.label || getLanguageName(s.lang),
                 source: 'VidLink'
             })) || [];
+            
+            if (subtitles.length > 0) {
+              console.log(`[VidLink] Found ${subtitles.length} subtitles for ${tmdbId}`);
+            } else {
+              console.warn(`[VidLink] No subtitles found in API response for ${tmdbId}`);
+            }
 
             const streamHeaders = cookies ? { cookie: cookies } : undefined;
 
