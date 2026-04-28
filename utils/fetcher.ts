@@ -337,24 +337,32 @@ export async function hybridFetch(url: string, options: any = {}) {
       }
       
       // Look for Cloudflare Turnstile/Challenge
-      if (content.includes("challenge") || content.includes("turnstile") || content.includes("checking your browser") || content.includes("security verification")) {
-         console.log(`${logPrefix} 🛡️ Cloudflare challenge detected (Attempt ${attempts}). Attempting to solve...`);
+      if (content.includes("challenge") || content.includes("turnstile") || content.includes("checking your browser") || content.includes("security verification") || content.includes("just a moment")) {
+         console.log(`${logPrefix} 🛡️ Cloudflare challenge detected (Attempt ${attempts}). Attempting human-like solve...`);
          try {
            // Try to find turnstile in any frame
            for (const frame of page.frames()) {
-             const checkbox = await frame.$('input[type="checkbox"], #challenge-stage, .ctp-checkbox-label');
+             const checkbox = await frame.$('input[type="checkbox"], #challenge-stage, .ctp-checkbox-label, #challenge-form');
              if (checkbox) {
-               console.log(`${logPrefix} 🖱️ Turnstile element found in frame, clicking...`);
-               await checkbox.click().catch(() => {});
-               break;
+               const box = await checkbox.boundingBox();
+               if (box) {
+                 console.log(`${logPrefix} 🖱️ Turnstile element found at ${Math.round(box.x)},${Math.round(box.y)}. Hovering...`);
+                 await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 });
+                 await new Promise(r => setTimeout(r, Math.random() * 200 + 100)); // Random delay
+                 await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                 console.log(`${logPrefix} ✅ Clicked Turnstile.`);
+                 break;
+               }
              }
            }
-           // Also try main page
-           await page.click('.cf-turnstile, #challenge-form, #challenge-stage, .ctp-checkbox-label').catch(() => {});
-         } catch {}
+           // Fallback to direct click if frames failed
+           await page.click('.cf-turnstile, #challenge-form, #challenge-stage, .ctp-checkbox-label', { delay: Math.random() * 100 }).catch(() => {});
+         } catch (err: any) {
+           console.log(`${logPrefix} ✘ Solve attempt failed: ${err.message}`);
+         }
       }
 
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 2000));
       attempts++;
     }
 
