@@ -79,11 +79,25 @@ setInterval(() => {
   if (pruned > 0) console.log(`[CACHE] Pruned ${pruned} expired entries from proxyCache. Size: ${proxyCache.size}`);
 }, 5 * 60 * 1000); // Every 5 minutes
 
-// Memory Monitor
-setInterval(() => {
+// Memory Monitor & DB Heartbeat
+setInterval(async () => {
   const used = process.memoryUsage();
   const hitRate = cacheHits + cacheMisses > 0 ? ((cacheHits / (cacheHits + cacheMisses)) * 100).toFixed(1) : 0;
-  console.log(`[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | Cache: ${proxyCache.size}/${MAX_CACHE_ENTRIES} | HitRate: ${hitRate}%`);
+  
+  // DB Heartbeat to prevent Atlas idle timeout (Atlas drops idle TCP after 30 mins)
+  let dbStatus = 'OFFLINE';
+  if (mongoose.connection.readyState === 1) {
+    try {
+      await mongoose.connection.db?.admin().ping();
+      dbStatus = 'ONLINE';
+    } catch (e) {
+      dbStatus = 'PING_FAIL';
+    }
+  } else if (mongoose.connection.readyState === 2) {
+    dbStatus = 'CONNECTING';
+  }
+
+  console.log(`[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | DB: ${dbStatus} | Cache: ${proxyCache.size}/${MAX_CACHE_ENTRIES} | HitRate: ${hitRate}%`);
   // Reset counters periodically to see current performance
   if (cacheHits + cacheMisses > 1000) { cacheHits = 0; cacheMisses = 0; }
 }, 5 * 60 * 1000); // Every 5 minutes
@@ -359,11 +373,24 @@ loadProxyPool();
 // Optional: Auto-reload every 30 mins
 setInterval(loadProxyPool, 30 * 60 * 1000);
 
+// Mongoose Connection Event Listeners
+mongoose.connection.on("disconnected", () => {
+  console.warn("[DB] ❗ Lost connection to MongoDB Atlas.");
+});
+mongoose.connection.on("reconnected", () => {
+  console.log("[DB] ✅ Re-established connection to MongoDB Atlas.");
+});
+mongoose.connection.on("error", (err) => {
+  console.error("[DB] ❌ Mongoose connection error:", err.message);
+});
+
 const connectDB = async (retryCount = 5) => {
   try {
     await mongoose.connect(MONGODB_URI, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 10000,
+      socketTimeoutMS: 45000, // Close sockets after 45s of inactivity (client-side)
+      family: 4, // Force IPv4 to avoid slow dual-stack lookups on Oracle
     });
     console.log("MongoDB Uplink Established");
   } catch (err: any) {
