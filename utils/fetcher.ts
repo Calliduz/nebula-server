@@ -209,10 +209,16 @@ export async function hybridFetch(url: string, options: any = {}) {
 
   // 4. Try Puppeteer (Bypass D - Slow)
   if (signal?.aborted) return null;
+  
   if (isBypassing) {
-    console.log(`${logPrefix} ⏳ Queueing for browser...`);
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    return hybridFetch(url, options);
+    console.log(`${logPrefix} ⏳ Queueing for active browser bypass...`);
+    while (isBypassing) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (signal?.aborted) return null;
+    }
+    console.log(`${logPrefix} 🚀 Browser bypass finished, retrying with new cookies...`);
+    // Retry once with the fast methods now that we (hopefully) have new cookies
+    return hybridFetch(url, { ...options, forceBrowser: false });
   }
 
   isBypassing = true;
@@ -248,58 +254,59 @@ export async function hybridFetch(url: string, options: any = {}) {
             cookieStr,
             await page.evaluate(() => navigator.userAgent),
           );
-          console.log(`[Fetcher] ✅ cf_clearance captured!`);
         }
       } catch (e) {}
     }, 1000);
 
-    // 1. Visit Home if needed (domcontentloaded is fastest valid in puppeteer)
-    const currentCookies = sessionStore.getHeaders()["Cookie"] || "";
-    if (!currentCookies.includes("cf_clearance")) {
-      console.log(`[Fetcher] 🏠 Clearing Cloudflare...`);
-      await page.goto(origin, {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
+    // 1. Visit Home (Always clear Cloudflare if we hit this stage)
+    console.log(`[Fetcher] 🏠 Clearing Cloudflare for ${origin}...`);
+    await page.goto(origin, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+
+    // Turnstile Auto-Clicker Loop
+    clickInterval = setInterval(async () => {
+      try {
+        const iframe = await page.$("iframe");
+        if (iframe) {
+          const box = await iframe.boundingBox();
+          if (box && box.width > 0) {
+            await page.mouse.click(
+              box.x + box.width / 2,
+              box.y + box.height / 2,
+            );
+          }
+        }
+      } catch (e) {}
+    }, 2000);
+
+    await page
+      .waitForFunction(
+        () => {
+          const t = document.title.toLowerCase();
+          return (
+            t.includes("kisskh |") || 
+            t.includes("asian dramas & movies") ||
+            t.includes("vidlink") ||
+            t.includes("vsembed")
+          );
+        },
+        { timeout: 15000 },
+      )
+      .catch(() => {
+        console.warn(`[Fetcher] ⚠️ Cloudflare wait timed out, proceeding anyway...`);
       });
 
-      // Turnstile Auto-Clicker Loop
-      clickInterval = setInterval(async () => {
-        try {
-          const iframe = await page.$("iframe");
-          if (iframe) {
-            const box = await iframe.boundingBox();
-            if (box && box.width > 0) {
-              await page.mouse.click(
-                box.x + box.width / 2,
-                box.y + box.height / 2,
-              );
-            }
-          }
-        } catch (e) {}
-      }, 1500);
-
-      await page
-        .waitForFunction(
-          () => {
-            const t = document.title.toLowerCase();
-            return (
-              t.includes("kisskh |") || t.includes("asian dramas & movies")
-            );
-          },
-          { timeout: 15000 },
-        )
-        .catch(() => {});
-
-      if (clickInterval) clearInterval(clickInterval);
-    }
-
+    if (clickInterval) clearInterval(clickInterval);
     if (cookieTimer) clearInterval(cookieTimer);
     if (signal?.aborted) throw new Error("Aborted");
 
     // 2. Navigation to Target
-    console.log(`[Fetcher] 🎯 Fetching API Data...`);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    console.log(`${logPrefix} 🎯 Targeted Navigation: ${url}`);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 
+    // If JSON is expected, wait for the body to contain JSON-like structure
     if (json) {
       await page
         .waitForFunction(
@@ -307,7 +314,7 @@ export async function hybridFetch(url: string, options: any = {}) {
             const text = document.body.innerText.trim();
             return text.startsWith("[") || text.startsWith("{");
           },
-          { timeout: 5000 },
+          { timeout: 10000 },
         )
         .catch(() => {});
     }
@@ -326,6 +333,7 @@ export async function hybridFetch(url: string, options: any = {}) {
       try {
         return JSON.parse(text);
       } catch {
+        console.error(`${logPrefix} ✘ Failed to parse JSON. Content: ${text.substring(0, 100)}...`);
         return null;
       }
     }

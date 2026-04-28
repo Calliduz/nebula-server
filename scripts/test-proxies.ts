@@ -58,7 +58,7 @@ async function testProxy(proxy: ProxyItem): Promise<boolean> {
             // 200 or 404 is technically "unblocked" by IP filter
             validateStatus: (s) => (s >= 200 && s < 400) || s === 404,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
             }
         });
 
