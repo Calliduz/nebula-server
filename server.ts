@@ -15,6 +15,9 @@ import {
   DramaDetailCache,
 } from "./models/Cache.js";
 import { getSubtitles } from "./utils/subtitles.js";
+import { decryptKissKHSubtitle, isKissKHSubtitleUrl } from "./utils/kisskhDecrypt.js";
+import jschardet from "jschardet";
+import iconv from "iconv-lite";
 import {
   scrapeVsembed,
   scrapeNetMirror,
@@ -44,7 +47,7 @@ dotenv.config();
 import initCycleTLS from 'cycletls';
 
 let cycleTLS: any = null;
-initCycleTLS().then(c => {
+(initCycleTLS as any)().then((c: any) => {
   cycleTLS = c;
   console.log('[PROXY] 🛡️ CycleTLS JA3 Spoofer Initialized.');
 }).catch(console.error);
@@ -327,10 +330,11 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || origin.includes('kisskh')) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS Security Policy"));
+      console.warn(`[CORS] Rejected origin: ${origin}`);
+      callback(new Error(`Not allowed by CORS Security Policy: ${origin}`));
     }
   },
   methods: ["GET", "POST", "OPTIONS"],
@@ -549,17 +553,7 @@ app.get("/api/stream", async (req, res) => {
             if (kisskhMirrors && kisskhMirrors.length > 0) {
               console.log(`[STREAM] KissKH Native HIT ✔`);
               
-              const apiBase = (req.headers.host ? (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host : '');
-              const mapped = kisskhMirrors.map(m => {
-                if (m.subtitles) {
-                  m.subtitles = m.subtitles.map(s => ({
-                    ...s,
-                    url: `${apiBase}/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`
-                  }));
-                }
-                return m;
-              });
-              mirrors.push(...mapped);
+              mirrors.push(...kisskhMirrors);
             }
           }
         }
@@ -581,16 +575,7 @@ app.get("/api/stream", async (req, res) => {
         if (vidlinkMirrors && vidlinkMirrors.length > 0) {
           console.log(`[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`);
           const apiBase = (req.headers.host ? (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host : '');
-          const mapped = vidlinkMirrors.map(m => {
-            if (m.subtitles) {
-              m.subtitles = m.subtitles.map(s => ({
-                ...s,
-                url: `${apiBase}/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`
-              }));
-            }
-            return m;
-          });
-          mirrors.push(...mapped);
+          mirrors.push(...vidlinkMirrors);
         }
       } catch (e) {
         console.error(`[STREAM] VidLink failed:`, e);
@@ -616,16 +601,7 @@ app.get("/api/stream", async (req, res) => {
             if (kisskhMirrors && kisskhMirrors.length > 0) {
               console.log(`[STREAM] KissKH Fallback HIT ✔`);
               const apiBase = (req.headers.host ? (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host : '');
-              const mapped = kisskhMirrors.map(m => {
-                if (m.subtitles) {
-                  m.subtitles = m.subtitles.map(s => ({
-                    ...s,
-                    url: `${apiBase}/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`
-                  }));
-                }
-                return m;
-              });
-              mirrors.push(...mapped);
+              mirrors.push(...kisskhMirrors);
             }
           }
         }
@@ -640,9 +616,9 @@ app.get("/api/stream", async (req, res) => {
 
     const allSubtitles: any[] = [];
     if (mirrors.length > 0) {
-      streamUrl = mirrors[0].url;
-      sourceName = mirrors[0].source;
-      resolution = mirrors[0].quality || "1080p";
+      streamUrl = mirrors[0]!.url;
+      sourceName = mirrors[0]!.source;
+      resolution = mirrors[0]!.quality || "1080p";
       qualityTag = resolution.includes("2160") ? "4K" : "HD";
 
       // Collect all subtitles from mirrors, deduplicating by URL
@@ -693,6 +669,11 @@ app.get("/api/stream", async (req, res) => {
     console.log(
       `[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`,
     );
+
+    if (allSubtitles.length > 0) {
+      console.log(`[SUBS] Final aggregation for response: ${allSubtitles.length} tracks.`);
+      allSubtitles.forEach(s => console.log(`[SUBS]   - ${s.languageName}: ${s.url.substring(0, 80)}...`));
+    }
 
     return res.json({
       streamUrl: finalUrl,
@@ -855,6 +836,9 @@ app.get("/api/subtitles", async (req, res) => {
       ).catch(() => null);
     }
 
+    console.log(`[SUBS] Aggregated ${aggregated.length} tracks for ${tmdbId}.`);
+    aggregated.forEach(s => console.log(`[SUBS]   - ${s.languageName}: ${s.url.substring(0, 80)}...`));
+
     const proxied = aggregated.map((s) => {
       if (s.url && s.url.startsWith("http")) {
         return {
@@ -872,34 +856,102 @@ app.get("/api/subtitles", async (req, res) => {
   }
 });
 
-// Endpoint: Subtitle Proxy (Bypasses CORS & forces correct headers)
+// Endpoint: Subtitle Proxy (Bypasses CORS, decrypts KissKH, fixes encoding)
+// All subtitle sources flow through here: KissKH (dramas), VidLink (movies/TV), OpenSubtitles (fallback)
 app.get("/api/proxy/subtitle", async (req, res) => {
   const url = req.query.url as string;
+  console.log(`[SUBS/proxy] 🔍 Request for: ${url?.substring(0, 100)}`);
   if (!url) return res.status(400).send("Missing url");
 
   try {
-    const response = await axios.get(url, {
-      timeout: 10000,
-      headers: { "User-Agent": UA },
-      responseType: 'text'
-    });
+    let rawBuffer: Buffer;
+    let finalUrl = url;
 
-    let content = response.data;
-
-    // Set headers for WebVTT
-    res.setHeader("Content-Type", "text/vtt; charset=utf-8");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=86400");
-
-    // Basic SRT to VTT conversion if needed
-    if (!content.trim().startsWith("WEBVTT")) {
-      content = "WEBVTT\n\n" + content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+    // Use CycleTLS bypass for KissKH to avoid Cloudflare challenges
+    if (isKissKHSubtitleUrl(url)) {
+      console.log(`[SUBS/proxy] Using CycleTLS bypass for KissKH: ${url.substring(0, 50)}...`);
+      const bypass = await fetchWithCycleTLS(url, {
+        "Referer": "https://kisskh.co/",
+        "Origin": "https://kisskh.co"
+      });
+      
+      if (bypass.statusCode >= 400) {
+        console.error(`[SUBS/proxy] ✘ KissKH fetch failed with status ${bypass.statusCode}`);
+        return res.status(bypass.statusCode).send(`KissKH fetch failed: ${bypass.statusCode}`);
+      }
+      
+      rawBuffer = bypass.body;
+      finalUrl = bypass.finalUrl;
+      console.log(`[SUBS/proxy] ✔ KissKH fetch success (${rawBuffer.length} bytes)`);
+    } else {
+      // Standard axios fetch for other sources
+      const response = await axios.get(url, {
+        timeout: 15000,
+        headers: {
+          "User-Agent": UA,
+          "Referer": url.includes('vidlink') ? 'https://vidlink.pro/' : 'https://nebula.clev.studio/'
+        },
+        responseType: 'arraybuffer'
+      });
+      rawBuffer = Buffer.from(response.data);
     }
+
+    let content: string;
+
+    // ── Step 1: Decode to UTF-8 string ──────────────────────────────────
+    // OpenSubtitles often serves ISO-8859-1 or Windows-1252
+    const detected = jschardet.detect(rawBuffer);
+    if (detected.encoding && detected.confidence > 0.5 &&
+        !detected.encoding.toLowerCase().includes('utf') &&
+        !detected.encoding.toLowerCase().includes('ascii')) {
+      console.log(`[SUBS/proxy] Detected encoding: ${detected.encoding} (${(detected.confidence * 100).toFixed(0)}%) — converting to UTF-8`);
+      content = iconv.decode(rawBuffer, detected.encoding);
+    } else {
+      content = rawBuffer.toString('utf-8');
+    }
+
+    // ── Step 2: Strip BOM & normalize line endings ─────────────────────
+    content = content.replace(/^\uFEFF/, ''); // BOM
+    content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n'); // Normalize
+
+    // ── Step 3: KissKH Decryption (dramas only) ────────────────────────
+    if (isKissKHSubtitleUrl(finalUrl)) {
+      console.log(`[SUBS/proxy] KissKH subtitle detected — decrypting...`);
+      try {
+        content = decryptKissKHSubtitle(content, finalUrl);
+      } catch (decErr: any) {
+        console.error(`[SUBS/proxy] KissKH decryption failed: ${decErr.message}`);
+        // Fall through with raw content — better than nothing
+      }
+    }
+
+    // ── Step 4: SRT → VTT conversion ───────────────────────────────────
+    const trimmed = content.trim();
+    if (!trimmed.startsWith('WEBVTT')) {
+      // Replace SRT comma timestamps with VTT dot timestamps
+      content = content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+      // Remove SRT cue index numbers (standalone digit lines before timestamps)
+      content = content.replace(/^\d+\n(?=\d{2}:\d{2}:\d{2})/gm, '');
+      content = 'WEBVTT\n\n' + content.trim() + '\n';
+    }
+
+    // ── Step 5: Clean up common formatting artifacts ───────────────────
+    // Strip ASS/SSA style tags that sometimes leak through
+    content = content.replace(/\{\\an\d+\}/g, '');
+    // Strip HTML bold/italic if overly nested (but keep simple <i> and <b>)
+    content = content.replace(/<font[^>]*>/gi, '').replace(/<\/font>/gi, '');
+    // Remove empty cues (timestamp line followed by blank)
+    content = content.replace(/(\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3})\n\n/g, '');
+
+    // ── Respond ────────────────────────────────────────────────────────
+    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
 
     return res.send(content);
   } catch (e: any) {
     console.error(`[SUBS/proxy] Failed for ${url}: ${e.message}`);
-    return res.status(500).send("Subtitle proxy failed");
+    return res.status(500).send('Subtitle proxy failed');
   }
 });
 
@@ -1093,7 +1145,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     const bakedMatch = targetUrl.match(/[\?&]nebula_proxy=([^&]+)/);
     if (bakedMatch) {
       try {
-        streamProxy = decodeURIComponent(bakedMatch[1]);
+        streamProxy = decodeURIComponent(bakedMatch[1]!);
         // Remove the param from the URL while preserving everything else exactly
         targetUrl = targetUrl.replace(/[\?&]nebula_proxy=[^&]+/, '').replace(/\?$/, '').replace(/\?&/, '?');
       } catch {}
@@ -1350,16 +1402,27 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       headers.Origin = "https://vidlink.pro";
     }
 
+    // Fetch as arraybuffer to handle different encodings
     const upstream = await axios.get(targetUrl, {
-      responseType: "text",
+      responseType: "arraybuffer",
       timeout: 15000,
       headers
     });
 
-    let content: string = upstream.data;
-    if (typeof content !== 'string') {
-      content = JSON.stringify(content);
+    const buffer = Buffer.from(upstream.data);
+    
+    // Detect encoding
+    const detection = jschardet.detect(buffer);
+    let encoding = detection.encoding || "utf-8";
+    
+    // Fallback/Force UTF-8 if confidence is too low or it looks like ASCII
+    if (detection.confidence < 0.8 && !['ascii', 'utf-8'].includes(encoding.toLowerCase())) {
+        encoding = "utf-8";
     }
+
+    console.log(`[PROXY/sub] Detected encoding: ${encoding} (confidence: ${detection.confidence}) for ${targetUrl.substring(0, 40)}`);
+    
+    let content = iconv.decode(buffer, encoding);
 
     // Remove BOM if present
     if (content.charCodeAt(0) === 0xFEFF) {
@@ -1374,11 +1437,22 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       (!trimmed.startsWith("WEBVTT") && trimmed.includes(" --> "))
     ) {
       console.log(`[PROXY/sub] Converting SRT to VTT for ${targetUrl.substring(0, 40)}...`);
-      if (!trimmed.startsWith("WEBVTT")) {
-        content = "WEBVTT\n\n" + trimmed;
+      
+      // Split into lines to process properly
+      const lines = content.split(/\r?\n/);
+      let vtt = "WEBVTT\n\n";
+      
+      for (let i = 0; i < lines.length; i++) {
+        let line = lines[i]!;
+        
+        // Convert timestamp comma to dot: 00:00:20,000 → 00:00:20.000
+        if (line.includes(" --> ")) {
+          line = line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+        }
+        
+        vtt += line + "\n";
       }
-      // Convert SRT timestamps: 00:00:20,000 → 00:00:20.000
-      content = content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+      content = vtt;
     }
 
     res.setHeader("Content-Type", "text/vtt; charset=utf-8");
