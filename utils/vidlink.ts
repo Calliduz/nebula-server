@@ -23,7 +23,7 @@ export class VidLinkScraper {
             console.log(`[VidLink] Generating token for ${type} ${tmdbId}${type === 'tv' ? ` S${season}E${episode}` : ''}...`);
             
             const token = await getVidLinkToken(tmdbId);
-            const apiUrl = `${VIDLINK_BASE}/api/b/${type}/${token}${type === 'tv' ? `/${season}/${episode}` : ''}?multiLang=0`;
+            const apiUrl = `${VIDLINK_BASE}/api/b/${type}/${token}${type === 'tv' ? `/${season}/${episode}` : ''}?multiLang=1`;
 
             let referer = `${VIDLINK_BASE}/movie/${tmdbId}`;
             if (type === 'tv') {

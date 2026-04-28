@@ -399,7 +399,7 @@ app.get("/api/stream", async (req, res) => {
           resolution: cachedRecord.resolution || "UNKNOWN",
           mirrors: cachedRecord.mirrors || [],
           subtitles: allSubtitles.map(s => {
-            if (s.url && s.url.startsWith('http')) {
+            if (s.url && s.url.startsWith('http') && !s.url.includes('/api/proxy/subtitle')) {
               return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
             }
             return s;
@@ -513,6 +513,20 @@ app.get("/api/stream", async (req, res) => {
           });
         }
       });
+      
+      // Merge with OpenSubtitles as fallback
+      try {
+        const osSubs = await getSubtitles(tmdbId, kind as any, season, episode);
+        if (osSubs && osSubs.length > 0) {
+          osSubs.forEach((s: any) => {
+             // Avoid duplicates if a mirror already had it
+             if (!subMap.has(s.url)) subMap.set(s.url, s);
+          });
+        }
+      } catch (e) {
+        console.warn(`[STREAM] OpenSubtitles fetch failed:`, e);
+      }
+
       allSubtitles.push(...subMap.values());
     }
 
@@ -1350,27 +1364,47 @@ app.get("/api/proxy/subtitle", async (req, res) => {
     const trimmed = content.trim();
 
     // SRT → VTT conversion
-    if (
-      targetUrl.toLowerCase().endsWith(".srt") ||
-      (!trimmed.startsWith("WEBVTT") && trimmed.includes(" --> "))
-    ) {
-      console.log(`[PROXY/sub] Converting SRT to VTT for ${targetUrl.substring(0, 40)}...`);
+    const isSrt = targetUrl.toLowerCase().endsWith(".srt") || (!trimmed.startsWith("WEBVTT") && trimmed.includes(" --> "));
+    
+    if (isSrt || trimmed.startsWith("WEBVTT")) {
+      console.log(`[PROXY/sub] Processing VTT/SRT for ${targetUrl.substring(0, 40)}...`);
       
-      // Split into lines to process properly
       const lines = content.split(/\r?\n/);
-      let vtt = "WEBVTT\n\n";
-      
+      let output = "";
+      let hasVttHeader = false;
+      let hasSyncMap = false;
+
+      // Check existing headers
+      for (let i = 0; i < Math.min(lines.length, 10); i++) {
+        if (lines[i]?.trim().startsWith("WEBVTT")) hasVttHeader = true;
+        if (lines[i]?.trim().includes("X-TIMESTAMP-MAP")) hasSyncMap = true;
+      }
+
+      if (!hasVttHeader) {
+        output += "WEBVTT\n";
+      }
+
+      // Inject Sync Map if missing (Crucial for HLS/VidLink sync)
+      if (!hasSyncMap) {
+        output += "X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n";
+      }
+
+      if (!hasVttHeader || !hasSyncMap) output += "\n";
+
       for (let i = 0; i < lines.length; i++) {
         let line = lines[i]!;
         
-        // Convert timestamp comma to dot: 00:00:20,000 → 00:00:20.000
+        // Skip existing WEBVTT line if we already added it
+        if (i === 0 && line.trim().startsWith("WEBVTT")) continue;
+
+        // Convert timestamp comma to dot: 00:00:20,000 → 00:00:20.000 (SRT -> VTT sync)
         if (line.includes(" --> ")) {
           line = line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
         }
         
-        vtt += line + "\n";
+        output += line + "\n";
       }
-      content = vtt;
+      content = output;
     }
 
     res.setHeader("Content-Type", "text/vtt; charset=utf-8");
