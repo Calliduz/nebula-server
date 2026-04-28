@@ -186,10 +186,28 @@ export class KissKHScraper {
     }
 
     static async getExploreList(type: number = 0, country: number = 0, page: number = 1, order: number = 1): Promise<any[]> {
-        const url = `${KISSKH_API}/DramaList/List?page=${page}&type=${type}&sub=0&country=${country}&status=0&order=${order}`;
+        // Fetch 2 pages in parallel to increase discovery depth
+        const url1 = `${KISSKH_API}/DramaList/List?page=${page * 2 - 1}&type=${type}&sub=0&country=${country}&status=0&order=${order}`;
+        const url2 = `${KISSKH_API}/DramaList/List?page=${page * 2}&type=${type}&sub=0&country=${country}&status=0&order=${order}`;
+        
         try {
-            const data = await hybridFetch(url, { json: true, referer: KISSKH_BASE });
-            return data?.data || [];
+            const [res1, res2] = await Promise.all([
+                hybridFetch(url1, { json: true, referer: KISSKH_BASE }).catch(() => null),
+                hybridFetch(url2, { json: true, referer: KISSKH_BASE }).catch(() => null)
+            ]);
+            
+            const results = [
+                ...(res1?.data || []),
+                ...(res2?.data || [])
+            ];
+
+            // Deduplicate just in case
+            const seen = new Set();
+            return results.filter(item => {
+                if (seen.has(item.id)) return false;
+                seen.add(item.id);
+                return true;
+            });
         } catch (e: any) {
             console.error(`[KissKH] Explore failed:`, e.message);
             return [];

@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Fetcher, FetcherResponse } from '@movie-web/providers';
 import puppeteerPool from './puppeteerPool.js';
+import { fetchWithCycleTLS } from './bypass.js';
 
 // Global axios instance with stealth headers
 const client = axios.create({
@@ -85,6 +86,23 @@ export async function hybridFetch(url: string, options: any = {}) {
         } catch (error: any) {
             const status = error.response?.status;
             if (status !== 403 && status !== 530 && status !== 406) throw error;
+            
+            // Bypass B: Try high-performance CycleTLS before Puppeteer
+            try {
+                console.log(`[Fetcher] ⚡ Engaging High-Speed Bypass (CycleTLS) for: ${new URL(url).origin}`);
+                const bypass = await fetchWithCycleTLS(url, sessionStore.getHeaders(referer));
+                if (bypass.statusCode < 400) {
+                    console.log(`[Fetcher] ✅ High-Speed Bypass Success!`);
+                    const text = bypass.body.toString('utf-8');
+                    if (json) {
+                        try { return JSON.parse(text); } catch { return text; }
+                    }
+                    return text;
+                }
+                console.warn(`[Fetcher] ✘ High-Speed Bypass failed with status ${bypass.statusCode}. Falling back to Puppeteer...`);
+            } catch (e) {
+                console.warn(`[Fetcher] ✘ High-Speed Bypass error. Falling back to Puppeteer...`);
+            }
         }
     }
 
