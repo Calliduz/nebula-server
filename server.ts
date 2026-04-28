@@ -670,11 +670,6 @@ app.get("/api/stream", async (req, res) => {
       `[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`,
     );
 
-    if (allSubtitles.length > 0) {
-      console.log(`[SUBS] Final aggregation for response: ${allSubtitles.length} tracks.`);
-      allSubtitles.forEach(s => console.log(`[SUBS]   - ${s.languageName}: ${s.url.substring(0, 80)}...`));
-    }
-
     return res.json({
       streamUrl: finalUrl,
       streams: [finalUrl],
@@ -827,19 +822,25 @@ app.get("/api/subtitles", async (req, res) => {
       .filter((r) => r.status === "fulfilled")
       .flatMap((r) => (r as PromiseFulfilledResult<any[]>).value);
 
+    // 2. Sort to prioritize English
+    const sorted = aggregated.sort((a, b) => {
+      const aEng = a.languageName?.toLowerCase().includes('english') || a.language?.toLowerCase().startsWith('en');
+      const bEng = b.languageName?.toLowerCase().includes('english') || b.language?.toLowerCase().startsWith('en');
+      if (aEng && !bEng) return -1;
+      if (!aEng && bEng) return 1;
+      return 0;
+    });
+
     // 3. Save to permanent cache
-    if (aggregated.length > 0) {
+    if (sorted.length > 0) {
       await SubtitleCache.findOneAndUpdate(
         { tmdbId, type: kind, season, episode },
-        { subtitles: aggregated, aggregatedAt: new Date() },
+        { subtitles: sorted, aggregatedAt: new Date() },
         { upsert: true },
       ).catch(() => null);
     }
 
-    console.log(`[SUBS] Aggregated ${aggregated.length} tracks for ${tmdbId}.`);
-    aggregated.forEach(s => console.log(`[SUBS]   - ${s.languageName}: ${s.url.substring(0, 80)}...`));
-
-    const proxied = aggregated.map((s) => {
+    const proxied = sorted.map((s) => {
       if (s.url && s.url.startsWith("http")) {
         return {
           ...s,
@@ -860,7 +861,6 @@ app.get("/api/subtitles", async (req, res) => {
 // All subtitle sources flow through here: KissKH (dramas), VidLink (movies/TV), OpenSubtitles (fallback)
 app.get("/api/proxy/subtitle", async (req, res) => {
   const url = req.query.url as string;
-  console.log(`[SUBS/proxy] 🔍 Request for: ${url?.substring(0, 100)}`);
   if (!url) return res.status(400).send("Missing url");
 
   try {
@@ -869,7 +869,6 @@ app.get("/api/proxy/subtitle", async (req, res) => {
 
     // Use CycleTLS bypass for KissKH to avoid Cloudflare challenges
     if (isKissKHSubtitleUrl(url)) {
-      console.log(`[SUBS/proxy] Using CycleTLS bypass for KissKH: ${url.substring(0, 50)}...`);
       const bypass = await fetchWithCycleTLS(url, {
         "Referer": "https://kisskh.co/",
         "Origin": "https://kisskh.co"
@@ -882,7 +881,6 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       
       rawBuffer = bypass.body;
       finalUrl = bypass.finalUrl;
-      console.log(`[SUBS/proxy] ✔ KissKH fetch success (${rawBuffer.length} bytes)`);
     } else {
       // Standard axios fetch for other sources
       const response = await axios.get(url, {
