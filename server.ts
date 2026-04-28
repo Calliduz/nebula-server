@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import axios from "axios";
 import fs from "fs";
 import https from "https";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 import {
   MetadataCache,
   StreamCache,
@@ -306,7 +308,48 @@ async function fetchWithGotScraping(url: string, headers: any, proxy?: string, m
 }
 
 const app = express();
-app.use(cors());
+
+// ── Security Middleware ──────────────────────────────────────────────────────
+
+// 1. Helmet: Sets various security-related HTTP headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow images/videos from other domains
+  contentSecurityPolicy: false, // Disable CSP if it interferes with your specific iframe/stream needs, or configure it carefully
+}));
+
+// 2. Optimized CORS: Restrict to your frontend only
+const allowedOrigins = [
+  "https://nebula.clev.studio",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173",
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS Security Policy"));
+    }
+  },
+  methods: ["GET", "POST", "OPTIONS"],
+  credentials: true,
+}));
+
+// 3. Rate Limiting: Prevent Brute-force and Scraping of your own API
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300, // Limit each IP to 300 requests per window
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: { error: "Too many requests from this IP, please try again in 15 minutes." },
+  skip: (req) => req.path.startsWith('/health') || req.path.startsWith('/api/health'), // Don't rate limit health checks
+});
+
+// Apply the rate limiter to all requests
+app.use(limiter);
+
 app.use(express.json());
 
 // Initialize MongoDB
@@ -314,7 +357,10 @@ const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/nebula-local";
 const FANART_API_KEY = process.env.FANART_API_KEY || "";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
-const ADMIN_KEY = process.env.ADMIN_KEY || "nebula-admin-2026";
+const ADMIN_KEY = process.env.ADMIN_KEY;
+if (!ADMIN_KEY) {
+  console.warn("[SECURITY] ⚠️ ADMIN_KEY not set in .env. Admin features disabled.");
+}
 
 // app.listen(...)
 // Note: Puppeteer pool initialization removed to save resources.
