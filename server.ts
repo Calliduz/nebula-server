@@ -44,13 +44,7 @@ import { CookieJar } from "tough-cookie";
 // Load Environment Variables
 dotenv.config();
 
-import initCycleTLS from 'cycletls';
-
-let cycleTLS: any = null;
-(initCycleTLS as any)().then((c: any) => {
-  cycleTLS = c;
-  console.log('[PROXY] 🛡️ CycleTLS JA3 Spoofer Initialized.');
-}).catch(console.error);
+import { fetchWithCycleTLS } from "./utils/bypass.js";
 
 // Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
 const proxyCache = new Map<string, { body: Buffer, headers: any, expires: number }>();
@@ -197,122 +191,12 @@ function fetchVidLinkRaw(rawUrl: string, customHeaders: any = {}, redirectCount 
 }
 
 
-// Helper function to safely fetch using cycletls
-async function fetchWithCycleTLS(url: string, headers: any, proxy?: string, method: string = 'get', body?: any) {
-  if (!cycleTLS) throw new Error("CycleTLS not initialized yet");
-  
-  const defaultHeaders = {
-    'accept': '*/*',
-    'accept-language': 'en-US,en;q=0.7',
-    'cache-control': 'no-cache',
-    'pragma': 'no-cache',
-    'priority': 'u=1, i',
-    'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'cross-site',
-    'user-agent': UA
-  };
+// Shared bypass functions moved to utils/bypass.ts
 
-  // Merge headers, allowing overrides
-  const finalHeaders = {
-    ...defaultHeaders,
-    ...headers
-  };
-
-  // Remove navigate/video headers if we are doing a CORS fetch (standard for segments/manifests)
-  if (finalHeaders['sec-fetch-mode'] === 'cors') {
-    delete finalHeaders['upgrade-insecure-requests'];
-  }
-
-  const options: any = {
-    headers: finalHeaders,
-    ja3: '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-21,29-23-24,0',
-    userAgent: finalHeaders['user-agent'] || UA,
-    timeout: 30
-  };
-  
-  if (body) {
-    options.body = typeof body === 'string' ? body : JSON.stringify(body);
-  }
-
-  if (proxy) {
-    options.proxy = proxy.startsWith("http") ? proxy : `http://${proxy}`;
-  }
-
-  const res = await cycleTLS(url, options, method.toLowerCase() as any);
-  
-  if (!res) {
-    throw new Error("CycleTLS returned no response");
-  }
-
-  let bodyBuffer: Buffer;
-  if (typeof res.data === 'string') {
-    bodyBuffer = Buffer.from(res.data, 'utf-8');
-  } else if (res.data && typeof res.data === 'object') {
-    // Convert Go-style byte array object to Node Buffer
-    bodyBuffer = Buffer.from(Object.values(res.data) as number[]);
-  } else {
-    bodyBuffer = Buffer.from('');
-  }
-  
-  return {
-    statusCode: res.status || 500,
-    headers: res.headers || {},
-    body: bodyBuffer,
-    finalUrl: res.finalUrl || url
-  };
-}
-
-async function fetchWithGotScraping(url: string, headers: any, proxy?: string, method: string = 'get', body?: any) {
-  try {
-    const options: any = {
-      method: method.toUpperCase(),
-      headers: {
-        ...headers,
-        'user-agent': headers['user-agent'] || UA
-      },
-      responseType: 'buffer',
-      retry: { limit: 0 },
-      timeout: { request: 30000 },
-      http2: true
-    };
-
-    if (body) {
-      options.body = typeof body === 'string' ? body : JSON.stringify(body);
-    }
-
-    if (proxy) {
-      const proxyUrl = proxy.startsWith("http") ? proxy : `http://${proxy}`;
-      options.proxyUrl = proxyUrl;
-    }
-
-    const response = await gotScraping(url, options);
-    
-    return {
-      statusCode: response.statusCode,
-      headers: response.headers,
-      body: response.body,
-      finalUrl: response.url
-    };
-  } catch (err: any) {
-    if (err.response) {
-      return {
-        statusCode: err.response.statusCode,
-        headers: err.response.headers,
-        body: err.response.body,
-        finalUrl: err.response.url
-      };
-    }
-    throw err;
-  }
-}
+// fetchWithGotScraping moved to utils/bypass.ts
 
 const app = express();
-
-// ── Security Middleware ──────────────────────────────────────────────────────
+app.set('trust proxy', 1); // Trust first proxy (Cloudflare/Nginx)
 
 // 1. Helmet: Sets various security-related HTTP headers
 app.use(helmet({
