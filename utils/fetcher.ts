@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Fetcher, FetcherResponse } from '@movie-web/providers';
 import puppeteerPool from './puppeteerPool.js';
+import { fetchWithCycleTLS, fetchWithGotScraping, sharedCookieJar } from './bypass.js';
 
 // Global axios instance with stealth headers
 const client = axios.create({
@@ -21,7 +22,7 @@ class SessionStore {
 
     constructor() {
         this.sessionPath = path.join(process.cwd(), 'data', 'session.json');
-        this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+        this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
         this.cookies = '';
         const dataDir = path.dirname(this.sessionPath);
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -50,6 +51,13 @@ class SessionStore {
                 const data = JSON.parse(fs.readFileSync(this.sessionPath, 'utf8'));
                 this.cookies = data.cookies || '';
                 this.userAgent = data.userAgent || this.userAgent;
+                
+                // Also seed the shared cookie jar
+                if (this.cookies) {
+                    this.cookies.split(';').forEach(c => {
+                        try { sharedCookieJar.setCookieSync(c.trim(), 'https://kisskh.do'); } catch {}
+                    });
+                }
             }
         } catch { /* silent */ }
     }
@@ -57,10 +65,9 @@ class SessionStore {
     getHeaders(referer = '', extraHeaders: Record<string, string> = {}) {
         const headers: Record<string, string> = {
             'User-Agent': this.userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
             ...extraHeaders,
         };
         if (this.cookies) headers['Cookie'] = this.cookies;
@@ -73,10 +80,13 @@ export const sessionStore = new SessionStore();
 
 let isBypassing = false;
 
-// ── Hybrid Fetch (Axios → Puppeteer on 403/530) ──────────
+// ── Hybrid Fetch (Axios → Got → Puppeteer) ──────────────
 export async function hybridFetch(url: string, options: any = {}) {
     const { referer = '', json = false, forceBrowser = false, timeout = 30000, signal = null } = options;
 
+    const logPrefix = `[Fetcher] [${new URL(url).pathname.split('/').pop()}]`;
+
+    // 1. Try standard Axios (Bypass A)
     if (!forceBrowser) {
         try {
             const headers = sessionStore.getHeaders(referer);
@@ -84,13 +94,60 @@ export async function hybridFetch(url: string, options: any = {}) {
             return response.data;
         } catch (error: any) {
             const status = error.response?.status;
-            if (status !== 403 && status !== 530 && status !== 406) throw error;
+            if (status && status >= 400 && status !== 403 && status !== 530 && status !== 406) {
+                console.error(`${logPrefix} ✘ Axios failed with ${status}: ${url}`);
+                throw error;
+            }
+            
+            // 2. Try High-Speed Got-Scraping (Bypass B - VidLink Style)
+            try {
+                console.log(`${logPrefix} ⚡ High-Speed Bypass (Got) engaged...`);
+                const bypass = await fetchWithGotScraping(url, sessionStore.getHeaders(referer));
+                
+                if (bypass.statusCode < 400) {
+                    console.log(`${logPrefix} ✅ Got Bypass Success!`);
+                    const text = bypass.body.toString('utf-8');
+                    if (json) {
+                        try { return JSON.parse(text); } catch { return text; }
+                    }
+                    return text;
+                }
+                
+                if (bypass.statusCode === 404) {
+                    console.warn(`${logPrefix} ✘ 404 Not Found (Got). Path might be invalid.`);
+                } else {
+                    console.warn(`${logPrefix} ✘ Got Bypass failed (${bypass.statusCode}). Trying CycleTLS...`);
+                }
+
+                // 3. Try CycleTLS (Bypass C)
+                const cycleBypass = await fetchWithCycleTLS(url, sessionStore.getHeaders(referer));
+                if (cycleBypass.statusCode < 400) {
+                    console.log(`${logPrefix} ✅ CycleTLS Bypass Success!`);
+                    const text = cycleBypass.body.toString('utf-8');
+                    if (json) {
+                        try { return JSON.parse(text); } catch { return text; }
+                    }
+                    return text;
+                }
+                console.warn(`${logPrefix} ✘ CycleTLS Bypass failed (${cycleBypass.statusCode}). Falling back to Puppeteer...`);
+                
+                if (cycleBypass.statusCode === 403) {
+                    const bodySnippet = cycleBypass.body.toString('utf-8').substring(0, 300);
+                    if (bodySnippet.includes('Turnstile') || bodySnippet.includes('cloudflare')) {
+                        console.log(`${logPrefix} 🛡️ Cloudflare Challenge Detected in response.`);
+                    }
+                }
+            } catch (e: any) {
+                console.warn(`${logPrefix} ✘ Rapid Bypass error: ${e.message}. Falling back to Puppeteer...`);
+            }
         }
     }
 
+    // 4. Try Puppeteer (Bypass D - Slow)
     if (signal?.aborted) return null;
     if (isBypassing) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log(`${logPrefix} ⏳ Queueing for browser...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
         return hybridFetch(url, options);
     }
 
@@ -105,19 +162,15 @@ export async function hybridFetch(url: string, options: any = {}) {
     try {
         if (signal?.aborted) throw new Error('Aborted');
 
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) {
-                req.abort();
-            } else {
-                req.continue();
-            }
+        await page.setUserAgent(sessionStore.getHeaders()['User-Agent']);
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+            'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
         });
 
         const origin = new URL(url).origin;
-        console.warn(`[Fetcher] 🛡️ Engaging Browser Bypass for: ${origin}`);
-
-        // Listen for cookie changes in real-time
         cookieTimer = setInterval(async () => {
             try {
                 if (page.isClosed()) return;
