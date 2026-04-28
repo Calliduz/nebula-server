@@ -568,27 +568,106 @@ app.get("/api/stream", async (req, res) => {
       console.log(`[STREAM] User cancelled request. Aborting scrapers...`);
     });
 
-    // ── Tier 0: Direct TMDB Path (VidLink) ──────────────────────────
-    console.log(`[STREAM] Phase 0: Checking VidLink (Direct TMDB Path)...`);
-    try {
-      const vidlinkMirrors = await VidLinkScraper.getStream(
-        tmdbId.toString(),
-        kind as any,
-        parseInt(season.toString()),
-        parseInt(episode.toString())
-      );
-      if (vidlinkMirrors && vidlinkMirrors.length > 0) {
-        console.log(`[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`);
-        mirrors.push(...vidlinkMirrors);
+    // ── Phase A: Handle Native KissKH IDs (Asian Dramas) ───────────────
+    if (tmdbId.startsWith('k')) {
+      console.log(`[STREAM] Phase A: Native KissKH ID detected (${tmdbId})...`);
+      const dramaId = parseInt(tmdbId.replace('k', ''));
+      try {
+        const details = await KissKHScraper.getDramaDetail(dramaId);
+        if (details && details.episodes) {
+          const ep = details.episodes.find((e: any) => e.number === episode);
+          if (ep) {
+            const kisskhMirrors = await KissKHScraper.getStream(dramaId, ep.id);
+            if (kisskhMirrors && kisskhMirrors.length > 0) {
+              console.log(`[STREAM] KissKH Native HIT ✔`);
+              
+              const apiBase = (req.headers.host ? (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host : '');
+              const mapped = kisskhMirrors.map(m => {
+                if (m.subtitles) {
+                  m.subtitles = m.subtitles.map(s => ({
+                    ...s,
+                    url: `${apiBase}/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`
+                  }));
+                }
+                return m;
+              });
+              mirrors.push(...mapped);
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[STREAM] KissKH Native failed:`, e);
       }
-    } catch (e) {
-      console.error(`[STREAM] VidLink failed:`, e);
     }
 
-    // ── Tier 1+ Fallbacks (Fully Disabled by User Request) ──────────────
+    // ── Phase B: Direct TMDB Path (VidLink) ──────────────────────────
     if (mirrors.length === 0) {
-      console.log(`[STREAM] VidLink failed and fallbacks are disabled.`);
-      throw new Error("No stream sources found. (VidLink returned no mirrors)");
+      console.log(`[STREAM] Phase B: Checking VidLink (Direct TMDB Path)...`);
+      try {
+        const vidlinkMirrors = await VidLinkScraper.getStream(
+          tmdbId.toString(),
+          kind as any,
+          season,
+          episode
+        );
+        if (vidlinkMirrors && vidlinkMirrors.length > 0) {
+          console.log(`[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`);
+          const apiBase = (req.headers.host ? (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host : '');
+          const mapped = vidlinkMirrors.map(m => {
+            if (m.subtitles) {
+              m.subtitles = m.subtitles.map(s => ({
+                ...s,
+                url: `${apiBase}/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`
+              }));
+            }
+            return m;
+          });
+          mirrors.push(...mapped);
+        }
+      } catch (e) {
+        console.error(`[STREAM] VidLink failed:`, e);
+      }
+    }
+
+    // ── Phase C: Fallback Scrapers (KissKH Search) ───────────────────
+    if (mirrors.length === 0 && title) {
+      console.log(`[STREAM] Phase C: Fallback to KissKH Search for "${title}"...`);
+      try {
+        const searchResults = await KissKHScraper.search(title);
+        // Find best match by title (fuzzy) or just first result for now
+        const match = searchResults.find((r: any) => 
+          r.title.toLowerCase().includes(title.toLowerCase()) || 
+          title.toLowerCase().includes(r.title.toLowerCase())
+        );
+
+        if (match) {
+          const details = await KissKHScraper.getDramaDetail(match.id);
+          const ep = details?.episodes?.find((e: any) => e.number === episode);
+          if (ep) {
+            const kisskhMirrors = await KissKHScraper.getStream(match.id, ep.id);
+            if (kisskhMirrors && kisskhMirrors.length > 0) {
+              console.log(`[STREAM] KissKH Fallback HIT ✔`);
+              const apiBase = (req.headers.host ? (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host : '');
+              const mapped = kisskhMirrors.map(m => {
+                if (m.subtitles) {
+                  m.subtitles = m.subtitles.map(s => ({
+                    ...s,
+                    url: `${apiBase}/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`
+                  }));
+                }
+                return m;
+              });
+              mirrors.push(...mapped);
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[STREAM] KissKH Fallback failed:`, e);
+      }
+    }
+
+    if (mirrors.length === 0) {
+      throw new Error("No stream sources found. (Tried VidLink + KissKH Fallback)");
     }
 
     const allSubtitles: any[] = [];
