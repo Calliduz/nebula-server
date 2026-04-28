@@ -219,285 +219,18 @@ export async function hybridFetch(url: string, options: any = {}) {
     }
   }
 
-  // 4. Try Puppeteer (Bypass D - Slow)
-  if (signal?.aborted) return null;
-  
-  if (isBypassing) {
-    console.log(`${logPrefix} ⏳ Queueing for active browser bypass...`);
-    while (isBypassing) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      if (signal?.aborted) return null;
-    }
-    console.log(`${logPrefix} 🚀 Browser bypass finished, retrying with new cookies...`);
-    // Retry once with the fast methods now that we (hopefully) have new cookies
-    return hybridFetch(url, { ...options, forceBrowser: false });
-  }
-
-  isBypassing = true;
-  const browser = await puppeteerPool.acquire();
-  puppeteerPool.trackPageOpen();
-  const page = await browser.newPage();
-
-  let cookieTimer: NodeJS.Timeout | null = null;
-  let clickInterval: NodeJS.Timeout | null = null;
-
-  try {
-    if (signal?.aborted) throw new Error("Aborted");
-
-    await page.setUserAgent(sessionStore.getHeaders()["User-Agent"]);
-    await page.setExtraHTTPHeaders({
-      "Accept-Language": "en-US,en;q=0.9",
-      "sec-ch-ua":
-        '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
-    });
-
-    const origin = new URL(url).origin;
-    cookieTimer = setInterval(async () => {
-      try {
-        if (page.isClosed()) return;
-        const cookies = await page.cookies();
-        if (cookies.some((c) => c.name === "cf_clearance")) {
-          const cookieStr = cookies
-            .map((c) => `${c.name}=${c.value}`)
-            .join("; ");
-          sessionStore.update(
-            cookieStr,
-            await page.evaluate(() => navigator.userAgent),
-          );
-        }
-      } catch (e) {}
-    }, 1000);
-
-    // 1. Visit Home (Always clear Cloudflare if we hit this stage)
-    console.log(`[Fetcher] 🏠 Clearing Cloudflare for ${origin}...`);
-    await page.goto(origin, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-
-    // Turnstile Auto-Clicker Loop
-    clickInterval = setInterval(async () => {
-      try {
-        const iframe = await page.$("iframe");
-        if (iframe) {
-          const box = await iframe.boundingBox();
-          if (box && box.width > 0) {
-            await page.mouse.click(
-              box.x + box.width / 2,
-              box.y + box.height / 2,
-            );
-          }
-        }
-      } catch (e) {}
-    }, 2000);
-
-    await page
-      .waitForFunction(
-        () => {
-          const t = document.title.toLowerCase();
-          return (
-            t.includes("kisskh |") || 
-            t.includes("asian dramas & movies") ||
-            t.includes("vidlink") ||
-            t.includes("vsembed")
-          );
-        },
-        { timeout: 15000 },
-      )
-      .catch(() => {
-        console.warn(`[Fetcher] ⚠️ Cloudflare wait timed out, proceeding anyway...`);
-      });
-
-    if (clickInterval) clearInterval(clickInterval);
-    if (cookieTimer) clearInterval(cookieTimer);
-    if (signal?.aborted) throw new Error("Aborted");
-
-    // 2. Navigation to Target
-    console.log(`${logPrefix} 🎯 Targeted Navigation: ${url}`);
-    
-    // Inject spoofed IP headers into the browser request
-    const spoofedIP = randomIP();
-    await page.setExtraHTTPHeaders({
-      'X-Forwarded-For': spoofedIP,
-      'X-Real-IP': spoofedIP
-    });
-
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-
-    let attempts = 0;
-    while (attempts < 25) {
-      const title = (await page.title()).toLowerCase();
-      const content = (await page.content()).toLowerCase();
-      
-      if (title.includes("kisskh |") || title.includes("asian dramas & movies") || title.includes("vidlink") || title.includes("vsembed")) {
-        console.log(`${logPrefix} ✅ Success detected by title: ${title}`);
-        break;
-      }
-      
-      // Look for Cloudflare Turnstile/Challenge
-      if (content.includes("challenge") || content.includes("turnstile") || content.includes("checking your browser") || content.includes("security verification") || content.includes("just a moment")) {
-         console.log(`${logPrefix} 🛡️ Cloudflare challenge detected (Attempt ${attempts}). Attempting human-like solve...`);
-         try {
-           // Try to find turnstile in any frame
-           for (const frame of page.frames()) {
-             const checkbox = await frame.$('input[type="checkbox"], #challenge-stage, .ctp-checkbox-label, #challenge-form');
-             if (checkbox) {
-               const box = await checkbox.boundingBox();
-               if (box) {
-                 console.log(`${logPrefix} 🖱️ Turnstile element found at ${Math.round(box.x)},${Math.round(box.y)}. Hovering...`);
-                 await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 });
-                 await new Promise(r => setTimeout(r, Math.random() * 200 + 100)); // Random delay
-                 await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                 console.log(`${logPrefix} ✅ Clicked Turnstile.`);
-                 break;
-               }
-             }
-           }
-           // Fallback to direct click if frames failed
-           await page.click('.cf-turnstile, #challenge-form, #challenge-stage, .ctp-checkbox-label', { delay: Math.random() * 100 }).catch(() => {});
-         } catch (err: any) {
-           console.log(`${logPrefix} ✘ Solve attempt failed: ${err.message}`);
-         }
-      }
-
-      await new Promise((r) => setTimeout(r, 2000));
-      attempts++;
-    }
-
-    if (attempts >= 25) {
-      console.warn(`${logPrefix} ⚠️ Cloudflare wait timed out or title not found. Title: ${await page.title()}`);
-    }
-
-    // Capture the winning session
-    const finalCookies = await page.cookies();
-    const finalCookieStr = finalCookies.map((c) => `${c.name}=${c.value}`).join("; ");
-    sessionStore.update(finalCookieStr, await page.evaluate(() => navigator.userAgent));
-
-    const text = await page.evaluate(() => document.body.innerText);
-    
-    // Check if we still have a security page
-    if (text.includes("security verification") || text.includes("Checking your browser")) {
-       console.error(`${logPrefix} ✘ Browser still stuck on security page. Content snippet: ${text.substring(0, 100)}`);
-       return null;
-    }
-
-    if (json) {
-      try {
-        return JSON.parse(text);
-      } catch {
-        console.error(`${logPrefix} ✘ Failed to parse JSON. Content: ${text.substring(0, 100)}...`);
-        return null;
-      }
-    }
-    return text;
-  } finally {
-    if (cookieTimer) clearInterval(cookieTimer);
-    if (clickInterval) clearInterval(clickInterval);
-    isBypassing = false;
-    await page.close().catch(() => {});
-    puppeteerPool.trackPageClose();
-  }
+  // 4. Puppeteer (DISABLED to save RAM)
+  console.warn(`${logPrefix} ✘ Rapid Bypass failed. Browser fallback is DISABLED to save RAM.`);
+  return null;
 }
 
-// ── Embed HLS Interceptor (for fallback) ─────────────────
-// Loads an embed URL in a headless browser and intercepts the m3u8 manifest
+// ── Embed HLS Interceptor (DISABLED to save RAM) ─────────
 export async function extractHlsFromEmbed(
   embedUrl: string,
   timeoutMs = 15000,
 ): Promise<string | null> {
-  const browser = await puppeteerPool.acquire();
-  puppeteerPool.trackPageOpen();
-  const page = await browser.newPage();
-  let captured: string | null = null;
-
-  try {
-    // ── THE BOUNCER & THE TRAP ──────────────────────────────────
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const url = req.url();
-      const type = req.resourceType();
-
-      // 1. Block heavy stuff
-      if (["image", "stylesheet", "font", "media"].includes(type)) {
-        return req.abort();
-      }
-
-      // 2. THE TRAP: Catch m3u8 as it flies by in the request stream (faster than response)
-      if (url.includes(".m3u8")) {
-        captured = url;
-        // Don't abort yet, we need to resolve the promise first
-        req.continue();
-        return;
-      }
-
-      req.continue();
-    });
-
-    // Also check responses for more reliability
-    page.on("response", (res) => {
-      const url = res.url();
-      if (!captured && url.includes(".m3u8")) {
-        captured = url;
-      }
-    });
-
-    await page.setUserAgent(sessionStore.getHeaders()["User-Agent"]);
-
-    let done = false;
-    // ── Navigation ─────────────────────────────────────────────
-    // We use a Promise.race to allow for "Early Exit"
-    const result = await Promise.race([
-      // Path A: Load the page and simulate clicks
-      (async () => {
-        await page
-          .goto(embedUrl, { waitUntil: "domcontentloaded", timeout: 10000 })
-          .catch(() => {});
-
-        // Clicking triggers more dynamic requests
-        const clickCenter = async () => {
-          try {
-            if (done) return;
-            const { width, height } = await page.evaluate(() => ({
-              width: window.innerWidth,
-              height: window.innerHeight,
-            }));
-            await page.mouse.click(
-              Math.floor(width / 2),
-              Math.floor(height / 2),
-            );
-          } catch {
-            /* silent */
-          }
-        };
-
-        for (let i = 0; i < 3; i++) {
-          if (captured || done) break;
-          await clickCenter();
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-      })(),
-      // Path B: Watchdog that resolves as soon as 'captured' is true
-      (async () => {
-        while (!captured && !done) {
-          await new Promise((r) => setTimeout(r, 200));
-        }
-      })(),
-      // Path C: Safety timeout
-      new Promise((r) => setTimeout(r, timeoutMs)),
-    ]).finally(() => {
-      done = true;
-    });
-
-    return captured;
-  } catch (e: any) {
-    console.warn(`[EmbedExtractor] Failed for ${embedUrl}: ${e.message}`);
-    return null;
-  } finally {
-    await page.close().catch(() => {});
-    puppeteerPool.trackPageClose();
-  }
+  console.warn(`[EmbedExtractor] Browser-based extraction is DISABLED to save RAM.`);
+  return null;
 }
 
 // ── @movie-web/providers Adapter ──────────────────────────
@@ -556,13 +289,18 @@ export const makeHybridFetcher = (): Fetcher => {
 
       return {
         statusCode: response.status,
-        headers: responseHeaders,
+        headers: new Headers(responseHeaders) as any,
         finalUrl,
         body,
       };
     } catch (e: any) {
       // Keep the console clean from normal provider connection failures
-      return { statusCode: 503, headers: {}, finalUrl: url, body: null as T };
+      return { 
+        statusCode: 503, 
+        headers: new Headers() as any, 
+        finalUrl: url, 
+        body: null as T 
+      };
     }
   };
 };

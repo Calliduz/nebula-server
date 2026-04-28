@@ -1,5 +1,6 @@
 import { hybridFetch } from "./fetcher.js";
 import { type MirrorStream } from "./scraper.js";
+// @ts-ignore
 import generateKissKHToken from "./kisskhToken.js";
 import { VidLinkScraper } from "./vidlink.js";
 import axios from "axios";
@@ -116,27 +117,9 @@ export class KissKHScraper {
         );
       }
 
-      // FALLBACK 1: Puppeteer (if direct API returned no Video or failed)
+      // FALLBACK 1: Puppeteer (DISABLED to save RAM)
       if (!data || !data.Video) {
-        console.log(`[KissKH] Falling back to Puppeteer for epId: ${epId}...`);
-        try {
-          data = await hybridFetch(apiUrl, {
-            json: true,
-            referer: pageUrl,
-            headers: { "User-Agent": ua },
-            forceBrowser: true,
-          });
-          if (!subData || !Array.isArray(subData)) {
-            subData = await hybridFetch(subApiUrl, {
-              json: true,
-              referer: pageUrl,
-              headers: { "User-Agent": ua },
-              forceBrowser: true,
-            });
-          }
-        } catch (e: any) {
-          console.warn(`[KissKH] Puppeteer fallback failed: ${e.message}`);
-        }
+        console.warn(`[KissKH] Direct API failed for epId: ${epId}. Browser fallback is DISABLED.`);
       }
 
       if (subData && Array.isArray(subData)) {
@@ -161,7 +144,7 @@ export class KissKHScraper {
           quality: "Auto",
           source: "KissKH",
           type: "hls",
-          subtitles: subtitles.length > 0 ? subtitles : undefined,
+          ...(subtitles.length > 0 ? { subtitles } : {}),
         });
       }
     } catch (e: any) {
@@ -226,14 +209,16 @@ export class KissKHScraper {
         url += `&${type === "movie" ? "primary_release_year" : "first_air_date_year"}=${year}`;
       }
 
-      const headers = apiKey.startsWith("ey")
-        ? { Authorization: `Bearer ${apiKey}` }
-        : { params: { api_key: apiKey } };
+      const headers: any = {};
+      const params: any = {};
+      
+      if (apiKey.startsWith("ey")) {
+        headers.Authorization = `Bearer ${apiKey}`;
+      } else {
+        params.api_key = apiKey;
+      }
 
-      const res = await axios.get(url, {
-        headers: apiKey.startsWith("ey") ? headers : {},
-        params: !apiKey.startsWith("ey") ? (headers as any).params : {},
-      });
+      const res = await axios.get(url, { headers, params });
 
       if (res.data.results && res.data.results.length > 0) {
         return res.data.results[0].id;
