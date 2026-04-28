@@ -5,6 +5,14 @@ import { CookieJar } from "tough-cookie";
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
+// Random residential IP generator for spoofing
+const randomIP = () => {
+  const p = () => Math.floor(Math.random() * 255);
+  let first = p();
+  while ([0, 10, 127, 169, 172, 192].includes(first)) first = p();
+  return `${first}.${p()}.${p()}.${p()}`;
+};
+
 let cycleTLSInstance: any = null;
 const cycleTLSPromise = (initCycleTLS as any)()
   .then((c: any) => {
@@ -30,9 +38,11 @@ export async function fetchWithCycleTLS(
 
   const defaultHeaders = {
     accept: "*/*",
-    "accept-language": "en-US,en;q=0.7",
+    "accept-language": "en-US,en;q=0.9",
     "cache-control": "no-cache",
     "user-agent": UA,
+    "x-forwarded-for": randomIP(),
+    "x-real-ip": randomIP(),
   };
 
   const finalHeaders = { ...defaultHeaders, ...headers };

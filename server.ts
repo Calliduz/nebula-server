@@ -754,7 +754,7 @@ app.get("/api/proxy/subtitle", async (req, res) => {
     if (isKissKHSubtitleUrl(url)) {
       try {
         const bypass = await fetchWithGotScraping(url, {
-          "Referer": "https://kisskh.do/",
+          "Referer": "https://kisskh.do",
           "Origin": "https://kisskh.do"
         });
         
@@ -888,6 +888,14 @@ app.post("/api/stream/flush", async (req, res) => {
 
 const CDN_REFERER = "https://cloudnestra.com/";
 
+// Random residential IP generator for spoofing
+const randomIP = () => {
+  const p = () => Math.floor(Math.random() * 255);
+  let first = p();
+  while ([0, 10, 127, 169, 172, 192].includes(first)) first = p();
+  return `${first}.${p()}.${p()}.${p()}`;
+};
+
 function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
   let referer = CDN_REFERER;
   let origin = new URL(CDN_REFERER).origin;
@@ -906,7 +914,9 @@ function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     'sec-fetch-dest': isManifest ? 'empty' : 'video',
     'sec-fetch-mode': 'cors',
     'sec-fetch-site': 'cross-site',
-    'user-agent': UA
+    'user-agent': UA,
+    'x-forwarded-for': randomIP(),
+    'x-real-ip': randomIP()
   };
 
   if (targetUrl) {
@@ -1072,7 +1082,13 @@ app.get("/api/proxy/stream", async (req, res) => {
       upstream = await fetchVidLinkRaw(targetUrl, passHeaders);
     } else {
       const streamHeaders = { ...cdnHeaders(targetUrl, true), ...passHeaders };
-      upstream = await fetchWithCycleTLS(targetUrl, streamHeaders, streamProxy);
+      // Try GotScraping first (High-Speed & Reliable)
+      upstream = await fetchWithGotScraping(targetUrl, streamHeaders, streamProxy);
+      
+      if (upstream.statusCode >= 400 && upstream.statusCode !== 404) {
+        console.warn(`[PROXY/stream] GotScraping failed (${upstream.statusCode}). Trying CycleTLS fallback...`);
+        upstream = await fetchWithCycleTLS(targetUrl, streamHeaders, streamProxy);
+      }
     }
     const status = upstream.statusCode;
     const duration = Date.now() - startTime;

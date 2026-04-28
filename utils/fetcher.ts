@@ -17,6 +17,15 @@ const client = axios.create({
   maxRedirects: 10,
 });
 
+// Random residential IP generator for spoofing
+const randomIP = () => {
+  const p = () => Math.floor(Math.random() * 255);
+  // Avoid private/reserved ranges (simplified)
+  let first = p();
+  while ([0, 10, 127, 169, 172, 192].includes(first)) first = p();
+  return `${first}.${p()}.${p()}.${p()}`;
+};
+
 // ── Session Store ─────────────────────────────────────────
 class SessionStore {
   private sessionPath: string;
@@ -86,11 +95,14 @@ class SessionStore {
   }
 
   getHeaders(referer = "", extraHeaders: Record<string, string> = {}) {
+    const spoofedIP = randomIP();
     const headers: Record<string, string> = {
       "User-Agent": this.userAgent,
       Accept: "application/json, text/plain, */*",
       "Accept-Language": "en-US,en;q=0.9",
       Connection: "keep-alive",
+      "X-Forwarded-For": spoofedIP,
+      "X-Real-IP": spoofedIP,
       ...extraHeaders,
     };
     if (this.cookies) headers["Cookie"] = this.cookies;
@@ -304,31 +316,65 @@ export async function hybridFetch(url: string, options: any = {}) {
 
     // 2. Navigation to Target
     console.log(`${logPrefix} 🎯 Targeted Navigation: ${url}`);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    
+    // Inject spoofed IP headers into the browser request
+    const spoofedIP = randomIP();
+    await page.setExtraHTTPHeaders({
+      'X-Forwarded-For': spoofedIP,
+      'X-Real-IP': spoofedIP
+    });
 
-    // If JSON is expected, wait for the body to contain JSON-like structure
-    if (json) {
-      await page
-        .waitForFunction(
-          () => {
-            const text = document.body.innerText.trim();
-            return text.startsWith("[") || text.startsWith("{");
-          },
-          { timeout: 10000 },
-        )
-        .catch(() => {});
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+
+    let attempts = 0;
+    while (attempts < 25) {
+      const title = (await page.title()).toLowerCase();
+      const content = (await page.content()).toLowerCase();
+      
+      if (title.includes("kisskh |") || title.includes("asian dramas & movies") || title.includes("vidlink") || title.includes("vsembed")) {
+        console.log(`${logPrefix} ✅ Success detected by title: ${title}`);
+        break;
+      }
+      
+      // Look for Cloudflare Turnstile/Challenge
+      if (content.includes("challenge") || content.includes("turnstile") || content.includes("checking your browser") || content.includes("security verification")) {
+         console.log(`${logPrefix} 🛡️ Cloudflare challenge detected (Attempt ${attempts}). Attempting to solve...`);
+         try {
+           // Try to find turnstile in any frame
+           for (const frame of page.frames()) {
+             const checkbox = await frame.$('input[type="checkbox"], #challenge-stage, .ctp-checkbox-label');
+             if (checkbox) {
+               console.log(`${logPrefix} 🖱️ Turnstile element found in frame, clicking...`);
+               await checkbox.click().catch(() => {});
+               break;
+             }
+           }
+           // Also try main page
+           await page.click('.cf-turnstile, #challenge-form, #challenge-stage, .ctp-checkbox-label').catch(() => {});
+         } catch {}
+      }
+
+      await new Promise((r) => setTimeout(r, 1500));
+      attempts++;
     }
 
+    if (attempts >= 25) {
+      console.warn(`${logPrefix} ⚠️ Cloudflare wait timed out or title not found. Title: ${await page.title()}`);
+    }
+
+    // Capture the winning session
     const finalCookies = await page.cookies();
-    const finalCookieStr = finalCookies
-      .map((c) => `${c.name}=${c.value}`)
-      .join("; ");
-    sessionStore.update(
-      finalCookieStr,
-      await page.evaluate(() => navigator.userAgent),
-    );
+    const finalCookieStr = finalCookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    sessionStore.update(finalCookieStr, await page.evaluate(() => navigator.userAgent));
 
     const text = await page.evaluate(() => document.body.innerText);
+    
+    // Check if we still have a security page
+    if (text.includes("security verification") || text.includes("Checking your browser")) {
+       console.error(`${logPrefix} ✘ Browser still stuck on security page. Content snippet: ${text.substring(0, 100)}`);
+       return null;
+    }
+
     if (json) {
       try {
         return JSON.parse(text);
