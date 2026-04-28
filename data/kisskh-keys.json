@@ -1,0 +1,22 @@
+{
+  "a1": {
+    "key": "8056483646328763",
+    "iv": "6852612370185273",
+    "ivFormat": "utf8"
+  },
+  "a2": {
+    "key": "AmSmZVcH93UQUezi",
+    "iv": "eyJpdiI6eyJ3b3JkcyI6WzEzODIzNjc4MTksMTQ2NTMzMzg1OSwxOTAyNDA2MjI0LDExNjQ4NTQ4MzhdLCJzaWdCeXRlcyI6MTZ9fQ==",
+    "ivFormat": "wordarray"
+  },
+  "a3": {
+    "key": "sWODXX04QRTkHdlZ",
+    "iv": "eyJpdiI6eyJ3b3JkcyI6Wzk0Njg5NDY5NiwxNjM0NzQ5MDI5LDExMjc1MDgwODIsMTM5NjI3MTE4M10sInNpZ0J5dGVzIjoxNn19",
+    "ivFormat": "wordarray"
+  },
+  "extensionMap": {
+    ".txt": "a1",
+    ".txt1": "a2",
+    "default": "a3"
+  }
+}

@@ -1,6 +1,8 @@
 import { hybridFetch } from './fetcher.js';
 import { type MirrorStream } from './scraper.js';
 import generateKissKHToken from './kisskhToken.js';
+import { VidLinkScraper } from './vidlink.js';
+import axios from 'axios';
 
 const KISSKH_BASE = 'https://kisskh.do';
 const KISSKH_API = `${KISSKH_BASE}/api`;
@@ -37,30 +39,65 @@ export class KissKHScraper {
     }
 
     static async getStream(dramaId: number, epId: number): Promise<MirrorStream[]> {
+        const mirrors: MirrorStream[] = [];
+        const subtitles: any[] = [];
+        const pageUrl = `${KISSKH_BASE}/Drama/v?id=${dramaId}&ep=${epId}`;
+        const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+
         try {
-            const pageUrl = `${KISSKH_BASE}/Drama/v?id=${dramaId}&ep=${epId}`;
-            
-            // Using the "Golden Handshake" token logic
-            const kkey = (generateKissKHToken as any)(
+            const commonMeta = ["kisskh", "kisskh", "kisskh", "kisskh", "kisskh", "kisskh"];
+
+            // 1. Generate kkey for Stream
+            const streamKkey = (generateKissKHToken as any)(
                 epId, 
-                null, "2.8.10", VI_GUID, 4830201, "kisskh", "kisskh", "kisskh", "kisskh", "kisskh", "kisskh"
+                null,           // guid
+                "2.8.10",       // appVer
+                VI_GUID,        // viGuid (62f176f3...)
+                4830201,        // platformVer
+                ...commonMeta
             );
             
-            const apiUrl = `${KISSKH_API}/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${kkey}`;
-            const subApiUrl = `${KISSKH_API}/Sub/${epId}?kkey=${kkey}`;
+            // 2. Generate kkey for Subtitles
+            const subKkey = (generateKissKHToken as any)(
+                epId, 
+                null,           // guid
+                "2.8.10",       // appVer
+                "VgV52sWhwvBSf8BsM3BRY9weWiiCbtGp", // viGuid for subtitles
+                4830201,        // platformVer
+                ...commonMeta
+            );
             
-            console.log(`[KissKH] Fetching stream/subs for epId: ${epId}...`);
-            const [data, subData] = await Promise.all([
-                hybridFetch(apiUrl, { json: true, referer: pageUrl }),
-                hybridFetch(subApiUrl, { json: true, referer: pageUrl })
-            ]);
+            const apiUrl = `${KISSKH_API}/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${streamKkey}`;
+            const subApiUrl = `${KISSKH_API}/Sub/${epId}?kkey=${subKkey}`;
+            
+            console.log(`[KissKH] Fetching stream/subs for epId: ${epId} (Keys: ${streamKkey.substring(0, 8)}... / ${subKkey.substring(0, 8)}...)`);
+            
+            // Try Direct API first
+            let data: any = null;
+            let subData: any = null;
+            
+            try {
+                data = await hybridFetch(apiUrl, { json: true, referer: pageUrl, headers: { 'User-Agent': ua } });
+                subData = await hybridFetch(subApiUrl, { json: true, referer: pageUrl, headers: { 'User-Agent': ua } });
+            } catch (e: any) {
+                console.warn(`[KissKH] Direct API error: ${e.message}. Trying Puppeteer fallback...`);
+            }
 
-            if (!data || !data.Video) return [];
+            // FALLBACK 1: Puppeteer (if direct API returned no Video or failed)
+            if (!data || !data.Video) {
+                console.log(`[KissKH] Falling back to Puppeteer for epId: ${epId}...`);
+                try {
+                    data = await hybridFetch(apiUrl, { json: true, referer: pageUrl, headers: { 'User-Agent': ua }, forceBrowser: true });
+                    if (!subData || !Array.isArray(subData)) {
+                        subData = await hybridFetch(subApiUrl, { json: true, referer: pageUrl, headers: { 'User-Agent': ua }, forceBrowser: true });
+                    }
+                } catch (e: any) {
+                    console.warn(`[KissKH] Puppeteer fallback failed: ${e.message}`);
+                }
+            }
 
-            const mirrors: MirrorStream[] = [];
-            const subtitles: any[] = [];
-
-            if (Array.isArray(subData)) {
+            if (subData && Array.isArray(subData)) {
+                console.log(`[KissKH] Found ${subData.length} subtitles for epId: ${epId}`);
                 subData.forEach((s: any) => {
                     if (s.src) {
                         subtitles.push({
@@ -73,19 +110,79 @@ export class KissKHScraper {
                 });
             }
 
-            mirrors.push({
-                url: data.Video,
-                quality: 'Auto',
-                source: 'KissKH',
-                type: 'hls',
-                subtitles: subtitles.length > 0 ? subtitles : undefined
+            if (data && data.Video) {
+                mirrors.push({
+                    url: data.Video,
+                    quality: 'Auto',
+                    source: 'KissKH',
+                    type: 'hls',
+                    subtitles: subtitles.length > 0 ? subtitles : undefined
+                });
+            }
+        } catch (e: any) {
+            console.error(`[KissKH] Primary extraction logic failed:`, e.message);
+        }
+
+        // FALLBACK 2: VidLink (if KissKH failed completely)
+        if (mirrors.length === 0) {
+            console.log(`[KissKH] No mirrors found via KissKH. Falling back to VidLink.pro...`);
+            try {
+                const detail = await this.getDramaDetail(dramaId);
+                if (detail && detail.title) {
+                    const isTV = detail.type === 'TVSeries';
+                    const epInfo = detail.episodes?.find((e: any) => e.id === epId);
+                    const epNum = epInfo?.number || 1;
+                    
+                    // Try to find TMDB ID
+                    const year = detail.releaseDate ? new Date(detail.releaseDate).getFullYear() : undefined;
+                    const tmdbId = await this.findTmdbId(detail.title, isTV ? 'tv' : 'movie', year);
+                    if (tmdbId) {
+                        console.log(`[KissKH] Fallback to VidLink: Using TMDB ID ${tmdbId} for ${detail.title} (${year || 'N/A'}) S1E${epNum}`);
+                        const vidlinkMirrors = await VidLinkScraper.getStream(
+                            tmdbId.toString(), 
+                            isTV ? 'tv' : 'movie',
+                            1, // Assume Season 1 for now
+                            epNum
+                        );
+                        if (vidlinkMirrors.length > 0) {
+                            mirrors.push(...vidlinkMirrors);
+                        }
+                    }
+                }
+            } catch (e: any) {
+                console.error(`[KissKH] VidLink fallback failed:`, e.message);
+            }
+        }
+
+        return mirrors;
+    }
+
+    private static async findTmdbId(title: string, type: 'movie' | 'tv', year?: number): Promise<number | null> {
+        const apiKey = process.env.TMDB_API_KEY;
+        if (!apiKey) return null;
+
+        try {
+            let url = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(title)}&include_adult=false&language=en-US&page=1`;
+            if (year) {
+                url += `&${type === 'movie' ? 'primary_release_year' : 'first_air_date_year'}=${year}`;
+            }
+            
+            const headers = apiKey.startsWith('ey') 
+                ? { Authorization: `Bearer ${apiKey}` } 
+                : { params: { api_key: apiKey } };
+            
+            const res = await axios.get(url, { 
+                headers: apiKey.startsWith('ey') ? headers : {},
+                params: !apiKey.startsWith('ey') ? (headers as any).params : {}
             });
 
-            return mirrors;
+            if (res.data.results && res.data.results.length > 0) {
+                return res.data.results[0].id;
+            }
         } catch (e: any) {
-            console.error(`[KissKH] Stream extraction failed:`, e.message);
-            return [];
+            console.warn(`[TMDB] Search failed for ${title}:`, e.message);
         }
+        return null;
     }
 
     static async getExploreList(type: number = 0, country: number = 0, page: number = 1, order: number = 1): Promise<any[]> {
