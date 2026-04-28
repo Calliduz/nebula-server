@@ -445,6 +445,7 @@ export async function extractHlsFromEmbed(
 
     await page.setUserAgent(sessionStore.getHeaders()["User-Agent"]);
 
+    let done = false;
     // ── Navigation ─────────────────────────────────────────────
     // We use a Promise.race to allow for "Early Exit"
     const result = await Promise.race([
@@ -457,6 +458,7 @@ export async function extractHlsFromEmbed(
         // Clicking triggers more dynamic requests
         const clickCenter = async () => {
           try {
+            if (done) return;
             const { width, height } = await page.evaluate(() => ({
               width: window.innerWidth,
               height: window.innerHeight,
@@ -471,21 +473,22 @@ export async function extractHlsFromEmbed(
         };
 
         for (let i = 0; i < 3; i++) {
-          if (captured) break;
+          if (captured || done) break;
           await clickCenter();
           await new Promise((r) => setTimeout(r, 1500));
         }
       })(),
       // Path B: Watchdog that resolves as soon as 'captured' is true
       (async () => {
-        while (!captured) {
+        while (!captured && !done) {
           await new Promise((r) => setTimeout(r, 200));
-          // Check if parent scope's captured was set by the listener
         }
       })(),
       // Path C: Safety timeout
       new Promise((r) => setTimeout(r, timeoutMs)),
-    ]);
+    ]).finally(() => {
+      done = true;
+    });
 
     return captured;
   } catch (e: any) {
