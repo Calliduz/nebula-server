@@ -39,28 +39,48 @@ export class KissKHScraper {
     static async getStream(dramaId: number, epId: number): Promise<MirrorStream[]> {
         try {
             const pageUrl = `${KISSKH_BASE}/Drama/v?id=${dramaId}&ep=${epId}`;
-            
-            // Using the "Golden Handshake" token logic
-            const kkey = (generateKissKHToken as any)(
+            const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+            const commonMeta = ["kisskh", "kisskh", "kisskh", "kisskh", "kisskh", "kisskh"];
+
+            // 1. Generate kkey for Stream
+            const streamKkey = (generateKissKHToken as any)(
                 epId, 
-                null, "2.8.10", VI_GUID, 4830201, "kisskh", "kisskh", "kisskh", "kisskh", "kisskh", "kisskh"
+                null,           // guid
+                "2.8.10",       // appVer
+                VI_GUID,        // viGuid (62f176f3...)
+                4830201,        // platformVer
+                ...commonMeta
             );
             
-            const apiUrl = `${KISSKH_API}/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${kkey}`;
-            const subApiUrl = `${KISSKH_API}/Sub/${epId}?kkey=${kkey}`;
+            // 2. Generate kkey for Subtitles
+            const subKkey = (generateKissKHToken as any)(
+                epId, 
+                null,           // guid
+                "2.8.10",       // appVer
+                "VgV52sWhwvBSf8BsM3BRY9weWiiCbtGp", // viGuid for subtitles
+                4830201,        // platformVer
+                ...commonMeta
+            );
             
-            console.log(`[KissKH] Fetching stream/subs for epId: ${epId}...`);
+            const apiUrl = `${KISSKH_API}/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${streamKkey}`;
+            const subApiUrl = `${KISSKH_API}/Sub/${epId}?kkey=${subKkey}`;
+            
+            console.log(`[KissKH] Fetching stream/subs for epId: ${epId} (Keys: ${streamKkey.substring(0, 8)}... / ${subKkey.substring(0, 8)}...)`);
             const [data, subData] = await Promise.all([
-                hybridFetch(apiUrl, { json: true, referer: pageUrl }),
-                hybridFetch(subApiUrl, { json: true, referer: pageUrl })
+                hybridFetch(apiUrl, { json: true, referer: pageUrl, headers: { 'User-Agent': ua } }),
+                hybridFetch(subApiUrl, { json: true, referer: pageUrl, headers: { 'User-Agent': ua } })
             ]);
 
-            if (!data || !data.Video) return [];
+            if (!data || !data.Video) {
+                console.log(`[KissKH] No video found for epId: ${epId}. API Response:`, JSON.stringify(data));
+                return [];
+            }
 
             const mirrors: MirrorStream[] = [];
             const subtitles: any[] = [];
 
-            if (Array.isArray(subData)) {
+            if (subData && Array.isArray(subData)) {
+                console.log(`[KissKH] Found ${subData.length} subtitles for epId: ${epId}`);
                 subData.forEach((s: any) => {
                     if (s.src) {
                         subtitles.push({

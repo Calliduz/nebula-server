@@ -474,84 +474,52 @@ app.get("/api/stream", async (req, res) => {
   }
 
   try {
-    // 1. Check the stream cache first (expires every 4 hours)
+    // 1. Cache Check
     const cachedRecord = await StreamCache.findOne({
       tmdbId,
       type: kind,
       season,
       episode,
     }).catch(() => null);
-    if (cachedRecord?.streamUrl && cachedRecord?.streamExpiresAt) {
-      if (new Date() < cachedRecord.streamExpiresAt) {
-        // Liveness check — probe the .m3u8 with a HEAD request to confirm the token is still valid.
-        // Cloudnestra tokens can die early (IP rotation, CDN purge). If dead, fall through to re-scrape.
-        let linkAlive = false;
-        try {
-          const probe = await axios.head(cachedRecord.streamUrl, {
-            timeout: 4000,
-            headers: {
-              "User-Agent": "Mozilla/5.0",
-              Referer: "https://cloudnestra.com/",
-            },
-            validateStatus: (s) => s < 400,
+
+    if (cachedRecord) {
+      if (!cachedRecord.streamExpiresAt || new Date() < cachedRecord.streamExpiresAt) {
+        // If we have a streamUrl and it's likely alive (checked later for Cloudnestra, but for KissKH it's usually fine)
+        // OR if we just want to return the mirrors.
+        console.log(`[STREAM] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`);
+        
+        // Handle subtile proxying for cached results
+        const allSubtitles: any[] = [];
+        if (cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
+          const subMap = new Map();
+          cachedRecord.mirrors.forEach((m: any) => {
+            if (m.subtitles) {
+              m.subtitles.forEach((s: any) => {
+                const subUrl = s.url;
+                if (subUrl && !subMap.has(subUrl)) subMap.set(subUrl, s);
+              });
+            }
           });
-          linkAlive = probe.status < 400;
-        } catch {
-          linkAlive = false;
+          allSubtitles.push(...subMap.values());
         }
 
-        if (linkAlive) {
-          console.log(
-            `[STREAM] Cache HIT ✔ (link alive) for ${tmdbId} S${season}E${episode}`,
-          );
-
-          // Re-extract subtitles from mirrors for cache hit
-          const allSubtitles: any[] = [];
-          if (cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
-            const subMap = new Map();
-            cachedRecord.mirrors.forEach((m: any) => {
-              if (m.subtitles) {
-                m.subtitles.forEach((s: any) => {
-                  if (!subMap.has(s.url)) subMap.set(s.url, s);
-                });
-              }
-            });
-            allSubtitles.push(...subMap.values());
-          }
-
-          return res.json({
-            streamUrl: cachedRecord.streamUrl,
-            source: cachedRecord.source || "cache",
-            qualityTag: cachedRecord.qualityTag || "UNKNOWN",
-            resolution: cachedRecord.resolution || "UNKNOWN",
-            mirrors: cachedRecord.mirrors || [],
-            subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(
-              (s) => {
-                if (s.url.startsWith("http")) {
-                  return {
-                    ...s,
-                    url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
-                  };
-                }
-                return s;
-              },
-            ),
-          });
-        } else {
-          console.warn(
-            `[STREAM] Cache HIT ✘ (dead token) for ${tmdbId} — re-scraping...`,
-          );
-          // Invalidate the dead record immediately so the TTL index doesn't hold it longer
-          await StreamCache.findOneAndUpdate(
-            { tmdbId, type: kind, season, episode },
-            { streamUrl: null, streamExpiresAt: new Date(0) },
-          ).catch(() => null);
-        }
+        return res.json({
+          streamUrl: cachedRecord.streamUrl,
+          url: cachedRecord.streamUrl, // Compatibility
+          source: cachedRecord.source || "cache",
+          qualityTag: cachedRecord.qualityTag || "UNKNOWN",
+          quality: cachedRecord.qualityTag, // Compatibility
+          resolution: cachedRecord.resolution || "UNKNOWN",
+          mirrors: cachedRecord.mirrors || [],
+          subtitles: allSubtitles.map(s => {
+            if (s.url && s.url.startsWith('http')) {
+              return { ...s, url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}` };
+            }
+            return s;
+          })
+        });
       }
     }
-
-    // 1. Cache Check (skipped for now for debugging, but let's keep it disabled if mirrors are requested)
-    // We will bypass cache if we want fresh mirrors, but for now let's prioritize direct results.
 
     const mirrors: MirrorStream[] = [];
     let sourceName = "none";
@@ -850,10 +818,28 @@ app.get("/api/subtitles", async (req, res) => {
       `[SUBS] Aggregating tracks for ${tmdbId} S${season}E${episode}...`,
     );
 
-    // Using allSettled so one tracker failing doesn't kill the whole request
     const results = await Promise.allSettled([
-      getSubtitles(tmdbId, kind, season, episode),
-      // Future trackers (e.g. Subscene, OpenSubtitles Direct) would go here
+      tmdbId.toString().startsWith('k') 
+        ? (async () => {
+            const dramaId = parseInt(tmdbId.toString().replace('k', ''));
+            const details = await KissKHScraper.getDramaDetail(dramaId);
+            const ep = details?.episodes?.find((e: any) => e.number === episode);
+            if (ep) {
+              const mirrors = await KissKHScraper.getStream(dramaId, ep.id);
+              // Extract all unique subtitles from all mirrors
+              const subMap = new Map();
+              mirrors.forEach(m => {
+                if (m.subtitles) {
+                  m.subtitles.forEach(s => {
+                    if (s.url && !subMap.has(s.url)) subMap.set(s.url, s);
+                  });
+                }
+              });
+              return Array.from(subMap.values());
+            }
+            return [];
+          })()
+        : getSubtitles(tmdbId, kind, season, episode),
     ]);
 
     const aggregated = results
@@ -870,7 +856,7 @@ app.get("/api/subtitles", async (req, res) => {
     }
 
     const proxied = aggregated.map((s) => {
-      if (s.url.startsWith("http")) {
+      if (s.url && s.url.startsWith("http")) {
         return {
           ...s,
           url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
@@ -880,9 +866,40 @@ app.get("/api/subtitles", async (req, res) => {
     });
 
     return res.json({ subtitles: proxied });
-  } catch (error: any) {
-    console.warn(`[SUBS] ✘ Aggregation issue for ${tmdbId}: ${error.message}`);
-    return res.json({ subtitles: [] }); // Always return [] instead of error to prevent player crash
+  } catch (err: any) {
+    console.error(`[SUBS ERROR] ${err.message}`);
+    return res.status(500).json({ error: err.message, subtitles: [] });
+  }
+});
+
+// Endpoint: Subtitle Proxy (Bypasses CORS & forces correct headers)
+app.get("/api/proxy/subtitle", async (req, res) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).send("Missing url");
+
+  try {
+    const response = await axios.get(url, {
+      timeout: 10000,
+      headers: { "User-Agent": UA },
+      responseType: 'text'
+    });
+
+    let content = response.data;
+
+    // Set headers for WebVTT
+    res.setHeader("Content-Type", "text/vtt; charset=utf-8");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+
+    // Basic SRT to VTT conversion if needed
+    if (!content.trim().startsWith("WEBVTT")) {
+      content = "WEBVTT\n\n" + content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+    }
+
+    return res.send(content);
+  } catch (e: any) {
+    console.error(`[SUBS/proxy] Failed for ${url}: ${e.message}`);
+    return res.status(500).send("Subtitle proxy failed");
   }
 });
 
@@ -1340,21 +1357,35 @@ app.get("/api/proxy/subtitle", async (req, res) => {
     });
 
     let content: string = upstream.data;
+    if (typeof content !== 'string') {
+      content = JSON.stringify(content);
+    }
+
+    // Remove BOM if present
+    if (content.charCodeAt(0) === 0xFEFF) {
+      content = content.substring(1);
+    }
+
+    const trimmed = content.trim();
 
     // SRT → VTT conversion
     if (
       targetUrl.toLowerCase().endsWith(".srt") ||
-      (!content.startsWith("WEBVTT") && content.includes(" --> "))
+      (!trimmed.startsWith("WEBVTT") && trimmed.includes(" --> "))
     ) {
-      if (!content.startsWith("WEBVTT")) {
-        content = "WEBVTT\n\n" + content;
+      console.log(`[PROXY/sub] Converting SRT to VTT for ${targetUrl.substring(0, 40)}...`);
+      if (!trimmed.startsWith("WEBVTT")) {
+        content = "WEBVTT\n\n" + trimmed;
       }
       // Convert SRT timestamps: 00:00:20,000 → 00:00:20.000
       content = content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
     }
 
-    res.setHeader("Content-Type", "text/vtt");
+    res.setHeader("Content-Type", "text/vtt; charset=utf-8");
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Vary", "Origin");
     res.setHeader("Cache-Control", "public, max-age=86400");
     return res.send(content);
   } catch (e: any) {
@@ -1449,9 +1480,9 @@ app.get("/api/drama/list", async (req, res) => {
       isDrama: true,
     }));
 
-    // Save to Cache (1 hour)
+    // Save to Cache (12 hours for Discovery)
     const expires = new Date();
-    expires.setHours(expires.getHours() + 1);
+    expires.setHours(expires.getHours() + 12);
     await DiscoveryCache.findOneAndUpdate(
       { key: cacheKey },
       { results, expiresAt: expires },
