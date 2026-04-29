@@ -47,15 +47,44 @@ export class VidLinkScraper {
             }
 
             const mirrors: MirrorStream[] = [];
-            const subtitles = data.subtitles?.map((s: any) => ({
+            
+            // 1. Extract subtitles from 'subtitles' field (standard)
+            const standardSubtitles = data.subtitles?.map((s: any) => ({
                 url: s.url,
-                lang: s.lang,
-                languageName: s.label || getLanguageName(s.lang),
+                lang: s.lang || 'en',
+                languageName: s.label || getLanguageName(s.lang || 'en'),
                 source: 'VidLink'
             })) || [];
+
+            // 2. Extract subtitles from 'stream.captions' field (fallback/alternative)
+            const captionsSubtitles = data.stream.captions?.map((c: any) => {
+                // If language is a full name like "English", we should try to get the ISO code
+                let lang = c.language?.toLowerCase();
+                if (lang === 'english') lang = 'en';
+                else if (lang === 'spanish') lang = 'es';
+                else if (lang === 'french') lang = 'fr';
+                // Add more common ones if needed, or use getLanguageName in reverse (hard)
+                
+                return {
+                    url: c.url,
+                    lang: lang || 'en',
+                    languageName: c.language || getLanguageName(lang || 'en'),
+                    source: 'VidLink'
+                };
+            }) || [];
+
+            // Combine and deduplicate by URL
+            const allSubsMap = new Map();
+            [...standardSubtitles, ...captionsSubtitles].forEach(s => {
+                if (s.url && !allSubsMap.has(s.url)) {
+                    allSubsMap.set(s.url, s);
+                }
+            });
+
+            const subtitles = Array.from(allSubsMap.values());
             
             if (subtitles.length > 0) {
-              console.log(`[VidLink] Found ${subtitles.length} subtitles for ${tmdbId}`);
+              console.log(`[VidLink] Found ${subtitles.length} subtitles for ${tmdbId} (English: ${subtitles.some(s => s.lang === 'en' || s.languageName.toLowerCase().includes('english'))})`);
             } else {
               console.warn(`[VidLink] No subtitles found in API response for ${tmdbId}`);
             }

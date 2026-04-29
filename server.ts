@@ -516,7 +516,7 @@ app.get("/api/stream", async (req, res) => {
       
       // Merge with OpenSubtitles as fallback
       try {
-        const osSubs = await getSubtitles(tmdbId, kind as any, season, episode);
+        const osSubs = await getSubtitles(tmdbId, kind as any, season, episode, title);
         if (osSubs && osSubs.length > 0) {
           osSubs.forEach((s: any) => {
              // Avoid duplicates if a mirror already had it
@@ -528,6 +528,28 @@ app.get("/api/stream", async (req, res) => {
       }
 
       allSubtitles.push(...subMap.values());
+
+      // Sort to prioritize English and VidLink source
+      allSubtitles.sort((a, b) => {
+        const aIsVidLink = a.source === 'VidLink';
+        const bIsVidLink = b.source === 'VidLink';
+        const aIsEng = a.languageName?.toLowerCase().includes('english') || a.lang?.toLowerCase().startsWith('en');
+        const bIsEng = b.languageName?.toLowerCase().includes('english') || b.lang?.toLowerCase().startsWith('en');
+
+        // English + VidLink is highest priority
+        if (aIsEng && aIsVidLink && !(bIsEng && bIsVidLink)) return -1;
+        if (!(aIsEng && aIsVidLink) && bIsEng && bIsVidLink) return 1;
+
+        // Then just English
+        if (aIsEng && !bIsEng) return -1;
+        if (!aIsEng && bIsEng) return 1;
+
+        // Then VidLink (for other languages)
+        if (aIsVidLink && !bIsVidLink) return -1;
+        if (!aIsVidLink && bIsVidLink) return 1;
+
+        return 0;
+      });
     }
 
     if (mirrors.length === 0) {
@@ -668,6 +690,7 @@ app.get("/api/subtitles", async (req, res) => {
   const kind = req.query.type as "movie" | "tv";
   const season = parseInt((req.query.season as string) || "1", 10);
   const episode = parseInt((req.query.episode as string) || "1", 10);
+  const title = req.query.title as string;
 
   if (!tmdbId || !kind) {
     return res.status(400).json({ error: "Missing tmdbId or type" });
@@ -712,19 +735,33 @@ app.get("/api/subtitles", async (req, res) => {
             }
             return [];
           })()
-        : getSubtitles(tmdbId, kind, season, episode),
+        : Promise.resolve([]), // Handled by getSubtitles below
+      getSubtitles(tmdbId, kind, season, episode, title),
     ]);
 
     const aggregated = results
       .filter((r) => r.status === "fulfilled")
       .flatMap((r) => (r as PromiseFulfilledResult<any[]>).value);
 
-    // 2. Sort to prioritize English
+    // 2. Sort to prioritize English and VidLink source
     const sorted = aggregated.sort((a, b) => {
-      const aEng = a.languageName?.toLowerCase().includes('english') || a.language?.toLowerCase().startsWith('en');
-      const bEng = b.languageName?.toLowerCase().includes('english') || b.language?.toLowerCase().startsWith('en');
-      if (aEng && !bEng) return -1;
-      if (!aEng && bEng) return 1;
+      const aIsVidLink = a.source === 'VidLink';
+      const bIsVidLink = b.source === 'VidLink';
+      const aIsEng = a.languageName?.toLowerCase().includes('english') || a.lang?.toLowerCase().startsWith('en') || a.language?.toLowerCase().startsWith('en');
+      const bIsEng = b.languageName?.toLowerCase().includes('english') || b.lang?.toLowerCase().startsWith('en') || b.language?.toLowerCase().startsWith('en');
+
+      // English + VidLink is highest priority
+      if (aIsEng && aIsVidLink && !(bIsEng && bIsVidLink)) return -1;
+      if (!(aIsEng && aIsVidLink) && bIsEng && bIsVidLink) return 1;
+
+      // Then just English
+      if (aIsEng && !bIsEng) return -1;
+      if (!aIsEng && bIsEng) return 1;
+
+      // Then VidLink (for other languages)
+      if (aIsVidLink && !bIsVidLink) return -1;
+      if (!aIsVidLink && bIsVidLink) return 1;
+
       return 0;
     });
 
@@ -794,12 +831,12 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         return res.status(500).send("Proxy error");
       }
     } else {
-      // Standard axios fetch for other sources
+      // Standard axios fetch for other sources (VidLink, OpenSubtitles)
       const response = await axios.get(url, {
-        timeout: 15000,
+        timeout: 60000, // Increased to 60s for slow hosts like megafiles.store
         headers: {
           "User-Agent": UA,
-          "Referer": url.includes('vidlink') ? 'https://vidlink.pro/' : 'https://nebula.clev.studio/'
+          "Referer": url.includes('vidlink') || url.includes('megafiles') ? 'https://vidlink.pro/' : 'https://nebula.clev.studio/'
         },
         responseType: 'arraybuffer'
       });
@@ -1367,7 +1404,7 @@ app.get("/api/proxy/subtitle", async (req, res) => {
     const isSrt = targetUrl.toLowerCase().endsWith(".srt") || (!trimmed.startsWith("WEBVTT") && trimmed.includes(" --> "));
     
     if (isSrt || trimmed.startsWith("WEBVTT")) {
-      console.log(`[PROXY/sub] Processing VTT/SRT for ${targetUrl.substring(0, 40)}...`);
+      console.log(`[PROXY/sub] Processing VTT/SRT for ${targetUrl.substring(0, 40)}... (isSrt: ${isSrt})`);
       
       const lines = content.split(/\r?\n/);
       let output = "";
@@ -1375,7 +1412,7 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       let hasSyncMap = false;
 
       // Check existing headers
-      for (let i = 0; i < Math.min(lines.length, 10); i++) {
+      for (let i = 0; i < Math.min(lines.length, 15); i++) {
         if (lines[i]?.trim().startsWith("WEBVTT")) hasVttHeader = true;
         if (lines[i]?.trim().includes("X-TIMESTAMP-MAP")) hasSyncMap = true;
       }
@@ -1384,12 +1421,13 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         output += "WEBVTT\n";
       }
 
-      // Inject Sync Map if missing (Crucial for HLS/VidLink sync)
-      if (!hasSyncMap) {
+      // Inject Sync Map ONLY for SRT conversion (or if it's a VTT that explicitly lacks it and we want to force it)
+      // BUT: If it's a native VidLink VTT, forcing MPEGTS:0 can break sync if the stream starts elsewhere.
+      if (!hasSyncMap && isSrt) {
         output += "X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n";
       }
 
-      if (!hasVttHeader || !hasSyncMap) output += "\n";
+      if (!hasVttHeader || (isSrt && !hasSyncMap)) output += "\n";
 
       for (let i = 0; i < lines.length; i++) {
         let line = lines[i]!;

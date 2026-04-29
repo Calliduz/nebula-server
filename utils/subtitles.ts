@@ -5,20 +5,44 @@ import { MetadataCache } from "../models/Cache.js";
 export async function fetchImdbId(
   tmdbId: string | number,
   type: "movie" | "tv",
+  title?: string,
 ): Promise<string | null> {
   const TMDB_API_KEY = process.env.TMDB_API_KEY;
   if (!TMDB_API_KEY) return null;
 
-  // Skip for KissKH IDs (prefixed with 'k')
-  if (tmdbId.toString().startsWith('k')) return null;
+  let finalTmdbId = tmdbId.toString();
+
+  // If it's a KissKH ID, we need to find the REAL TMDB ID first via title search
+  if (finalTmdbId.startsWith('k') && title) {
+    try {
+      const isV4 = TMDB_API_KEY.length > 40;
+      const searchUrl = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(title)}&include_adult=false&language=en-US&page=1`;
+      const searchRes = await axios.get(searchUrl, {
+        headers: isV4 ? { 'Authorization': `Bearer ${TMDB_API_KEY}` } : {},
+        params: isV4 ? {} : { api_key: TMDB_API_KEY }
+      });
+      
+      if (searchRes.data.results?.[0]?.id) {
+        finalTmdbId = searchRes.data.results[0].id.toString();
+        console.log(`[SUBS] Resolved KissKH ID to TMDB ID: ${finalTmdbId} for "${title}"`);
+      } else {
+        return null;
+      }
+    } catch (e: any) {
+      console.warn(`[SUBS] Failed to resolve KissKH ID to TMDB ID: ${e.message}`);
+      return null;
+    }
+  } else if (finalTmdbId.startsWith('k')) {
+    return null; // Can't resolve without title
+  }
 
   // 1. Check local cache first
-  const cached = await MetadataCache.findOne({ tmdbId: tmdbId.toString() });
+  const cached = await MetadataCache.findOne({ tmdbId: finalTmdbId });
   if (cached?.imdbId) return cached.imdbId;
 
   try {
     const isV4 = TMDB_API_KEY.length > 40;
-    const url = `https://api.themoviedb.org/3/${type}/${tmdbId}/external_ids${isV4 ? '' : `?api_key=${TMDB_API_KEY}`}`;
+    const url = `https://api.themoviedb.org/3/${type}/${finalTmdbId}/external_ids${isV4 ? '' : `?api_key=${TMDB_API_KEY}`}`;
     
     const response = await axios.get(url, { 
       timeout: 5000,
@@ -30,7 +54,7 @@ export async function fetchImdbId(
     // 2. Persist to cache for future requests
     if (imdbId) {
       await MetadataCache.findOneAndUpdate(
-        { tmdbId: tmdbId.toString() },
+        { tmdbId: finalTmdbId },
         { imdbId },
         { upsert: true }
       ).catch(() => {});
@@ -38,7 +62,7 @@ export async function fetchImdbId(
     
     return imdbId;
   } catch (error: any) {
-    console.error(`[SUBS] Failed to fetch IMDB id for ${tmdbId}: ${error.message}`);
+    console.error(`[SUBS] Failed to fetch IMDB id for ${finalTmdbId}: ${error.message}`);
     return null;
   }
 }
@@ -49,8 +73,9 @@ export async function getSubtitles(
   type: "movie" | "tv",
   season?: number,
   episode?: number,
+  title?: string,
 ) {
-  const imdbId = await fetchImdbId(tmdbId, type);
+  const imdbId = await fetchImdbId(tmdbId, type, title);
   if (!imdbId) return [];
 
   let url = "";
@@ -64,18 +89,22 @@ export async function getSubtitles(
     const response = await axios.get(url, { timeout: 8000 });
     const subs = response.data?.subtitles || [];
     
-    // Deduplicate by language (first one is usually highest rated)
-    const dedupedMap = new Map();
+    // Group by language to keep multiple options (especially for sync issues)
+    const langGroups: Record<string, any[]> = {};
     for (const sub of subs) {
-      if (!dedupedMap.has(sub.lang)) {
-        dedupedMap.set(sub.lang, sub);
+      const lang = sub.lang || 'unk';
+      if (!langGroups[lang]) langGroups[lang] = [];
+      // Keep up to 5 subtitles per language to give users choices if one is out of sync
+      if (langGroups[lang].length < 5) {
+        langGroups[lang].push(sub);
       }
     }
-    const dedupedSubs = Array.from(dedupedMap.values());
+    
+    const dedupedSubs = Object.values(langGroups).flat();
 
     // Map the Stremio response to a clean payload
-    return dedupedSubs.map((sub: any) => ({
-      id: sub.id,
+    return dedupedSubs.map((sub: any, index: number) => ({
+      id: sub.id || `${sub.lang}-${index}`,
       url: sub.url,
       lang: sub.lang, // ISO string e.g. "eng", "fre"
       languageName: getLanguageName(sub.lang),
