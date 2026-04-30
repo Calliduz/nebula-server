@@ -1565,7 +1565,8 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       headers.Origin = "https://kisskh.do";
     } else if (
       targetUrl.includes("vidlink") ||
-      targetUrl.includes("storm.vodvidl.site")
+      targetUrl.includes("storm.vodvidl.site") ||
+      targetUrl.includes("megafiles.store")
     ) {
       headers.Referer = "https://vidlink.pro/";
       headers.Origin = "https://vidlink.pro";
@@ -1580,7 +1581,7 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       );
       const axiosRes = await axios.get(targetUrl, {
         responseType: "arraybuffer",
-        timeout: 15000,
+        timeout: 45000,
         headers,
       });
       var buffer = Buffer.from(axiosRes.data);

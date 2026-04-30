@@ -104,7 +104,7 @@ export async function fetchWithGotScraping(
     cookieJar: sharedCookieJar,
     responseType: "buffer",
     retry: { limit: 0 },
-    timeout: { request: 15000 },
+    timeout: { request: 45000 },
     http2: true,
   };
 
