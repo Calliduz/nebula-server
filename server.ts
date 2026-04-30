@@ -954,19 +954,45 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         return res.status(500).send("Proxy error");
       }
     } else {
-      // Standard axios fetch for other sources (VidLink, OpenSubtitles)
-      const response = await axios.get(url, {
-        timeout: 60000, // Increased to 60s for slow hosts like megafiles.store
-        headers: {
-          "User-Agent": UA,
-          Referer:
-            url.includes("vidlink") || url.includes("megafiles")
-              ? "https://vidlink.pro/"
-              : "https://nebula.clev.studio/",
-        },
-        responseType: "arraybuffer",
-      });
-      rawBuffer = Buffer.from(response.data);
+      // Standard fetch with bypass for other sources (VidLink, Megafiles, OpenSubtitles)
+      const headers: any = {
+        "User-Agent": UA,
+        Referer: url.includes("vidlink") || url.includes("megafiles")
+          ? "https://vidlink.pro/"
+          : "https://nebula.clev.studio/",
+      };
+
+      if (url.includes("vidlink") || url.includes("megafiles")) {
+        headers.Origin = "https://vidlink.pro";
+      }
+
+      let bypass = await fetchWithGotScraping(url, headers);
+      
+      // If GotScraping fails, try the heavy-duty CycleTLS spoofer for Cloudflare protected domains
+      if (bypass.statusCode >= 400 && (url.includes("vidlink") || url.includes("megafiles"))) {
+        console.warn(`[SUBS] GotScraping failed (${bypass.statusCode}). Trying CycleTLS JA3 Spoofer...`);
+        try {
+          const cycle = await fetchWithCycleTLS(url, headers);
+          if (cycle.statusCode < 400) {
+            bypass = cycle;
+          }
+        } catch (cycleErr: any) {
+          console.error(`[SUBS] CycleTLS failed: ${cycleErr.message}`);
+        }
+      }
+
+      if (bypass.statusCode >= 400) {
+        console.warn(`[SUBS] All bypasses failed for ${url} (${bypass.statusCode}). Falling back to Axios...`);
+        const response = await axios.get(url, {
+          timeout: 45000,
+          headers,
+          responseType: "arraybuffer",
+        });
+        rawBuffer = Buffer.from(response.data);
+      } else {
+        rawBuffer = bypass.body;
+        finalUrl = bypass.finalUrl;
+      }
     }
 
     let content: string;
@@ -1544,137 +1570,6 @@ app.get("/api/proxy/segment", async (req, res) => {
   }
 });
 
-// Proxy: subtitles — fetches SRT/VTT, converts SRT to VTT if needed
-app.get("/api/proxy/subtitle", async (req, res) => {
-  const raw = req.query.url as string;
-  if (!raw) return res.status(400).send("Missing url");
-
-  let targetUrl: string;
-  try {
-    targetUrl = decodeURIComponent(raw);
-  } catch {
-    return res.status(400).send("Invalid url encoding");
-  }
-
-  console.log(`[PROXY/sub] ▶ ${targetUrl.substring(0, 80)}`);
-
-  try {
-    const headers: any = { "User-Agent": UA };
-    if (targetUrl.includes("kisskh")) {
-      headers.Referer = "https://kisskh.do/";
-      headers.Origin = "https://kisskh.do";
-    } else if (
-      targetUrl.includes("vidlink") ||
-      targetUrl.includes("storm.vodvidl.site") ||
-      targetUrl.includes("megafiles.store")
-    ) {
-      headers.Referer = "https://vidlink.pro/";
-      headers.Origin = "https://vidlink.pro";
-    }
-
-    // Use High-Speed Bypass for subtitles to avoid 403s
-    const bypassRes = await fetchWithGotScraping(targetUrl, headers);
-
-    if (bypassRes.statusCode >= 400) {
-      console.warn(
-        `[PROXY/sub] ✘ Got Bypass failed (${bypassRes.statusCode}). Falling back to Axios...`,
-      );
-      const axiosRes = await axios.get(targetUrl, {
-        responseType: "arraybuffer",
-        timeout: 45000,
-        headers,
-      });
-      var buffer = Buffer.from(axiosRes.data);
-    } else {
-      var buffer = bypassRes.body;
-    }
-
-    // Detect encoding
-    const detection = jschardet.detect(buffer);
-    let encoding = detection.encoding || "utf-8";
-
-    // Fallback/Force UTF-8 if confidence is too low or it looks like ASCII
-    if (
-      detection.confidence < 0.8 &&
-      !["ascii", "utf-8"].includes(encoding.toLowerCase())
-    ) {
-      encoding = "utf-8";
-    }
-
-    console.log(
-      `[PROXY/sub] Detected encoding: ${encoding} (confidence: ${detection.confidence}) for ${targetUrl.substring(0, 40)}`,
-    );
-
-    let content = iconv.decode(buffer, encoding);
-
-    // Remove BOM if present
-    if (content.charCodeAt(0) === 0xfeff) {
-      content = content.substring(1);
-    }
-
-    const trimmed = content.trim();
-
-    // SRT → VTT conversion
-    const isSrt =
-      targetUrl.toLowerCase().endsWith(".srt") ||
-      (!trimmed.startsWith("WEBVTT") && trimmed.includes(" --> "));
-
-    if (isSrt || trimmed.startsWith("WEBVTT")) {
-      console.log(
-        `[PROXY/sub] Processing VTT/SRT for ${targetUrl.substring(0, 40)}... (isSrt: ${isSrt})`,
-      );
-
-      const lines = content.split(/\r?\n/);
-      let output = "";
-      let hasVttHeader = false;
-      let hasSyncMap = false;
-
-      // Check existing headers
-      for (let i = 0; i < Math.min(lines.length, 15); i++) {
-        if (lines[i]?.trim().startsWith("WEBVTT")) hasVttHeader = true;
-        if (lines[i]?.trim().includes("X-TIMESTAMP-MAP")) hasSyncMap = true;
-      }
-
-      if (!hasVttHeader) {
-        output += "WEBVTT\n";
-      }
-
-      // Inject Sync Map ONLY for SRT conversion (or if it's a VTT that explicitly lacks it and we want to force it)
-      // BUT: If it's a native VidLink VTT, forcing MPEGTS:0 can break sync if the stream starts elsewhere.
-      if (!hasSyncMap && isSrt) {
-        output += "X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n";
-      }
-
-      if (!hasVttHeader || (isSrt && !hasSyncMap)) output += "\n";
-
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i]!;
-
-        // Skip existing WEBVTT line if we already added it
-        if (i === 0 && line.trim().startsWith("WEBVTT")) continue;
-
-        // Convert timestamp comma to dot: 00:00:20,000 → 00:00:20.000 (SRT -> VTT sync)
-        if (line.includes(" --> ")) {
-          line = line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
-        }
-
-        output += line + "\n";
-      }
-      content = output;
-    }
-
-    res.setHeader("Content-Type", "text/vtt; charset=utf-8");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "*");
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    return res.send(content);
-  } catch (e: any) {
-    console.error(`[PROXY/sub] ✘ Error: ${e.message}`);
-    return res.status(502).send("Subtitle proxy error");
-  }
-});
 
 app.all("/api/cache/clear", async (req, res) => {
   const key = req.headers["x-admin-key"] || req.query.key;
