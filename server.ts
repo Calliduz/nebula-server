@@ -35,7 +35,7 @@ import {
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
-import { KissKHScraper } from "./utils/kisskh.js";
+import { DramacoolScraper } from "./utils/dramacool.js";
 import { VidLinkScraper } from "./utils/vidlink.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
@@ -504,25 +504,26 @@ app.get("/api/stream", async (req, res) => {
       console.log(`[STREAM] User cancelled request. Aborting scrapers...`);
     });
 
-    // ── Phase A: Handle Native KissKH IDs (Asian Dramas) ───────────────
-    if (tmdbId.startsWith("k")) {
-      console.log(`[STREAM] Phase A: Native KissKH ID detected (${tmdbId})...`);
-      const dramaId = parseInt(tmdbId.replace("k", ""));
+    // ── Phase A: Handle Drama Section (Dramacool) ─────────────────────
+    if (tmdbId.startsWith("k") || (kind === "tv" && title && !tmdbId.startsWith("tt"))) {
+      console.log(`[STREAM] Phase A: Drama Section detected. Checking Dramacool...`);
       try {
-        const details = await KissKHScraper.getDramaDetail(dramaId);
-        if (details && details.episodes) {
-          const ep = details.episodes.find((e: any) => e.number === episode);
+        const searchResults = await DramacoolScraper.search(title);
+        const match = searchResults[0]; // Take first result
+        
+        if (match) {
+          const details = await DramacoolScraper.getDramaDetail(match.id);
+          const ep = details?.episodes?.find((e: any) => e.number === episode);
           if (ep) {
-            const kisskhMirrors = await KissKHScraper.getStream(dramaId, ep.id);
-            if (kisskhMirrors && kisskhMirrors.length > 0) {
-              console.log(`[STREAM] KissKH Native HIT ✔`);
-
-              mirrors.push(...kisskhMirrors);
+            const dramaMirrors = await DramacoolScraper.getStream(match.id, ep.url);
+            if (dramaMirrors && dramaMirrors.length > 0) {
+              console.log(`[STREAM] Dramacool HIT ✔`);
+              mirrors.push(...dramaMirrors);
             }
           }
         }
-      } catch (e) {
-        console.error(`[STREAM] KissKH Native failed:`, e);
+      } catch (e: any) {
+        console.error(`[STREAM] Dramacool Phase A failed:`, e.message);
       }
     }
 
@@ -552,14 +553,13 @@ app.get("/api/stream", async (req, res) => {
       }
     }
 
-    // ── Phase C: Fallback Scrapers (KissKH Search) ───────────────────
+    // ── Phase C: Fallback Scrapers (Dramacool Search) ──────────────────
     if (mirrors.length === 0 && title) {
       console.log(
-        `[STREAM] Phase C: Fallback to KissKH Search for "${title}"...`,
+        `[STREAM] Phase C: Fallback to Dramacool Search for "${title}"...`,
       );
       try {
-        const searchResults = await KissKHScraper.search(title);
-        // Find best match by title (fuzzy) or just first result for now
+        const searchResults = await DramacoolScraper.search(title);
         const match = searchResults.find(
           (r: any) =>
             r.title.toLowerCase().includes(title.toLowerCase()) ||
@@ -567,26 +567,21 @@ app.get("/api/stream", async (req, res) => {
         );
 
         if (match) {
-          const details = await KissKHScraper.getDramaDetail(match.id);
+          const details = await DramacoolScraper.getDramaDetail(match.id);
           const ep = details?.episodes?.find((e: any) => e.number === episode);
           if (ep) {
-            const kisskhMirrors = await KissKHScraper.getStream(
+            const dramaMirrors = await DramacoolScraper.getStream(
               match.id,
-              ep.id,
+              ep.url,
             );
-            if (kisskhMirrors && kisskhMirrors.length > 0) {
-              console.log(`[STREAM] KissKH Fallback HIT ✔`);
-              const apiBase = req.headers.host
-                ? (req.headers["x-forwarded-proto"] || "http") +
-                  "://" +
-                  req.headers.host
-                : "";
-              mirrors.push(...kisskhMirrors);
+            if (dramaMirrors && dramaMirrors.length > 0) {
+              console.log(`[STREAM] Dramacool Fallback HIT ✔`);
+              mirrors.push(...dramaMirrors);
             }
           }
         }
-      } catch (e) {
-        console.error(`[STREAM] KissKH Fallback failed:`, e);
+      } catch (e: any) {
+        console.error(`[STREAM] Dramacool Fallback failed:`, e.message);
       }
     }
 
@@ -753,17 +748,19 @@ app.get("/api/stream", async (req, res) => {
 app.get("/api/tv-details/:tmdbId", async (req, res) => {
   const { tmdbId } = req.params;
 
-  // Handle KissKH IDs (prefixed with 'k')
-  if (tmdbId.startsWith("k")) {
-    const dramaId = parseInt(tmdbId.replace("k", ""));
-    console.log(`[DRAMA] Fetching KissKH details for proxy: ${dramaId}`);
+  // Handle Drama IDs (slugs or legacy KissKH IDs)
+  if (tmdbId.startsWith("k") || (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))) {
+    const dramaId = tmdbId.startsWith("k") ? tmdbId.replace("k", "") : tmdbId;
+    console.log(`[DRAMA] Fetching Dramacool details for: ${dramaId}`);
     try {
-      const details = await KissKHScraper.getDramaDetail(dramaId);
+      const details = await DramacoolScraper.getDramaDetail(dramaId);
       if (!details) return res.status(404).json({ error: "Drama not found" });
 
       // Normalize to TMDB-like structure for the frontend drawer
       return res.json({
-        number_of_seasons: 1, // KissKH usually treats all episodes as one season or handles them differently
+        id: tmdbId,
+        name: details.title,
+        number_of_seasons: 1,
         seasons: [
           {
             season_number: 1,
@@ -773,8 +770,8 @@ app.get("/api/tv-details/:tmdbId", async (req, res) => {
         ],
         episodes: (details.episodes || []).map((ep: any) => ({
           episode_number: ep.number,
-          name: `Episode ${ep.number}`,
-          id: ep.id,
+          name: ep.title || `Episode ${ep.number}`,
+          id: ep.id, // Full URL
         })),
       });
     } catch (err: any) {
@@ -826,16 +823,16 @@ app.get("/api/subtitles", async (req, res) => {
     );
 
     const results = await Promise.allSettled([
-      tmdbId.toString().startsWith("k")
+      tmdbId.toString().startsWith("k") || (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))
         ? (async () => {
-            const dramaId = parseInt(tmdbId.toString().replace("k", ""));
-            const details = await KissKHScraper.getDramaDetail(dramaId);
+            const dramaId = tmdbId.toString().startsWith("k") ? tmdbId.toString().replace("k", "") : tmdbId.toString();
+            const details = await DramacoolScraper.getDramaDetail(dramaId);
             const ep = details?.episodes?.find(
               (e: any) => e.number === episode,
             );
             if (ep) {
-              const mirrors = await KissKHScraper.getStream(dramaId, ep.id);
-              // Extract all unique subtitles from all mirrors
+              const mirrors = await DramacoolScraper.getStream(dramaId, ep.url);
+              // Extract unique subtitles from all mirrors
               const subMap = new Map();
               mirrors.forEach((m) => {
                 if (m.subtitles) {
@@ -848,7 +845,7 @@ app.get("/api/subtitles", async (req, res) => {
             }
             return [];
           })()
-        : Promise.resolve([]), // Handled by getSubtitles below
+        : Promise.resolve([]),
       getSubtitles(tmdbId, kind, season, episode, title),
     ]);
 
@@ -1636,56 +1633,55 @@ app.get("/api/metadata", async (req, res) => {
   }
 });
 
-// Endpoint: KissKH Drama Discovery (with Caching)
+// Endpoint: Drama Discovery (Synced with Dramacool)
 app.get("/api/drama/list", async (req, res) => {
-  const type = parseInt(req.query.type as string) || 0;
-  const country = parseInt(req.query.country as string) || 0;
   const page = parseInt(req.query.page as string) || 1;
-  const order = parseInt(req.query.order as string) || 1;
+  const countryId = req.query.country as string;
+  
+  // Map frontend country IDs to Dramacool slugs
+  const countryMap: Record<string, string> = {
+    "1": "korean",
+    "2": "chinese",
+    "4": "japanese-a",
+    "7": "thailand",
+    "8": "philippines",
+    "5": "taiwanese",
+    "6": "hong-kong",
+    "3": "other-asia"
+  };
 
-  const cacheKey = `discover-${country}-${type}-${page}-${order}`;
+  const countrySlug = countryId ? countryMap[countryId] : undefined;
+  const cacheKey = `drama-list-${page}-${countryId || "all"}`;
 
   try {
-    // Check Cache
-    const cached = await DiscoveryCache.findOne({ key: cacheKey });
+    const cached = await DiscoveryCache.findOne({ category: cacheKey });
     if (cached) {
-      console.log(`[DISCOVERY] Cache HIT for ${cacheKey}`);
+      console.log(`[DRAMA] Cache HIT for list ${cacheKey}`);
       return res.json({ results: cached.results });
     }
 
-    console.log(`[DISCOVERY] Cache MISS. Fetching KissKH Explore...`);
-    const list = await KissKHScraper.getExploreList(type, country, page, order);
-    const results = list.map((d) => ({
-      id: `k${d.id}`,
-      title: d.title,
-      image: d.thumbnail,
-      type: "tv",
-      genre: "Drama",
-      rating: d.rating,
-      countryId: d.countryId || (country ? parseInt(country.toString()) : 0),
-      origin: "kisskh",
-      isDrama: true,
-    }));
-
-    // Save to Cache (12 hours for Discovery)
-    const expires = new Date();
-    expires.setHours(expires.getHours() + 12);
+    console.log(`[DRAMA] Cache MISS for list ${cacheKey}. Fetching Dramacool...`);
+    const results = await DramacoolScraper.getExploreList(page, countrySlug);
+    
     await DiscoveryCache.findOneAndUpdate(
-      { key: cacheKey },
-      { results, expiresAt: expires },
+      { category: cacheKey },
+      {
+        results,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 6), // 6 hours
+      },
       { upsert: true },
     ).catch(() => null);
 
     return res.json({ results });
-  } catch (e: any) {
-    console.error(`[DRAMA LIST ERROR] ${e.message}`);
-    return res.json({ results: [] });
+  } catch (err: any) {
+    console.error(`[DRAMA LIST ERROR] ${err.message}`);
+    return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/drama/detail/:id", async (req, res) => {
   const { id } = req.params;
-  const dramaId = parseInt(id.replace("k", ""));
+  const dramaId = id.startsWith("k") ? id.replace("k", "") : id;
 
   try {
     const cached = await DramaDetailCache.findOne({ dramaId });
@@ -1695,7 +1691,7 @@ app.get("/api/drama/detail/:id", async (req, res) => {
     }
 
     console.log(`[DRAMA] Cache MISS for detail ${id}. Fetching...`);
-    const details = await KissKHScraper.getDramaDetail(dramaId);
+    const details = await DramacoolScraper.getDramaDetail(dramaId);
     if (!details) return res.status(404).json({ error: "Drama not found" });
 
     // Normalize episodes
@@ -1704,7 +1700,7 @@ app.get("/api/drama/detail/:id", async (req, res) => {
       episodes: (details.episodes || [])
         .map((ep: any) => ({
           episode_number: ep.number,
-          name: `Episode ${ep.number}`,
+          name: ep.title || `Episode ${ep.number}`,
           overview: "",
           still_path: details.thumbnail,
           air_date: "",

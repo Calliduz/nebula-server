@@ -67,7 +67,7 @@ export const DiscoveryCache = mongoose.model('DiscoveryCache', DiscoveryCacheSch
 
 // Drama Detail Cache (Stores episode lists and metadata)
 const DramaDetailCacheSchema = new mongoose.Schema({
-  dramaId: { type: Number, required: true },
+  dramaId: { type: String, required: true },
   detail: { type: Object, required: true },
   expiresAt: { type: Date, required: true }
 });
