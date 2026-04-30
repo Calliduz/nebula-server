@@ -1512,6 +1512,16 @@ app.get("/api/proxy/segment", async (req, res) => {
       return fetchVidLinkRaw(targetUrl, passHeaders);
     }
     const headers = { ...cdnHeaders(targetUrl, false), ...passHeaders };
+    // Try fast GotScraping first, fall back to CycleTLS JA3 spoofer if needed
+    const fast = await fetchWithGotScraping(
+      targetUrl,
+      headers,
+      useProxy ? segProxy : undefined,
+    );
+    if (fast.statusCode < 400) return fast;
+    console.warn(
+      `[PROXY/segment] GotScraping ${fast.statusCode}. Falling back to CycleTLS...`,
+    );
     return fetchWithCycleTLS(
       targetUrl,
       headers,
