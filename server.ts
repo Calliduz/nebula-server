@@ -49,13 +49,23 @@ import { CookieJar } from "tough-cookie";
 // Load Environment Variables
 dotenv.config();
 
+// ── Process Crash Guards ───────────────────────────────────────────────────
+// Must be registered before any async code runs. Prevents silent process death
+// from unhandled rejections in scraper/proxy callbacks.
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err);
+  // Don't exit — Railway will restart if needed; keep serving other users.
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled promise rejection:', reason);
+});
+
 // Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
 const proxyCache = new Map<
   string,
   { body: Buffer; headers: any; expires: number }
 >();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const SEGMENT_TTL = 30 * 60 * 1000; // 30 minutes
 const MAX_CACHE_ENTRIES = 100; // Increased to 100 now that we are in production mode (saves network)
 
 function setProxyCache(
@@ -147,7 +157,8 @@ setTimeout(async () => {
  */
 const httpsAgent = new https.Agent({
   keepAlive: true,
-  maxSockets: 32, // Limit concurrent connections to avoid flooding Oracle network
+  maxSockets: 128, // Increased from 32 — HLS players request multiple segments in parallel
+  maxFreeSockets: 32,
   timeout: 10000, // 10s timeout
 });
 
@@ -224,6 +235,11 @@ function fetchVidLinkRaw(
           finalUrl: rawUrl,
         }),
       );
+    });
+
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error("fetchVidLinkRaw: Request timed out after 30s"));
     });
 
     req.on("error", (err) => {
@@ -505,14 +521,17 @@ app.get("/api/stream", async (req, res) => {
     });
 
     // ── Phase A: Handle Drama Section (Dramacool) ─────────────────────
-    if (tmdbId.startsWith("k") || (kind === "tv" && title && !tmdbId.startsWith("tt"))) {
-      console.log(`[STREAM] Phase A: Drama Section detected. Checking Dramacool...`);
+    // ONLY fire for explicit drama IDs (k-prefixed slugs from Dramacool).
+    // Normal TMDB TV IDs are numeric strings (e.g. "94605") and must go straight
+    // to Phase B (VidLink) — the old condition fired Phase A on every TV request.
+    if (tmdbId.startsWith("k")) {
+      console.log(`[STREAM] Phase A: Drama ID detected (k-prefix). Checking Dramacool...`);
       try {
-        const searchResults = await DramacoolScraper.search(title);
+        const searchResults = await DramacoolScraper.search(title, undefined, signal);
         const match = searchResults[0]; // Take first result
         
         if (match) {
-          const details = await DramacoolScraper.getDramaDetail(match.id);
+          const details = await DramacoolScraper.getDramaDetail(match.id, signal);
           const ep = details?.episodes?.find((e: any) => e.number === episode);
           if (ep) {
             const dramaMirrors = await DramacoolScraper.getStream(match.id, ep.url);
@@ -523,6 +542,7 @@ app.get("/api/stream", async (req, res) => {
           }
         }
       } catch (e: any) {
+        if (e.name === 'AbortError') return;
         console.error(`[STREAM] Dramacool Phase A failed:`, e.message);
       }
     }
@@ -536,6 +556,7 @@ app.get("/api/stream", async (req, res) => {
           kind as any,
           season,
           episode,
+          signal
         );
         if (vidlinkMirrors && vidlinkMirrors.length > 0) {
           console.log(
@@ -559,7 +580,7 @@ app.get("/api/stream", async (req, res) => {
         `[STREAM] Phase C: Fallback to Dramacool Search for "${title}"...`,
       );
       try {
-        const searchResults = await DramacoolScraper.search(title);
+        const searchResults = await DramacoolScraper.search(title, undefined, signal);
         const match = searchResults.find(
           (r: any) =>
             r.title.toLowerCase().includes(title.toLowerCase()) ||
@@ -567,7 +588,7 @@ app.get("/api/stream", async (req, res) => {
         );
 
         if (match) {
-          const details = await DramacoolScraper.getDramaDetail(match.id);
+          const details = await DramacoolScraper.getDramaDetail(match.id, signal);
           const ep = details?.episodes?.find((e: any) => e.number === episode);
           if (ep) {
             const dramaMirrors = await DramacoolScraper.getStream(
@@ -581,6 +602,7 @@ app.get("/api/stream", async (req, res) => {
           }
         }
       } catch (e: any) {
+        if (e.name === 'AbortError') return;
         console.error(`[STREAM] Dramacool Fallback failed:`, e.message);
       }
     }
@@ -913,6 +935,26 @@ app.get("/api/proxy/subtitle", async (req, res) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).send("Missing url");
 
+  // SSRF guard: only allow fetching from known subtitle CDNs
+  try {
+    const parsed = new URL(url);
+    const SUBTITLE_ALLOWLIST = [
+      "kisskh.do", "kisskh.co", "kisskh.me",
+      "vidlink.pro", "megafiles.store", "storm.vodvidl.site",
+      "opensubtitles.org", "opensubtitles.com", "sub.webseries.vip",
+      "s.megafiles.store", "strem.io", "stremio.com",
+    ];
+    const allowed = SUBTITLE_ALLOWLIST.some(
+      (domain) => parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)
+    );
+    if (!allowed) {
+      console.warn(`[SUBS] Blocked SSRF attempt: ${parsed.hostname}`);
+      return res.status(403).send("Domain not allowed");
+    }
+  } catch {
+    return res.status(400).send("Invalid url");
+  }
+
   try {
     let rawBuffer: Buffer;
     let finalUrl = url;
@@ -954,16 +996,24 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       // Standard fetch with bypass for other sources (VidLink, Megafiles, OpenSubtitles)
       const headers: any = {
         "User-Agent": UA,
-        Referer: url.includes("vidlink") || url.includes("megafiles")
+        Referer: url.includes("vidlink") || url.includes("megafiles") || url.includes("storm.vodvidl.site")
           ? "https://vidlink.pro/"
           : "https://nebula.clev.studio/",
       };
 
-      if (url.includes("vidlink") || url.includes("megafiles")) {
+      if (url.includes("vidlink") || url.includes("megafiles") || url.includes("storm.vodvidl.site")) {
         headers.Origin = "https://vidlink.pro";
       }
 
-      let bypass = await fetchWithGotScraping(url, headers);
+      let bypass: any;
+      if (url.includes("storm.vodvidl.site")) {
+        // Storm uses literal { } in query params which WHATWG URL (used by Got) encodes.
+        // We use fetchVidLinkRaw to preserve the literal characters and avoid 403.
+        const res = await fetchVidLinkRaw(url, headers);
+        bypass = { statusCode: res.statusCode, headers: res.headers, body: res.body, finalUrl: res.finalUrl };
+      } else {
+        bypass = await fetchWithGotScraping(url, headers);
+      }
       
       // If GotScraping fails, try the heavy-duty CycleTLS spoofer for Cloudflare protected domains
       if (bypass.statusCode >= 400 && (url.includes("vidlink") || url.includes("megafiles"))) {
@@ -1418,12 +1468,23 @@ app.get("/api/proxy/stream", async (req, res) => {
       );
       if (subPlaylistMatches) {
         // Pre-fetch the first 2 variants (usually high and medium quality)
-        subPlaylistMatches.slice(0, 2).forEach((match) => {
+        subPlaylistMatches.slice(0, 2).forEach(async (match) => {
           const encoded = match.split("url=")[1];
           if (encoded) {
             const subUrl = decodeURIComponent(encoded);
             if (!proxyCache.has(subUrl)) {
-              fetchVidLinkRaw(subUrl).catch(() => {});
+              try {
+                // Populate the cache so the actual client request is instant
+                const res = await fetchVidLinkRaw(subUrl);
+                if (res.statusCode === 200) {
+                  setProxyCache(subUrl, {
+                    body: res.body,
+                    headers: res.headers,
+                    expires: Date.now() + CACHE_TTL
+                  });
+                  console.log(`[PROXY] Speculatively cached variant: ${subUrl.substring(0, 50)}...`);
+                }
+              } catch (e) {}
             }
           }
         });
@@ -1464,8 +1525,17 @@ app.get("/api/proxy/stream", async (req, res) => {
   }
 });
 
-// Proxy: raw segment / AES key — pass-through binary stream
-// Uses residential proxy only when nebula_proxy is passed (IP-auth CDNs like roilandrelic.website)
+// Proxy: raw segment / AES key — STREAMING pass-through (zero buffering)
+//
+// KEY DESIGN: Bytes are piped to the client the instant they arrive from the CDN.
+// Buffering the entire segment in RAM (old approach) caused:
+//   1. 5-6s freeze: player saw no bytes until the full 2-10MB was buffered
+//   2. A/V desync: player clock advanced during the stall, video resumed late
+//   3. Subtitle drift: VTT timestamps fell out of sync for the rest of the file
+//
+// VidLink/Storm CDN: uses native https.request so literal { } in query params
+//   are not encoded (WHATWG URL API breaks these CDNs with %7B/%7D encoding).
+// Other CDNs: uses axios stream mode which pipes without buffering.
 app.get("/api/proxy/segment", async (req, res) => {
   const raw = req.query.url as string;
   if (!raw) return res.status(400).send("Missing url");
@@ -1488,93 +1558,185 @@ app.get("/api/proxy/segment", async (req, res) => {
     } catch {}
   }
 
-  const cacheKey = targetUrl;
-  // We explicitly DO NOT check or set cache for segments to prevent OOM crashes.
-  // Video segments are too large (2-10MB each) to keep in a Node.js memory Map.
-  // cacheHits++; // Removed to reflect disabled cache
-  // cacheMisses++; // Removed to reflect disabled cache
-
+  const startTime = Date.now();
   const passHeaders: any = {};
   if (req.headers.range) passHeaders.range = req.headers.range;
 
-  const startTime = Date.now();
-  const fetchSegment = async (
-    targetUrl: string,
-    useProxy: boolean,
-  ): Promise<any> => {
-    const isVidLink =
-      targetUrl.includes("storm.vodvidl.site") ||
-      targetUrl.includes("vidlink.pro");
-    if (isVidLink) {
-      return fetchVidLinkRaw(targetUrl, passHeaders);
+  const isVidLink =
+    targetUrl.includes("storm.vodvidl.site") ||
+    targetUrl.includes("vidlink.pro");
+
+  // ── Path A: VidLink/Storm CDN — native https.request streaming pipe ──────
+  // Must use raw Node https to preserve literal { } braces in query params.
+  if (isVidLink) {
+    const qIdx = targetUrl.indexOf("?");
+    const baseOnly = qIdx >= 0 ? targetUrl.substring(0, qIdx) : targetUrl;
+    const rawQuery = qIdx >= 0 ? targetUrl.substring(qIdx) : "";
+
+    let parsedBase: URL;
+    try {
+      parsedBase = new URL(baseOnly);
+    } catch {
+      return res.status(400).send("Invalid URL");
     }
+
+    const reqOptions = {
+      agent: httpsAgent,
+      hostname: parsedBase.hostname,
+      port: parsedBase.port ? parseInt(parsedBase.port) : 443,
+      path: parsedBase.pathname + rawQuery,
+      method: "GET",
+      headers: {
+        accept: "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        referer: "https://vidlink.pro/",
+        origin: "https://vidlink.pro",
+        "user-agent": UA,
+        ...passHeaders,
+      },
+    };
+
+    const upstream = https.request(reqOptions, (upstreamRes) => {
+      const status = upstreamRes.statusCode ?? 502;
+
+      if (status >= 400) {
+        console.error(
+          `[PROXY/segment] ✘ VidLink ${status} | url=${baseOnly.substring(0, 60)}...`,
+        );
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.status(status).end();
+        upstreamRes.resume(); // drain to free socket
+        return;
+      }
+
+      // Forward essential headers then pipe — no buffering
+      res.status(status);
+      res.setHeader(
+        "Content-Type",
+        upstreamRes.headers["content-type"] || "video/mp2t",
+      );
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      if (upstreamRes.headers["content-length"]) {
+        res.setHeader("Content-Length", upstreamRes.headers["content-length"]);
+      }
+      if (upstreamRes.headers["content-range"]) {
+        res.setHeader("Content-Range", upstreamRes.headers["content-range"]);
+      }
+
+      // STREAM: pipe bytes directly to client as they arrive
+      upstreamRes.pipe(res);
+
+      upstreamRes.on("error", (err) => {
+        console.error(`[PROXY/segment] VidLink upstream error: ${err.message}`);
+        if (!res.writableEnded) res.end();
+      });
+    });
+
+    upstream.on("error", (err) => {
+      console.error(`[PROXY/segment] VidLink request error: ${err.message}`);
+      if (!res.headersSent) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.status(502).send("Proxy error");
+      }
+    });
+
+    upstream.setTimeout(20000, () => {
+      upstream.destroy();
+      if (!res.headersSent) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.status(504).send("Upstream timeout");
+      }
+    });
+
+    // If the player disconnects (seek, quality switch), kill upstream immediately
+    req.on("close", () => {
+      if (!upstream.destroyed) upstream.destroy();
+    });
+
+    upstream.end();
+    return;
+  }
+
+  // ── Path B: All other CDNs — axios stream pipe with proxy fallback ────────
+  const streamSegment = async (useProxy: boolean): Promise<void> => {
     const headers = { ...cdnHeaders(targetUrl, false), ...passHeaders };
-    // Try fast GotScraping first, fall back to CycleTLS JA3 spoofer if needed
-    const fast = await fetchWithGotScraping(
-      targetUrl,
-      headers,
-      useProxy ? segProxy : undefined,
-    );
-    if (fast.statusCode < 400) return fast;
-    console.warn(
-      `[PROXY/segment] GotScraping ${fast.statusCode}. Falling back to CycleTLS...`,
-    );
-    return fetchWithCycleTLS(
-      targetUrl,
-      headers,
-      useProxy ? segProxy : undefined,
-    );
+    const proxyUrl = useProxy && segProxy
+      ? (segProxy.startsWith("http") ? segProxy : `http://${segProxy}`)
+      : undefined;
+
+    try {
+      const axiosResponse = await axios.get(targetUrl, {
+        headers,
+        responseType: "stream",
+        timeout: 20000,
+        proxy: false, // disable axios auto-proxy; we set it via httpsAgent if needed
+        httpsAgent: proxyUrl
+          ? new (await import("https-proxy-agent")).HttpsProxyAgent(proxyUrl)
+          : createHardenedAgent(),
+        maxRedirects: 5,
+      });
+
+      const status = axiosResponse.status;
+
+      // On first attempt 403 + proxy available → retry through proxy
+      if (status === 403 && !useProxy && segProxy) {
+        (axiosResponse.data as any).destroy();
+        return streamSegment(true);
+      }
+
+      if (status >= 400) {
+        console.error(
+          `[PROXY/segment] ✘ ${status} | proxy=${useProxy ? "YES" : "NO"} | url=${targetUrl.substring(0, 60)}...`,
+        );
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.status(status).end();
+        return;
+      }
+
+      // Forward headers then pipe — no buffering
+      res.status(status);
+      res.setHeader(
+        "Content-Type",
+        axiosResponse.headers["content-type"] || "video/mp2t",
+      );
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      if (axiosResponse.headers["content-length"]) {
+        res.setHeader("Content-Length", axiosResponse.headers["content-length"]);
+      }
+      if (axiosResponse.headers["content-range"]) {
+        res.setHeader("Content-Range", axiosResponse.headers["content-range"]);
+      }
+
+      // STREAM: pipe bytes directly to client as they arrive
+      const dataStream = axiosResponse.data as import("stream").Readable;
+      dataStream.pipe(res);
+
+      dataStream.on("error", (err: Error) => {
+        console.error(`[PROXY/segment] Stream error: ${err.message}`);
+        if (!res.writableEnded) res.end();
+      });
+
+      // Kill upstream if player disconnects (seek/quality switch)
+      req.on("close", () => {
+        dataStream.destroy();
+      });
+    } catch (e: any) {
+      // 403 retry logic for non-axios errors
+      if (!useProxy && segProxy && (e.response?.status === 403 || e.code === "ERR_BAD_REQUEST")) {
+        return streamSegment(true);
+      }
+      const status = e?.response?.statusCode ?? "no-response";
+      console.error(
+        `[PROXY/segment] ✘ ${status} | proxy=${useProxy ? "YES" : "NO"} | error=${e.code} | message=${e.message} | url=${targetUrl.substring(0, 60)}...`,
+      );
+      if (!res.headersSent) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.status(502).send("Proxy segment error");
+      }
+    }
   };
 
-  try {
-    // Try direct first. If 403 AND proxy available, retry through proxy.
-    const response = await fetchSegment(targetUrl, false);
-    const status = response.statusCode;
-
-    if (status === 403 && segProxy) {
-      const proxyResponse = await fetchSegment(targetUrl, true);
-      const duration = Date.now() - startTime;
-      if (proxyResponse.statusCode >= 400) {
-        console.log(
-          `[PROXY/segment] ◀ ${proxyResponse.statusCode} (proxy, ${duration}ms)`,
-        );
-      }
-
-      // DO NOT cache the segment body here to prevent OOM
-
-      res.setHeader(
-        "Content-Type",
-        proxyResponse.headers["content-type"] || "video/mp2t",
-      );
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.status(proxyResponse.statusCode).send(proxyResponse.body);
-    } else {
-      const duration = Date.now() - startTime;
-      if (status >= 400) {
-        const errorBody = String(response.body || "").substring(0, 100);
-        console.error(
-          `[PROXY/segment] ✘ ${status} | duration=${duration}ms | body=${errorBody} | url=${targetUrl.substring(0, 60)}...`,
-        );
-      }
-
-      // DO NOT cache the segment body here to prevent OOM
-
-      res.setHeader(
-        "Content-Type",
-        response.headers["content-type"] || "video/mp2t",
-      );
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.status(status).end(response.body);
-    }
-  } catch (e: any) {
-    const status = e?.response?.statusCode ?? "no-response";
-    const url = targetUrl.substring(0, 100);
-    console.error(
-      `[PROXY/segment] ✘ ${status} | proxy=${segProxy ? "YES" : "NONE"} | error=${e.code} | message=${e.message} | url=${url}`,
-    );
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(502).send("Proxy segment error");
-  }
+  await streamSegment(false);
 });
 
 
@@ -1586,6 +1748,7 @@ app.all("/api/cache/clear", async (req, res) => {
       .json({ error: "Unauthorized access — specify ?key= in URL" });
 
   try {
+    proxyCache.clear();
     await Promise.all([
       MetadataCache.deleteMany({}),
       DiscoveryCache.deleteMany({}),
@@ -1654,7 +1817,7 @@ app.get("/api/drama/list", async (req, res) => {
   const cacheKey = `drama-list-${page}-${countryId || "all"}`;
 
   try {
-    const cached = await DiscoveryCache.findOne({ category: cacheKey });
+    const cached = await DiscoveryCache.findOne({ key: cacheKey });
     if (cached) {
       console.log(`[DRAMA] Cache HIT for list ${cacheKey}`);
       return res.json({ results: cached.results });
@@ -1664,7 +1827,7 @@ app.get("/api/drama/list", async (req, res) => {
     const results = await DramacoolScraper.getExploreList(page, countrySlug);
     
     await DiscoveryCache.findOneAndUpdate(
-      { category: cacheKey },
+      { key: cacheKey },
       {
         results,
         expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 6), // 6 hours
@@ -1725,9 +1888,35 @@ app.get("/api/drama/detail/:id", async (req, res) => {
 });
 
 // Endpoint: Image Proxy (Bypasses TMDB Blocks/CORS)
+// Allowlist of domains the image proxy may fetch from.
+// Prevents SSRF: attackers cannot use this to reach internal network endpoints.
+const IMAGE_PROXY_ALLOWLIST = [
+  "image.tmdb.org",
+  "media.themoviedb.org",
+  "assets.fanart.tv",
+  "webservice.fanart.tv",
+  "assets.kisskh.co",
+  "kisskh.do",
+  "dramacooll.fun",
+];
+
 app.get("/api/image", async (req, res) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).send("Missing url");
+
+  // SSRF guard: only allow fetching from known media CDNs
+  try {
+    const parsed = new URL(url);
+    const allowed = IMAGE_PROXY_ALLOWLIST.some(
+      (domain) => parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)
+    );
+    if (!allowed) {
+      console.warn(`[IMAGE] Blocked SSRF attempt: ${parsed.hostname}`);
+      return res.status(403).send("Domain not allowed");
+    }
+  } catch {
+    return res.status(400).send("Invalid url");
+  }
 
   try {
     const agent = createHardenedAgent();
@@ -1986,9 +2175,25 @@ async function getFanartMetadata(
 }
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Nebula Backend Array active on http://localhost:${PORT}`);
   console.log(
     `Modes: Fanart [${FANART_API_KEY === "your_fanart_api_key_here" ? "DISABLED" : "ACTIVE"}], Scraper [ACTIVE]`,
   );
+});
+
+// ── Graceful Shutdown ────────────────────────────────────────────────────────
+// systemd / pm2 sends SIGTERM before stopping the process on Oracle Ubuntu.
+// We stop accepting new connections but let in-flight HLS pipes drain.
+process.on('SIGTERM', () => {
+  console.log('[SHUTDOWN] SIGTERM received — draining connections...');
+  server.close(() => {
+    console.log('[SHUTDOWN] All connections closed. Exiting.');
+    process.exit(0);
+  });
+  // Force-exit after 10s if connections don't drain
+  setTimeout(() => {
+    console.error('[SHUTDOWN] Force exit after 10s drain timeout.');
+    process.exit(1);
+  }, 10_000);
 });

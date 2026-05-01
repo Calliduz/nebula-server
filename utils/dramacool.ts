@@ -76,6 +76,7 @@ export class DramacoolScraper {
           const title = a.find(".title").text() || a.text();
           const href = a.attr("href");
           
+          if (!href) return;
             const parts = href.split("/series/");
             if (parts[1]) {
               const id = parts[1].replace(/\//g, "");

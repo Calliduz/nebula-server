@@ -4,6 +4,9 @@ const MetadataCacheSchema = new mongoose.Schema({
   tmdbId: { type: String, required: true },
   type: { type: String, enum: ['movie', 'tv'], default: 'movie' },
 
+  // External IDs
+  imdbId: { type: String },
+
   // Stream data
   streamUrl: { type: String },
   streamExpiresAt: { type: Date },

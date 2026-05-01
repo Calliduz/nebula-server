@@ -109,7 +109,7 @@ function pickMethod(fileUrl: string): string {
     }
   } catch (e) {
     // Fallback if URL parsing fails
-    const cleanUrl = fileUrl.split('?')[0].split('#')[0];
+    const cleanUrl = (fileUrl.split('?')[0]! as string).split('#')[0]!;
     const lastDot = cleanUrl.lastIndexOf('.');
     if (lastDot >= 0) {
       ext = cleanUrl.substring(lastDot).toLowerCase();

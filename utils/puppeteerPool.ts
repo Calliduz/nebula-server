@@ -1,5 +1,7 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const puppeteer = require('puppeteer-extra') as any;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 import type { Browser } from 'puppeteer';
 
 puppeteer.use(StealthPlugin());

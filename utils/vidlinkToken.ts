@@ -202,10 +202,10 @@ class GoBridge {
                     const id = this._nextCallbackTimeoutID++;
                     this._scheduledTimeouts.set(id, setTimeout(() => {
                         this._resume();
-                        const timeout = this._scheduledTimeouts.get(id);
-                        if (timeout) {
-                            this._resume();
-                        }
+                        // Note: do NOT call _resume() a second time here.
+                        // The original Go WASM boilerplate had a duplicate call
+                        // which double-fires events and corrupts WASM state.
+                        this._scheduledTimeouts.delete(id);
                     }, getInt64(sp + 8)));
                     this.mem.setInt32(sp + 16, id, true);
                 },
@@ -406,35 +406,43 @@ class GoBridge {
 }
 
 let isInitialized = false;
+let _initPromise: Promise<void> | null = null;
 
 /**
  * Initializes the WASM environment and exposes the getAdv function.
+ * Uses a promise-based lock so concurrent callers all await the same init.
  */
 export async function initVidLink() {
     if (isInitialized) return;
+    if (_initPromise) return _initPromise; // already in progress — join it
 
-    try {
-        await sodium.ready;
-        (globalThis as any).sodium = sodium;
+    _initPromise = (async () => {
+        try {
+            await sodium.ready;
+            (globalThis as any).sodium = sodium;
 
-        const go = new GoBridge();
-        const wasmPath = path.join(process.cwd(), 'utils', 'bin', 'fu.wasm');
-        const wasmBuffer = fs.readFileSync(wasmPath);
-        
-        const { instance } = await WebAssembly.instantiate(wasmBuffer, go.importObject);
-        
-        // This will define window.getAdv (or globalThis.getAdv)
-        go.run(instance).catch(err => {
-            if (!go.exited) console.error('VidLink WASM execution error:', err);
-        });
+            const go = new GoBridge();
+            const wasmPath = path.join(process.cwd(), 'utils', 'bin', 'fu.wasm');
+            const wasmBuffer = fs.readFileSync(wasmPath);
+            
+            const { instance } = await WebAssembly.instantiate(wasmBuffer, go.importObject);
+            
+            // This will define window.getAdv (or globalThis.getAdv)
+            go.run(instance).catch(err => {
+                if (!go.exited) console.error('VidLink WASM execution error:', err);
+            });
 
-        // Wait a bit for Go to initialize globals
-        await new Promise(resolve => setTimeout(resolve, 500));
-        isInitialized = true;
-    } catch (error) {
-        console.error('Failed to initialize VidLink WASM:', error);
-        throw error;
-    }
+            // Wait a bit for Go to initialize globals
+            await new Promise(resolve => setTimeout(resolve, 500));
+            isInitialized = true;
+        } catch (error) {
+            _initPromise = null; // allow retry on failure
+            console.error('Failed to initialize VidLink WASM:', error);
+            throw error;
+        }
+    })();
+
+    return _initPromise;
 }
 
 /**

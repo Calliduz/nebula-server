@@ -17,7 +17,8 @@ export class VidLinkScraper {
         tmdbId: string, 
         type: 'movie' | 'tv' = 'movie', 
         season?: number, 
-        episode?: number
+        episode?: number,
+        signal?: AbortSignal
     ): Promise<MirrorStream[]> {
         try {
             console.log(`[VidLink] Generating token for ${type} ${tmdbId}${type === 'tv' ? ` S${season}E${episode}` : ''}...`);
@@ -35,7 +36,8 @@ export class VidLinkScraper {
                     'Referer': referer,
                     'User-Agent': UA
                 },
-                timeout: { request: 10000 }
+                timeout: { request: 10000 },
+                signal: signal
             });
 
             const data = JSON.parse(response.body);
@@ -99,7 +101,7 @@ export class VidLinkScraper {
                     source: 'VidLink',
                     type: 'hls',
                     headers: streamHeaders,
-                    subtitles: subtitles.length > 0 ? subtitles : undefined
+                    subtitles: subtitles.length > 0 ? subtitles : []
                 });
             }
 
@@ -113,7 +115,7 @@ export class VidLinkScraper {
                             source: 'VidLink',
                             type: q.url.includes('.m3u8') ? 'hls' : 'mp4',
                             headers: streamHeaders,
-                            subtitles: subtitles.length > 0 ? subtitles : undefined
+                            subtitles: subtitles.length > 0 ? subtitles : []
                         });
                     }
                 });

@@ -702,7 +702,7 @@ export async function scrapeNetMirror(
       const setCookie = handshakeRes.headers['set-cookie'] || [];
       const hashMatch = setCookie.join("; ").match(/t_hash_t=([^;]+)/);
       if (!hashMatch) continue;
-      const globalHash = decodeURIComponent(hashMatch[1]);
+      const globalHash = decodeURIComponent(hashMatch[1]!);
       // Extract user_token automatically if not provided
       let userToken = process.env.NETMIRROR_GUEST_TOKEN || "guest";
       if (userToken === "guest") {
@@ -1024,8 +1024,8 @@ export async function scrapeHDHub4U(title: string, kind: string, season?: number
 
     const resolvedLinks = await Promise.all(links.slice(0, 8).map(l => resolveMirrorLink(l.url)));
     for (let i = 0; i < resolvedLinks.length; i++) {
-       const urls = resolvedLinks[i];
-       const originalName = links[i].name;
+       const urls = resolvedLinks[i]!;
+       const originalName = links[i]!.name;
        for (const u of urls) {
           if (await probeLink(u)) {
              mirrors.push({ 
@@ -1085,8 +1085,8 @@ export async function scrapeFourKHDHub(title: string, kind: string, season?: num
 
     const resolvedLinks = await Promise.all(links.slice(0, 8).map(l => resolveMirrorLink(l.url)));
     for (let i = 0; i < resolvedLinks.length; i++) {
-       const urls = resolvedLinks[i];
-       const originalName = links[i].name;
+       const urls = resolvedLinks[i]!;
+       const originalName = links[i]!.name;
        for (const u of urls) {
           if (await probeLink(u)) {
              mirrors.push({ 
