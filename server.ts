@@ -157,9 +157,9 @@ setTimeout(async () => {
  */
 const httpsAgent = new https.Agent({
   keepAlive: true,
-  maxSockets: 128, // Increased from 32 — HLS players request multiple segments in parallel
-  maxFreeSockets: 32,
-  timeout: 10000, // 10s timeout
+  maxSockets: 256, // Increased from 128 to handle high concurrency segments
+  maxFreeSockets: 64,
+  timeout: 15000, // Increased to 15s for slower CDN segments
 });
 
 function fetchVidLinkRaw(
@@ -1596,69 +1596,109 @@ app.get("/api/proxy/segment", async (req, res) => {
       },
     };
 
-    const upstream = https.request(reqOptions, (upstreamRes) => {
-      const status = upstreamRes.statusCode ?? 502;
+    const startRequest = (retryCount = 0) => {
+      let headersSent = false;
+      const chunks: Buffer[] = [];
 
-      if (status >= 400) {
-        console.error(
-          `[PROXY/segment] ✘ VidLink ${status} | url=${baseOnly.substring(0, 60)}...`,
-        );
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.status(status).end();
-        upstreamRes.resume(); // drain to free socket
-        return;
-      }
+      const upstream = https.request(reqOptions, (upstreamRes) => {
+        const status = upstreamRes.statusCode ?? 502;
 
-      // Forward essential headers then pipe — no buffering
-      res.status(status);
-      res.setHeader(
-        "Content-Type",
-        upstreamRes.headers["content-type"] || "video/mp2t",
-      );
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      if (upstreamRes.headers["content-length"]) {
-        res.setHeader("Content-Length", upstreamRes.headers["content-length"]);
-      }
-      if (upstreamRes.headers["content-range"]) {
-        res.setHeader("Content-Range", upstreamRes.headers["content-range"]);
-      }
+        if (status >= 400) {
+          if (retryCount < 2 && (status === 502 || status === 503 || status === 504)) {
+            console.warn(`[PROXY/segment] Retrying VidLink ${status} (attempt ${retryCount + 1})...`);
+            return startRequest(retryCount + 1);
+          }
+          console.error(`[PROXY/segment] ✘ VidLink ${status} | url=${baseOnly.substring(0, 60)}...`);
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.status(status).end();
+          return;
+        }
 
-      // STREAM: pipe bytes directly to client as they arrive
-      upstreamRes.pipe(res);
+        upstreamRes.on("data", (chunk) => {
+          chunks.push(chunk);
+          // Safety: If segment is unexpectedly huge (>15MB), stop buffering and error
+          if (chunks.reduce((acc, c) => acc + c.length, 0) > 15 * 1024 * 1024) {
+            console.error("[PROXY/segment] Segment too large (>15MB), aborting.");
+            upstream.destroy();
+            if (!res.headersSent) {
+              res.status(500).send("Segment too large");
+            }
+          }
+        });
 
-      upstreamRes.on("error", (err) => {
-        console.error(`[PROXY/segment] VidLink upstream error: ${err.message}`);
-        if (!res.writableEnded) res.end();
+        upstreamRes.on("end", () => {
+          if (res.writableEnded) return;
+          const fullBuffer = Buffer.concat(chunks);
+          
+          // Verify content length if provided by upstream
+          const expectedLength = parseInt(upstreamRes.headers["content-length"] || "0");
+          if (expectedLength > 0 && fullBuffer.length < expectedLength) {
+            if (retryCount < 2) {
+              console.warn(`[PROXY/segment] Incomplete segment (${fullBuffer.length}/${expectedLength}). Retrying...`);
+              return startRequest(retryCount + 1);
+            }
+            console.error(`[PROXY/segment] Incomplete segment after retries.`);
+            // Send what we have or error? Error is safer to trigger player retry.
+            res.status(502).end();
+            return;
+          }
+
+          res.status(status);
+          res.setHeader("Content-Type", upstreamRes.headers["content-type"] || "video/mp2t");
+          res.setHeader("Content-Length", fullBuffer.length);
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          if (upstreamRes.headers["content-range"]) {
+            res.setHeader("Content-Range", upstreamRes.headers["content-range"]);
+          }
+          res.send(fullBuffer);
+        });
+
+        upstreamRes.on("error", (err) => {
+          if (retryCount < 2) {
+            console.warn(`[PROXY/segment] Upstream error during download: ${err.message}. Retrying...`);
+            return startRequest(retryCount + 1);
+          }
+          if (!res.writableEnded) res.end();
+        });
       });
-    });
 
-    upstream.on("error", (err) => {
-      console.error(`[PROXY/segment] VidLink request error: ${err.message}`);
-      if (!res.headersSent) {
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.status(502).send("Proxy error");
-      }
-    });
+      upstream.on("error", (err) => {
+        if (retryCount < 2 && (err.message.includes("socket hang up") || (err as any).code === "ECONNRESET")) {
+          console.warn(`[PROXY/segment] Retrying VidLink error: ${err.message} (attempt ${retryCount + 1})...`);
+          return startRequest(retryCount + 1);
+        }
+        console.error(`[PROXY/segment] VidLink request error: ${err.message}`);
+        if (!res.headersSent) {
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.status(502).send("Proxy error");
+        }
+      });
 
-    upstream.setTimeout(20000, () => {
-      upstream.destroy();
-      if (!res.headersSent) {
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.status(504).send("Upstream timeout");
-      }
-    });
+      upstream.setTimeout(20000, () => {
+        upstream.destroy();
+        if (retryCount < 2) {
+          console.warn(`[PROXY/segment] Retrying VidLink timeout (attempt ${retryCount + 1})...`);
+          return startRequest(retryCount + 1);
+        }
+        if (!res.headersSent) {
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.status(504).send("Upstream timeout");
+        }
+      });
 
-    // If the player disconnects (seek, quality switch), kill upstream immediately
-    req.on("close", () => {
-      if (!upstream.destroyed) upstream.destroy();
-    });
+      req.on("close", () => {
+        if (!upstream.destroyed) upstream.destroy();
+      });
 
-    upstream.end();
+      upstream.end();
+    };
+
+    startRequest();
     return;
   }
 
   // ── Path B: All other CDNs — axios stream pipe with proxy fallback ────────
-  const streamSegment = async (useProxy: boolean): Promise<void> => {
+  const streamSegment = async (useProxy: boolean, retryCount = 0): Promise<void> => {
     const headers = { ...cdnHeaders(targetUrl, false), ...passHeaders };
     const proxyUrl = useProxy && segProxy
       ? (segProxy.startsWith("http") ? segProxy : `http://${segProxy}`)
