@@ -159,7 +159,7 @@ const httpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: 256, // Increased from 128 to handle high concurrency segments
   maxFreeSockets: 64,
-  timeout: 15000, // Increased to 15s for slower CDN segments
+  timeout: 30000, // Increased to 30s for slower CDN segments
 });
 
 function fetchVidLinkRaw(
@@ -1604,7 +1604,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         const status = upstreamRes.statusCode ?? 502;
 
         if (status >= 400) {
-          if (retryCount < 2 && (status === 502 || status === 503 || status === 504)) {
+          if (retryCount < 3 && [502, 503, 504, 520, 521].includes(status)) {
             console.warn(`[PROXY/segment] Retrying VidLink ${status} (attempt ${retryCount + 1})...`);
             return startRequest(retryCount + 1);
           }
@@ -1633,7 +1633,7 @@ app.get("/api/proxy/segment", async (req, res) => {
           // Verify content length if provided by upstream
           const expectedLength = parseInt(upstreamRes.headers["content-length"] || "0");
           if (expectedLength > 0 && fullBuffer.length < expectedLength) {
-            if (retryCount < 2) {
+            if (retryCount < 3) {
               console.warn(`[PROXY/segment] Incomplete segment (${fullBuffer.length}/${expectedLength}). Retrying...`);
               return startRequest(retryCount + 1);
             }
@@ -1654,7 +1654,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         });
 
         upstreamRes.on("error", (err) => {
-          if (retryCount < 2) {
+          if (retryCount < 3) {
             console.warn(`[PROXY/segment] Upstream error during download: ${err.message}. Retrying...`);
             return startRequest(retryCount + 1);
           }
@@ -1663,7 +1663,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       });
 
       upstream.on("error", (err) => {
-        if (retryCount < 2 && (err.message.includes("socket hang up") || (err as any).code === "ECONNRESET")) {
+        if (retryCount < 3 && (err.message.includes("socket hang up") || (err as any).code === "ECONNRESET" || err.message.includes("aborted"))) {
           console.warn(`[PROXY/segment] Retrying VidLink error: ${err.message} (attempt ${retryCount + 1})...`);
           return startRequest(retryCount + 1);
         }
@@ -1674,9 +1674,9 @@ app.get("/api/proxy/segment", async (req, res) => {
         }
       });
 
-      upstream.setTimeout(20000, () => {
+      upstream.setTimeout(30000, () => {
         upstream.destroy();
-        if (retryCount < 2) {
+        if (retryCount < 3) {
           console.warn(`[PROXY/segment] Retrying VidLink timeout (attempt ${retryCount + 1})...`);
           return startRequest(retryCount + 1);
         }
@@ -1761,13 +1761,28 @@ app.get("/api/proxy/segment", async (req, res) => {
         dataStream.destroy();
       });
     } catch (e: any) {
+      const status = e?.response?.status || e?.response?.statusCode || 0;
+      
+      // Retry logic for network errors (socket hang up, timeout, etc) and specific 5xx errors
+      const isRetryableError = e.code === "ECONNRESET" || 
+                              e.code === "ETIMEDOUT" || 
+                              e.code === "ESOCKETTIMEDOUT" || 
+                              e.message?.includes("socket hang up") ||
+                              e.message?.includes("aborted");
+      
+      const isRetryableStatus = [502, 503, 504, 520, 521].includes(status);
+
+      if (retryCount < 3 && (isRetryableError || isRetryableStatus)) {
+        console.warn(`[PROXY/segment] Retrying Path B error: ${e.message} (status: ${status}, attempt ${retryCount + 1})...`);
+        return streamSegment(useProxy, retryCount + 1);
+      }
+
       // 403 retry logic for non-axios errors
-      if (!useProxy && segProxy && (e.response?.status === 403 || e.code === "ERR_BAD_REQUEST")) {
+      if (!useProxy && segProxy && (status === 403 || e.code === "ERR_BAD_REQUEST")) {
         return streamSegment(true);
       }
-      const status = e?.response?.statusCode ?? "no-response";
       console.error(
-        `[PROXY/segment] ✘ ${status} | proxy=${useProxy ? "YES" : "NO"} | error=${e.code} | message=${e.message} | url=${targetUrl.substring(0, 60)}...`,
+        `[PROXY/segment] ✘ ${status || "no-status"} | proxy=${useProxy ? "YES" : "NO"} | error=${e.code} | message=${e.message} | url=${targetUrl.substring(0, 60)}...`,
       );
       if (!res.headersSent) {
         res.setHeader("Access-Control-Allow-Origin", "*");
