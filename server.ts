@@ -699,11 +699,37 @@ app.get("/api/stream", async (req, res) => {
       throw new Error("No stream sources found across all tiers.");
     }
 
-    // 3. Optional: Cache the result (TODO: cache mirrors array in DB)
-    // For now we don't cache mirrors, only the primary streamUrl for backward compatibility
+    // 3. Optional: Cache the result with Intelligent Rotation
     if (streamUrl) {
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 4);
+      const releaseDateStr = req.query.releaseDate as string;
+      const isCAM = qualityTag === "CAM" || qualityTag === "TC" || qualityTag === "UNKNOWN";
+      
+      let expiresAt = new Date();
+      let isNewMovie = false;
+      
+      if (releaseDateStr) {
+        try {
+          const releaseDate = new Date(releaseDateStr);
+          const oneMonthAgo = new Date();
+          oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+          isNewMovie = releaseDate > oneMonthAgo;
+        } catch {}
+      }
+
+      // ROTATION STRATEGY:
+      // - New Movie (< 1mo) AND CAM/Low Quality: Cache for 24 hours (Check for HD upgrades daily)
+      // - High Quality (HD/BluRay): Cache for 30 days (Unlikely to change)
+      // - Old Movie (> 1mo): Cache for 30 days (Indefinite-ish)
+      
+      if (isNewMovie && isCAM) {
+        console.log(`[CACHE] New CAM detected. Setting short TTL (24h) for rotation.`);
+        expiresAt.setHours(expiresAt.getHours() + 24);
+      } else {
+        // High quality or old movie — cache indefinitely (30 days)
+        console.log(`[CACHE] High quality or old movie. Setting long TTL (30d).`);
+        expiresAt.setDate(expiresAt.getDate() + 30);
+      }
+
       StreamCache.findOneAndUpdate(
         { tmdbId, type: kind, season, episode },
         {
