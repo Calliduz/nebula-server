@@ -78,3 +78,17 @@ const DramaDetailCacheSchema = new mongoose.Schema({
 DramaDetailCacheSchema.index({ dramaId: 1 }, { unique: true });
 DramaDetailCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const DramaDetailCache = mongoose.model('DramaDetailCache', DramaDetailCacheSchema);
+
+// DeadPool Cache (Stores movies/episodes that are currently unreachable)
+const DeadPoolSchema = new mongoose.Schema({
+  tmdbId: { type: String, required: true },
+  type: { type: String, enum: ['movie', 'tv'], default: 'movie' },
+  season: { type: Number, default: 1 },
+  episode: { type: Number, default: 1 },
+  lastChecked: { type: Date, default: Date.now },
+  expiresAt: { type: Date, required: true }
+});
+
+DeadPoolSchema.index({ tmdbId: 1, type: 1, season: 1, episode: 1 }, { unique: true });
+DeadPoolSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const DeadPool = mongoose.model('DeadPool', DeadPoolSchema);

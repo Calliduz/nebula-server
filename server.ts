@@ -13,6 +13,7 @@ import {
   SubtitleCache,
   DiscoveryCache,
   DramaDetailCache,
+  DeadPool,
 } from "./models/Cache.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "./utils/bypass.js";
 import { getSubtitles } from "./utils/subtitles.js";
@@ -574,7 +575,8 @@ app.get("/api/stream", async (req, res) => {
       }
     }
 
-    // ── Phase C: Fallback Scrapers (Dramacool Search) ──────────────────
+    // ── Phase C: Fallback Scrapers (Dramacool Search) [CRIPPLED] ─────────
+    /*
     if (mirrors.length === 0 && title) {
       console.log(
         `[STREAM] Phase C: Fallback to Dramacool Search for "${title}"...`,
@@ -606,10 +608,25 @@ app.get("/api/stream", async (req, res) => {
         console.error(`[STREAM] Dramacool Fallback failed:`, e.message);
       }
     }
+    */
 
     if (mirrors.length === 0) {
+      // Record in DeadPool
+      try {
+        await DeadPool.findOneAndUpdate(
+          { tmdbId: tmdbId.toString(), type: kind, season, episode },
+          { 
+            lastChecked: new Date(), 
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h TTL
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error(`[DEADPOOL] Failed to log failure:`, err);
+      }
+
       throw new Error(
-        "No stream sources found. (Tried VidLink + KissKH Fallback)",
+        "No stream sources found. (Tried VidLink + Scrapers)",
       );
     }
 
@@ -698,7 +715,10 @@ app.get("/api/stream", async (req, res) => {
           streamExpiresAt: expiresAt,
         },
         { upsert: true },
-      ).catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
+      ).then(() => {
+        // If we found a stream, it's no longer "Dead"
+        DeadPool.deleteOne({ tmdbId: tmdbId.toString(), type: kind, season, episode }).catch(() => {});
+      }).catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
     }
 
     // 4. Proxy URL injection — only for non-KissKH sources that used a proxy during scrape
@@ -1827,12 +1847,18 @@ app.get("/api/stream/availability", async (req, res) => {
 
   const tmdbIds = ids.split(",").filter((id) => id.trim());
   try {
-    const cachedStreams = await StreamCache.find({ tmdbId: { $in: tmdbIds } });
+    const [cachedStreams, deadPool] = await Promise.all([
+      StreamCache.find({ tmdbId: { $in: tmdbIds } }),
+      DeadPool.find({ tmdbId: { $in: tmdbIds } })
+    ]);
+
     const cachedIds = new Set(cachedStreams.map(s => s.tmdbId));
+    const deadIds = new Set(deadPool.map(d => d.tmdbId));
     
     const results = tmdbIds.map(id => ({
       id,
-      isVerified: cachedIds.has(id)
+      isVerified: cachedIds.has(id),
+      isDead: deadIds.has(id)
     }));
     
     res.json({ results });
