@@ -279,6 +279,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://127.0.0.1:5173",
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
 ];
 
 app.use(
@@ -1044,7 +1045,7 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         "User-Agent": UA,
         Referer: url.includes("vidlink") || url.includes("megafiles") || url.includes("storm.vodvidl.site")
           ? "https://vidlink.pro/"
-          : "https://nebula.clev.studio/",
+          : (process.env.FRONTEND_URL || "https://nebula.clev.studio/"),
       };
 
       if (url.includes("vidlink") || url.includes("megafiles") || url.includes("storm.vodvidl.site")) {
