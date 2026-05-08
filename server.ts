@@ -1821,6 +1821,26 @@ app.all("/api/cache/clear", async (req, res) => {
   }
 });
 
+app.get("/api/stream/availability", async (req, res) => {
+  const ids = req.query.ids as string;
+  if (!ids) return res.json({ results: [] });
+
+  const tmdbIds = ids.split(",").filter((id) => id.trim());
+  try {
+    const cachedStreams = await StreamCache.find({ tmdbId: { $in: tmdbIds } });
+    const cachedIds = new Set(cachedStreams.map(s => s.tmdbId));
+    
+    const results = tmdbIds.map(id => ({
+      id,
+      isVerified: cachedIds.has(id)
+    }));
+    
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to check availability" });
+  }
+});
+
 app.get("/api/metadata", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const isBatch = req.query.batch as string;
