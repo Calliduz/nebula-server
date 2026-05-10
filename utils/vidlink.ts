@@ -31,16 +31,37 @@ export class VidLinkScraper {
                 referer = `${VIDLINK_BASE}/tv/${tmdbId}/${season}/${episode}`;
             }
 
-            const response = await gotScraping.get(apiUrl, {
-                headers: {
-                    'Referer': referer,
-                    'User-Agent': UA
-                },
-                timeout: { request: 10000 },
-                signal: signal
-            });
+            let response: any;
+            let retryCount = 0;
+            const MAX_RETRIES = 3;
 
-            const data = JSON.parse(response.body);
+            while (retryCount < MAX_RETRIES) {
+                try {
+                    response = await gotScraping.get(apiUrl, {
+                        headers: {
+                            'Referer': referer,
+                            'User-Agent': UA
+                        },
+                        timeout: { request: 10000 },
+                        signal: signal
+                    });
+                    break; // Success
+                } catch (err: any) {
+                    retryCount++;
+                    if (retryCount >= MAX_RETRIES) throw err;
+                    console.warn(`[VidLink] API attempt ${retryCount} failed: ${err.message}. Retrying...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+                }
+            }
+
+            let data: any;
+            try {
+                data = JSON.parse(response.body);
+            } catch (err) {
+                console.error(`[VidLink] Failed to parse API response as JSON. Status: ${response.statusCode}`);
+                console.error(`[VidLink] Raw body (first 200 chars): ${String(response.body || "").substring(0, 200)}`);
+                throw new Error("Invalid JSON response from VidLink API");
+            }
             const cookies = response.headers['set-cookie']?.join('; ') || '';
 
             if (!data || !data.stream) {

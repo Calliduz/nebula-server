@@ -449,6 +449,12 @@ app.get("/api/stream", async (req, res) => {
     return res.status(400).json({ error: "Missing tmdbId or type" });
   }
 
+  // Add no-cache headers to prevent mobile browsers from caching expired stream URLs
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+
   try {
     // 1. Cache Check
     const cachedRecord = await StreamCache.findOne({
@@ -718,17 +724,17 @@ app.get("/api/stream", async (req, res) => {
       }
 
       // ROTATION STRATEGY:
-      // - New Movie (< 1mo) AND CAM/Low Quality: Cache for 24 hours (Check for HD upgrades daily)
-      // - High Quality (HD/BluRay): Cache for 30 days (Unlikely to change)
-      // - Old Movie (> 1mo): Cache for 30 days (Indefinite-ish)
+      // - New Movie (< 1mo) AND CAM/Low Quality: Cache for 6 hours
+      // - High Quality (HD/BluRay) or Old Movie: Cache for 4 hours
+      // Reduced from 30 days because CDN links are ephemeral and IP-locked.
       
       if (isNewMovie && isCAM) {
-        console.log(`[CACHE] New CAM detected. Setting short TTL (24h) for rotation.`);
-        expiresAt.setHours(expiresAt.getHours() + 24);
+        console.log(`[CACHE] New CAM detected. Setting short TTL (6h) for rotation.`);
+        expiresAt.setHours(expiresAt.getHours() + 6);
       } else {
-        // High quality or old movie — cache indefinitely (30 days)
-        console.log(`[CACHE] High quality or old movie. Setting long TTL (30d).`);
-        expiresAt.setDate(expiresAt.getDate() + 30);
+        // High quality or old movie — cache for 4 hours
+        console.log(`[CACHE] Standard movie. Setting 4h TTL.`);
+        expiresAt.setHours(expiresAt.getHours() + 4);
       }
 
       StreamCache.findOneAndUpdate(
@@ -1508,35 +1514,8 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     console.log(`[PROXY] Rewrote ${rewrittenCount} URLs in manifest.`);
 
-    // Speculative Pre-fetching: If this is a master manifest, pre-fetch the sub-playlists
-    if (proxified.includes("BANDWIDTH=") || proxified.includes("STREAM-INF")) {
-      const subPlaylistMatches = proxified.match(
-        /\/api\/proxy\/stream\?url=([^&"'\s\n]+)/g,
-      );
-      if (subPlaylistMatches) {
-        // Pre-fetch the first 2 variants (usually high and medium quality)
-        subPlaylistMatches.slice(0, 2).forEach(async (match) => {
-          const encoded = match.split("url=")[1];
-          if (encoded) {
-            const subUrl = decodeURIComponent(encoded);
-            if (!proxyCache.has(subUrl)) {
-              try {
-                // Populate the cache so the actual client request is instant
-                const res = await fetchVidLinkRaw(subUrl);
-                if (res.statusCode === 200) {
-                  setProxyCache(subUrl, {
-                    body: res.body,
-                    headers: res.headers,
-                    expires: Date.now() + CACHE_TTL
-                  });
-                  console.log(`[PROXY] Speculatively cached variant: ${subUrl.substring(0, 50)}...`);
-                }
-              } catch (e) {}
-            }
-          }
-        });
-      }
-    }
+    // Speculative Pre-fetching REMOVED: It was causing cache poisoning with raw manifests.
+    // Quality switching will now always trigger a fresh, correctly rewritten manifest.
     if (rewrittenCount === 0 && manifest.length > 50) {
       console.warn(
         `[PROXY] WARNING: Zero URLs rewrote in a manifest of length ${manifest.length}! Content preview: ${manifest.substring(0, 100)}`,
@@ -1662,46 +1641,28 @@ app.get("/api/proxy/segment", async (req, res) => {
         }
 
         upstreamRes.on("data", (chunk) => {
-          chunks.push(chunk);
-          // Safety: If segment is unexpectedly huge (>15MB), stop buffering and error
-          if (chunks.reduce((acc, c) => acc + c.length, 0) > 15 * 1024 * 1024) {
-            console.error("[PROXY/segment] Segment too large (>15MB), aborting.");
-            upstream.destroy();
-            if (!res.headersSent) {
-              res.status(500).send("Segment too large");
+          if (!headersSent && !res.headersSent) {
+            headersSent = true;
+            res.status(status);
+            res.setHeader("Content-Type", upstreamRes.headers["content-type"] || "video/mp2t");
+            if (upstreamRes.headers["content-length"]) {
+              res.setHeader("Content-Length", upstreamRes.headers["content-length"]);
             }
+            if (upstreamRes.headers["content-range"]) {
+              res.setHeader("Content-Range", upstreamRes.headers["content-range"]);
+            }
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.setHeader("X-Proxy-Mode", "Streaming");
           }
+          res.write(chunk);
         });
 
         upstreamRes.on("end", () => {
-          if (res.writableEnded) return;
-          const fullBuffer = Buffer.concat(chunks);
-          
-          // Verify content length if provided by upstream
-          const expectedLength = parseInt(upstreamRes.headers["content-length"] || "0");
-          if (expectedLength > 0 && fullBuffer.length < expectedLength) {
-            if (retryCount < 3) {
-              console.warn(`[PROXY/segment] Incomplete segment (${fullBuffer.length}/${expectedLength}). Retrying...`);
-              return startRequest(retryCount + 1);
-            }
-            console.error(`[PROXY/segment] Incomplete segment after retries.`);
-            // Send what we have or error? Error is safer to trigger player retry.
-            res.status(502).end();
-            return;
-          }
-
-          res.status(status);
-          res.setHeader("Content-Type", upstreamRes.headers["content-type"] || "video/mp2t");
-          res.setHeader("Content-Length", fullBuffer.length);
-          res.setHeader("Access-Control-Allow-Origin", "*");
-          if (upstreamRes.headers["content-range"]) {
-            res.setHeader("Content-Range", upstreamRes.headers["content-range"]);
-          }
-          res.send(fullBuffer);
+          if (!res.writableEnded) res.end();
         });
 
         upstreamRes.on("error", (err) => {
-          if (retryCount < 3) {
+          if (retryCount < 3 && !res.headersSent) {
             console.warn(`[PROXY/segment] Upstream error during download: ${err.message}. Retrying...`);
             return startRequest(retryCount + 1);
           }
