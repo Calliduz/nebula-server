@@ -119,7 +119,9 @@ export class KissKHScraper {
 
       // FALLBACK 1: Puppeteer (DISABLED to save RAM)
       if (!data || !data.Video) {
-        console.warn(`[KissKH] Direct API failed for epId: ${epId}. Browser fallback is DISABLED.`);
+        console.warn(
+          `[KissKH] Direct API failed for epId: ${epId}. Browser fallback is DISABLED.`,
+        );
       }
 
       if (subData && Array.isArray(subData)) {
@@ -211,7 +213,7 @@ export class KissKHScraper {
 
       const headers: any = {};
       const params: any = {};
-      
+
       if (apiKey.startsWith("ey")) {
         headers.Authorization = `Bearer ${apiKey}`;
       } else {

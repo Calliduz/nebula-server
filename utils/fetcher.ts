@@ -220,7 +220,9 @@ export async function hybridFetch(url: string, options: any = {}) {
   }
 
   // 4. Puppeteer (DISABLED to save RAM)
-  console.warn(`${logPrefix} ✘ Rapid Bypass failed. Browser fallback is DISABLED to save RAM.`);
+  console.warn(
+    `${logPrefix} ✘ Rapid Bypass failed. Browser fallback is DISABLED to save RAM.`,
+  );
   return null;
 }
 
@@ -229,7 +231,9 @@ export async function extractHlsFromEmbed(
   embedUrl: string,
   timeoutMs = 15000,
 ): Promise<string | null> {
-  console.warn(`[EmbedExtractor] Browser-based extraction is DISABLED to save RAM.`);
+  console.warn(
+    `[EmbedExtractor] Browser-based extraction is DISABLED to save RAM.`,
+  );
   return null;
 }
 
@@ -295,11 +299,11 @@ export const makeHybridFetcher = (): Fetcher => {
       };
     } catch (e: any) {
       // Keep the console clean from normal provider connection failures
-      return { 
-        statusCode: 503, 
-        headers: new Headers() as any, 
-        finalUrl: url, 
-        body: null as T 
+      return {
+        statusCode: 503,
+        headers: new Headers() as any,
+        finalUrl: url,
+        body: null as T,
       };
     }
   };

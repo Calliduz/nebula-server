@@ -13,26 +13,30 @@ export async function fetchImdbId(
   let finalTmdbId = tmdbId.toString();
 
   // If it's a KissKH ID, we need to find the REAL TMDB ID first via title search
-  if (finalTmdbId.startsWith('k') && title) {
+  if (finalTmdbId.startsWith("k") && title) {
     try {
       const isV4 = TMDB_API_KEY.length > 40;
       const searchUrl = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(title)}&include_adult=false&language=en-US&page=1`;
       const searchRes = await axios.get(searchUrl, {
-        headers: isV4 ? { 'Authorization': `Bearer ${TMDB_API_KEY}` } : {},
-        params: isV4 ? {} : { api_key: TMDB_API_KEY }
+        headers: isV4 ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {},
+        params: isV4 ? {} : { api_key: TMDB_API_KEY },
       });
-      
+
       if (searchRes.data.results?.[0]?.id) {
         finalTmdbId = searchRes.data.results[0].id.toString();
-        console.log(`[SUBS] Resolved KissKH ID to TMDB ID: ${finalTmdbId} for "${title}"`);
+        console.log(
+          `[SUBS] Resolved KissKH ID to TMDB ID: ${finalTmdbId} for "${title}"`,
+        );
       } else {
         return null;
       }
     } catch (e: any) {
-      console.warn(`[SUBS] Failed to resolve KissKH ID to TMDB ID: ${e.message}`);
+      console.warn(
+        `[SUBS] Failed to resolve KissKH ID to TMDB ID: ${e.message}`,
+      );
       return null;
     }
-  } else if (finalTmdbId.startsWith('k')) {
+  } else if (finalTmdbId.startsWith("k")) {
     return null; // Can't resolve without title
   }
 
@@ -42,27 +46,29 @@ export async function fetchImdbId(
 
   try {
     const isV4 = TMDB_API_KEY.length > 40;
-    const url = `https://api.themoviedb.org/3/${type}/${finalTmdbId}/external_ids${isV4 ? '' : `?api_key=${TMDB_API_KEY}`}`;
-    
-    const response = await axios.get(url, { 
+    const url = `https://api.themoviedb.org/3/${type}/${finalTmdbId}/external_ids${isV4 ? "" : `?api_key=${TMDB_API_KEY}`}`;
+
+    const response = await axios.get(url, {
       timeout: 5000,
-      headers: isV4 ? { 'Authorization': `Bearer ${TMDB_API_KEY}` } : {}
+      headers: isV4 ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {},
     });
-    
+
     const imdbId = response.data.imdb_id || null;
-    
+
     // 2. Persist to cache for future requests
     if (imdbId) {
       await MetadataCache.findOneAndUpdate(
         { tmdbId: finalTmdbId },
         { imdbId },
-        { upsert: true }
+        { upsert: true },
       ).catch(() => {});
     }
-    
+
     return imdbId;
   } catch (error: any) {
-    console.error(`[SUBS] Failed to fetch IMDB id for ${finalTmdbId}: ${error.message}`);
+    console.error(
+      `[SUBS] Failed to fetch IMDB id for ${finalTmdbId}: ${error.message}`,
+    );
     return null;
   }
 }
@@ -88,18 +94,18 @@ export async function getSubtitles(
   try {
     const response = await axios.get(url, { timeout: 8000 });
     const subs = response.data?.subtitles || [];
-    
+
     // Group by language to keep multiple options (especially for sync issues)
     const langGroups: Record<string, any[]> = {};
     for (const sub of subs) {
-      const lang = sub.lang || 'unk';
+      const lang = sub.lang || "unk";
       if (!langGroups[lang]) langGroups[lang] = [];
       // Keep up to 5 subtitles per language to give users choices if one is out of sync
       if (langGroups[lang].length < 5) {
         langGroups[lang].push(sub);
       }
     }
-    
+
     const dedupedSubs = Object.values(langGroups).flat();
 
     // Map the Stremio response to a clean payload
@@ -108,7 +114,7 @@ export async function getSubtitles(
       url: sub.url,
       lang: sub.lang, // ISO string e.g. "eng", "fre"
       languageName: getLanguageName(sub.lang),
-      source: 'OpenSubtitles',
+      source: "OpenSubtitles",
     }));
   } catch (error) {
     console.error(`[SUBS] Failed to fetch subtitles for ${imdbId}`);

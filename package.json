@@ -8,7 +8,8 @@
     "dev": "tsx watch server.ts",
     "build": "esbuild server.ts --bundle --platform=node --format=esm --outdir=dist --packages=external",
     "start": "tsx server.ts",
-    "start:prod": "node dist/server.js"
+    "start:prod": "node dist/server.js",
+    "format": "prettier --write ."
   },
   "keywords": [],
   "author": "",
@@ -47,6 +48,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
     "esbuild": "^0.28.0",
+    "prettier": "^3.8.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   }

@@ -53,12 +53,12 @@ dotenv.config();
 // ── Process Crash Guards ───────────────────────────────────────────────────
 // Must be registered before any async code runs. Prevents silent process death
 // from unhandled rejections in scraper/proxy callbacks.
-process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught exception:', err);
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught exception:", err);
   // Don't exit — Railway will restart if needed; keep serving other users.
 });
-process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] Unhandled promise rejection:', reason);
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] Unhandled promise rejection:", reason);
 });
 
 // Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
@@ -279,7 +279,9 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://127.0.0.1:5173",
-  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+  ...(process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",")
+    : []),
 ];
 
 app.use(
@@ -450,7 +452,10 @@ app.get("/api/stream", async (req, res) => {
   }
 
   // Add no-cache headers to prevent mobile browsers from caching expired stream URLs
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
+  );
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   res.setHeader("Surrogate-Control", "no-store");
@@ -533,16 +538,28 @@ app.get("/api/stream", async (req, res) => {
     // Normal TMDB TV IDs are numeric strings (e.g. "94605") and must go straight
     // to Phase B (VidLink) — the old condition fired Phase A on every TV request.
     if (tmdbId.startsWith("k")) {
-      console.log(`[STREAM] Phase A: Drama ID detected (k-prefix). Checking Dramacool...`);
+      console.log(
+        `[STREAM] Phase A: Drama ID detected (k-prefix). Checking Dramacool...`,
+      );
       try {
-        const searchResults = await DramacoolScraper.search(title, undefined, signal);
+        const searchResults = await DramacoolScraper.search(
+          title,
+          undefined,
+          signal,
+        );
         const match = searchResults[0]; // Take first result
-        
+
         if (match) {
-          const details = await DramacoolScraper.getDramaDetail(match.id, signal);
+          const details = await DramacoolScraper.getDramaDetail(
+            match.id,
+            signal,
+          );
           const ep = details?.episodes?.find((e: any) => e.number === episode);
           if (ep) {
-            const dramaMirrors = await DramacoolScraper.getStream(match.id, ep.url);
+            const dramaMirrors = await DramacoolScraper.getStream(
+              match.id,
+              ep.url,
+            );
             if (dramaMirrors && dramaMirrors.length > 0) {
               console.log(`[STREAM] Dramacool HIT ✔`);
               mirrors.push(...dramaMirrors);
@@ -550,7 +567,7 @@ app.get("/api/stream", async (req, res) => {
           }
         }
       } catch (e: any) {
-        if (e.name === 'AbortError') return;
+        if (e.name === "AbortError") return;
         console.error(`[STREAM] Dramacool Phase A failed:`, e.message);
       }
     }
@@ -564,7 +581,7 @@ app.get("/api/stream", async (req, res) => {
           kind as any,
           season,
           episode,
-          signal
+          signal,
         );
         if (vidlinkMirrors && vidlinkMirrors.length > 0) {
           console.log(
@@ -622,19 +639,17 @@ app.get("/api/stream", async (req, res) => {
       try {
         await DeadPool.findOneAndUpdate(
           { tmdbId: tmdbId.toString(), type: kind, season, episode },
-          { 
-            lastChecked: new Date(), 
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h TTL
+          {
+            lastChecked: new Date(),
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h TTL
           },
-          { upsert: true }
+          { upsert: true },
         );
       } catch (err) {
         console.error(`[DEADPOOL] Failed to log failure:`, err);
       }
 
-      throw new Error(
-        "No stream sources found. (Tried VidLink + Scrapers)",
-      );
+      throw new Error("No stream sources found. (Tried VidLink + Scrapers)");
     }
 
     const allSubtitles: any[] = [];
@@ -709,11 +724,12 @@ app.get("/api/stream", async (req, res) => {
     // 3. Optional: Cache the result with Intelligent Rotation
     if (streamUrl) {
       const releaseDateStr = req.query.releaseDate as string;
-      const isCAM = qualityTag === "CAM" || qualityTag === "TC" || qualityTag === "UNKNOWN";
-      
+      const isCAM =
+        qualityTag === "CAM" || qualityTag === "TC" || qualityTag === "UNKNOWN";
+
       let expiresAt = new Date();
       let isNewMovie = false;
-      
+
       if (releaseDateStr) {
         try {
           const releaseDate = new Date(releaseDateStr);
@@ -727,9 +743,11 @@ app.get("/api/stream", async (req, res) => {
       // - New Movie (< 1mo) AND CAM/Low Quality: Cache for 6 hours
       // - High Quality (HD/BluRay) or Old Movie: Cache for 4 hours
       // Reduced from 30 days because CDN links are ephemeral and IP-locked.
-      
+
       if (isNewMovie && isCAM) {
-        console.log(`[CACHE] New CAM detected. Setting short TTL (6h) for rotation.`);
+        console.log(
+          `[CACHE] New CAM detected. Setting short TTL (6h) for rotation.`,
+        );
         expiresAt.setHours(expiresAt.getHours() + 6);
       } else {
         // High quality or old movie — cache for 4 hours
@@ -748,10 +766,17 @@ app.get("/api/stream", async (req, res) => {
           streamExpiresAt: expiresAt,
         },
         { upsert: true },
-      ).then(() => {
-        // If we found a stream, it's no longer "Dead"
-        DeadPool.deleteOne({ tmdbId: tmdbId.toString(), type: kind, season, episode }).catch(() => {});
-      }).catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
+      )
+        .then(() => {
+          // If we found a stream, it's no longer "Dead"
+          DeadPool.deleteOne({
+            tmdbId: tmdbId.toString(),
+            type: kind,
+            season,
+            episode,
+          }).catch(() => {});
+        })
+        .catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
     }
 
     // 4. Proxy URL injection — only for non-KissKH sources that used a proxy during scrape
@@ -824,7 +849,10 @@ app.get("/api/tv-details/:tmdbId", async (req, res) => {
   const { tmdbId } = req.params;
 
   // Handle Drama IDs (slugs or legacy KissKH IDs)
-  if (tmdbId.startsWith("k") || (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))) {
+  if (
+    tmdbId.startsWith("k") ||
+    (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))
+  ) {
     const dramaId = tmdbId.startsWith("k") ? tmdbId.replace("k", "") : tmdbId;
     console.log(`[DRAMA] Fetching Dramacool details for: ${dramaId}`);
     try {
@@ -898,9 +926,12 @@ app.get("/api/subtitles", async (req, res) => {
     );
 
     const results = await Promise.allSettled([
-      tmdbId.toString().startsWith("k") || (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))
+      tmdbId.toString().startsWith("k") ||
+      (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))
         ? (async () => {
-            const dramaId = tmdbId.toString().startsWith("k") ? tmdbId.toString().replace("k", "") : tmdbId.toString();
+            const dramaId = tmdbId.toString().startsWith("k")
+              ? tmdbId.toString().replace("k", "")
+              : tmdbId.toString();
             const details = await DramacoolScraper.getDramaDetail(dramaId);
             const ep = details?.episodes?.find(
               (e: any) => e.number === episode,
@@ -992,13 +1023,22 @@ app.get("/api/proxy/subtitle", async (req, res) => {
   try {
     const parsed = new URL(url);
     const SUBTITLE_ALLOWLIST = [
-      "kisskh.do", "kisskh.co", "kisskh.me",
-      "vidlink.pro", "megafiles.store", "storm.vodvidl.site",
-      "opensubtitles.org", "opensubtitles.com", "sub.webseries.vip",
-      "s.megafiles.store", "strem.io", "stremio.com",
+      "kisskh.do",
+      "kisskh.co",
+      "kisskh.me",
+      "vidlink.pro",
+      "megafiles.store",
+      "storm.vodvidl.site",
+      "opensubtitles.org",
+      "opensubtitles.com",
+      "sub.webseries.vip",
+      "s.megafiles.store",
+      "strem.io",
+      "stremio.com",
     ];
     const allowed = SUBTITLE_ALLOWLIST.some(
-      (domain) => parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)
+      (domain) =>
+        parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`),
     );
     if (!allowed) {
       console.warn(`[SUBS] Blocked SSRF attempt: ${parsed.hostname}`);
@@ -1049,12 +1089,19 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       // Standard fetch with bypass for other sources (VidLink, Megafiles, OpenSubtitles)
       const headers: any = {
         "User-Agent": UA,
-        Referer: url.includes("vidlink") || url.includes("megafiles") || url.includes("storm.vodvidl.site")
-          ? "https://vidlink.pro/"
-          : (process.env.FRONTEND_URL || "https://nebula.clev.studio/"),
+        Referer:
+          url.includes("vidlink") ||
+          url.includes("megafiles") ||
+          url.includes("storm.vodvidl.site")
+            ? "https://vidlink.pro/"
+            : process.env.FRONTEND_URL || "https://nebula.clev.studio/",
       };
 
-      if (url.includes("vidlink") || url.includes("megafiles") || url.includes("storm.vodvidl.site")) {
+      if (
+        url.includes("vidlink") ||
+        url.includes("megafiles") ||
+        url.includes("storm.vodvidl.site")
+      ) {
         headers.Origin = "https://vidlink.pro";
       }
 
@@ -1063,14 +1110,24 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         // Storm uses literal { } in query params which WHATWG URL (used by Got) encodes.
         // We use fetchVidLinkRaw to preserve the literal characters and avoid 403.
         const res = await fetchVidLinkRaw(url, headers);
-        bypass = { statusCode: res.statusCode, headers: res.headers, body: res.body, finalUrl: res.finalUrl };
+        bypass = {
+          statusCode: res.statusCode,
+          headers: res.headers,
+          body: res.body,
+          finalUrl: res.finalUrl,
+        };
       } else {
         bypass = await fetchWithGotScraping(url, headers);
       }
-      
+
       // If GotScraping fails, try the heavy-duty CycleTLS spoofer for Cloudflare protected domains
-      if (bypass.statusCode >= 400 && (url.includes("vidlink") || url.includes("megafiles"))) {
-        console.warn(`[SUBS] GotScraping failed (${bypass.statusCode}). Trying CycleTLS JA3 Spoofer...`);
+      if (
+        bypass.statusCode >= 400 &&
+        (url.includes("vidlink") || url.includes("megafiles"))
+      ) {
+        console.warn(
+          `[SUBS] GotScraping failed (${bypass.statusCode}). Trying CycleTLS JA3 Spoofer...`,
+        );
         try {
           const cycle = await fetchWithCycleTLS(url, headers);
           if (cycle.statusCode < 400) {
@@ -1082,7 +1139,9 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       }
 
       if (bypass.statusCode >= 400) {
-        console.warn(`[SUBS] All bypasses failed for ${url} (${bypass.statusCode}). Falling back to Axios...`);
+        console.warn(
+          `[SUBS] All bypasses failed for ${url} (${bypass.statusCode}). Falling back to Axios...`,
+        );
         const response = await axios.get(url, {
           timeout: 45000,
           headers,
@@ -1631,10 +1690,14 @@ app.get("/api/proxy/segment", async (req, res) => {
 
         if (status >= 400) {
           if (retryCount < 3 && [502, 503, 504, 520, 521].includes(status)) {
-            console.warn(`[PROXY/segment] Retrying VidLink ${status} (attempt ${retryCount + 1})...`);
+            console.warn(
+              `[PROXY/segment] Retrying VidLink ${status} (attempt ${retryCount + 1})...`,
+            );
             return startRequest(retryCount + 1);
           }
-          console.error(`[PROXY/segment] ✘ VidLink ${status} | url=${baseOnly.substring(0, 60)}...`);
+          console.error(
+            `[PROXY/segment] ✘ VidLink ${status} | url=${baseOnly.substring(0, 60)}...`,
+          );
           res.setHeader("Access-Control-Allow-Origin", "*");
           res.status(status).end();
           return;
@@ -1644,12 +1707,21 @@ app.get("/api/proxy/segment", async (req, res) => {
           if (!headersSent && !res.headersSent) {
             headersSent = true;
             res.status(status);
-            res.setHeader("Content-Type", upstreamRes.headers["content-type"] || "video/mp2t");
+            res.setHeader(
+              "Content-Type",
+              upstreamRes.headers["content-type"] || "video/mp2t",
+            );
             if (upstreamRes.headers["content-length"]) {
-              res.setHeader("Content-Length", upstreamRes.headers["content-length"]);
+              res.setHeader(
+                "Content-Length",
+                upstreamRes.headers["content-length"],
+              );
             }
             if (upstreamRes.headers["content-range"]) {
-              res.setHeader("Content-Range", upstreamRes.headers["content-range"]);
+              res.setHeader(
+                "Content-Range",
+                upstreamRes.headers["content-range"],
+              );
             }
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.setHeader("X-Proxy-Mode", "Streaming");
@@ -1663,7 +1735,9 @@ app.get("/api/proxy/segment", async (req, res) => {
 
         upstreamRes.on("error", (err) => {
           if (retryCount < 3 && !res.headersSent) {
-            console.warn(`[PROXY/segment] Upstream error during download: ${err.message}. Retrying...`);
+            console.warn(
+              `[PROXY/segment] Upstream error during download: ${err.message}. Retrying...`,
+            );
             return startRequest(retryCount + 1);
           }
           if (!res.writableEnded) res.end();
@@ -1671,8 +1745,15 @@ app.get("/api/proxy/segment", async (req, res) => {
       });
 
       upstream.on("error", (err) => {
-        if (retryCount < 3 && (err.message.includes("socket hang up") || (err as any).code === "ECONNRESET" || err.message.includes("aborted"))) {
-          console.warn(`[PROXY/segment] Retrying VidLink error: ${err.message} (attempt ${retryCount + 1})...`);
+        if (
+          retryCount < 3 &&
+          (err.message.includes("socket hang up") ||
+            (err as any).code === "ECONNRESET" ||
+            err.message.includes("aborted"))
+        ) {
+          console.warn(
+            `[PROXY/segment] Retrying VidLink error: ${err.message} (attempt ${retryCount + 1})...`,
+          );
           return startRequest(retryCount + 1);
         }
         console.error(`[PROXY/segment] VidLink request error: ${err.message}`);
@@ -1685,7 +1766,9 @@ app.get("/api/proxy/segment", async (req, res) => {
       upstream.setTimeout(30000, () => {
         upstream.destroy();
         if (retryCount < 3) {
-          console.warn(`[PROXY/segment] Retrying VidLink timeout (attempt ${retryCount + 1})...`);
+          console.warn(
+            `[PROXY/segment] Retrying VidLink timeout (attempt ${retryCount + 1})...`,
+          );
           return startRequest(retryCount + 1);
         }
         if (!res.headersSent) {
@@ -1706,11 +1789,17 @@ app.get("/api/proxy/segment", async (req, res) => {
   }
 
   // ── Path B: All other CDNs — axios stream pipe with proxy fallback ────────
-  const streamSegment = async (useProxy: boolean, retryCount = 0): Promise<void> => {
+  const streamSegment = async (
+    useProxy: boolean,
+    retryCount = 0,
+  ): Promise<void> => {
     const headers = { ...cdnHeaders(targetUrl, false), ...passHeaders };
-    const proxyUrl = useProxy && segProxy
-      ? (segProxy.startsWith("http") ? segProxy : `http://${segProxy}`)
-      : undefined;
+    const proxyUrl =
+      useProxy && segProxy
+        ? segProxy.startsWith("http")
+          ? segProxy
+          : `http://${segProxy}`
+        : undefined;
 
     try {
       const axiosResponse = await axios.get(targetUrl, {
@@ -1749,7 +1838,10 @@ app.get("/api/proxy/segment", async (req, res) => {
       );
       res.setHeader("Access-Control-Allow-Origin", "*");
       if (axiosResponse.headers["content-length"]) {
-        res.setHeader("Content-Length", axiosResponse.headers["content-length"]);
+        res.setHeader(
+          "Content-Length",
+          axiosResponse.headers["content-length"],
+        );
       }
       if (axiosResponse.headers["content-range"]) {
         res.setHeader("Content-Range", axiosResponse.headers["content-range"]);
@@ -1770,23 +1862,30 @@ app.get("/api/proxy/segment", async (req, res) => {
       });
     } catch (e: any) {
       const status = e?.response?.status || e?.response?.statusCode || 0;
-      
+
       // Retry logic for network errors (socket hang up, timeout, etc) and specific 5xx errors
-      const isRetryableError = e.code === "ECONNRESET" || 
-                              e.code === "ETIMEDOUT" || 
-                              e.code === "ESOCKETTIMEDOUT" || 
-                              e.message?.includes("socket hang up") ||
-                              e.message?.includes("aborted");
-      
+      const isRetryableError =
+        e.code === "ECONNRESET" ||
+        e.code === "ETIMEDOUT" ||
+        e.code === "ESOCKETTIMEDOUT" ||
+        e.message?.includes("socket hang up") ||
+        e.message?.includes("aborted");
+
       const isRetryableStatus = [502, 503, 504, 520, 521].includes(status);
 
       if (retryCount < 3 && (isRetryableError || isRetryableStatus)) {
-        console.warn(`[PROXY/segment] Retrying Path B error: ${e.message} (status: ${status}, attempt ${retryCount + 1})...`);
+        console.warn(
+          `[PROXY/segment] Retrying Path B error: ${e.message} (status: ${status}, attempt ${retryCount + 1})...`,
+        );
         return streamSegment(useProxy, retryCount + 1);
       }
 
       // 403 retry logic for non-axios errors
-      if (!useProxy && segProxy && (status === 403 || e.code === "ERR_BAD_REQUEST")) {
+      if (
+        !useProxy &&
+        segProxy &&
+        (status === 403 || e.code === "ERR_BAD_REQUEST")
+      ) {
         return streamSegment(true);
       }
       console.error(
@@ -1801,7 +1900,6 @@ app.get("/api/proxy/segment", async (req, res) => {
 
   await streamSegment(false);
 });
-
 
 app.all("/api/cache/clear", async (req, res) => {
   const key = req.headers["x-admin-key"] || req.query.key;
@@ -1837,18 +1935,18 @@ app.get("/api/stream/availability", async (req, res) => {
   try {
     const [cachedStreams, deadPool] = await Promise.all([
       StreamCache.find({ tmdbId: { $in: tmdbIds } }),
-      DeadPool.find({ tmdbId: { $in: tmdbIds } })
+      DeadPool.find({ tmdbId: { $in: tmdbIds } }),
     ]);
 
-    const cachedIds = new Set(cachedStreams.map(s => s.tmdbId));
-    const deadIds = new Set(deadPool.map(d => d.tmdbId));
-    
-    const results = tmdbIds.map(id => ({
+    const cachedIds = new Set(cachedStreams.map((s) => s.tmdbId));
+    const deadIds = new Set(deadPool.map((d) => d.tmdbId));
+
+    const results = tmdbIds.map((id) => ({
       id,
       isVerified: cachedIds.has(id),
-      isDead: deadIds.has(id)
+      isDead: deadIds.has(id),
     }));
-    
+
     res.json({ results });
   } catch (error) {
     res.status(500).json({ error: "Failed to check availability" });
@@ -1889,7 +1987,7 @@ app.get("/api/metadata", async (req, res) => {
 app.get("/api/drama/list", async (req, res) => {
   const page = parseInt(req.query.page as string) || 1;
   const countryId = req.query.country as string;
-  
+
   // Map frontend country IDs to Dramacool slugs
   const countryMap: Record<string, string> = {
     "1": "korean",
@@ -1899,7 +1997,7 @@ app.get("/api/drama/list", async (req, res) => {
     "8": "philippines",
     "5": "taiwanese",
     "6": "hong-kong",
-    "3": "other-asia"
+    "3": "other-asia",
   };
 
   const countrySlug = countryId ? countryMap[countryId] : undefined;
@@ -1912,9 +2010,11 @@ app.get("/api/drama/list", async (req, res) => {
       return res.json({ results: cached.results });
     }
 
-    console.log(`[DRAMA] Cache MISS for list ${cacheKey}. Fetching Dramacool...`);
+    console.log(
+      `[DRAMA] Cache MISS for list ${cacheKey}. Fetching Dramacool...`,
+    );
     const results = await DramacoolScraper.getExploreList(page, countrySlug);
-    
+
     await DiscoveryCache.findOneAndUpdate(
       { key: cacheKey },
       {
@@ -1997,7 +2097,8 @@ app.get("/api/image", async (req, res) => {
   try {
     const parsed = new URL(url);
     const allowed = IMAGE_PROXY_ALLOWLIST.some(
-      (domain) => parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)
+      (domain) =>
+        parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`),
     );
     if (!allowed) {
       console.warn(`[IMAGE] Blocked SSRF attempt: ${parsed.hostname}`);
@@ -2274,15 +2375,15 @@ const server = app.listen(PORT, () => {
 // ── Graceful Shutdown ────────────────────────────────────────────────────────
 // systemd / pm2 sends SIGTERM before stopping the process on Oracle Ubuntu.
 // We stop accepting new connections but let in-flight HLS pipes drain.
-process.on('SIGTERM', () => {
-  console.log('[SHUTDOWN] SIGTERM received — draining connections...');
+process.on("SIGTERM", () => {
+  console.log("[SHUTDOWN] SIGTERM received — draining connections...");
   server.close(() => {
-    console.log('[SHUTDOWN] All connections closed. Exiting.');
+    console.log("[SHUTDOWN] All connections closed. Exiting.");
     process.exit(0);
   });
   // Force-exit after 10s if connections don't drain
   setTimeout(() => {
-    console.error('[SHUTDOWN] Force exit after 10s drain timeout.');
+    console.error("[SHUTDOWN] Force exit after 10s drain timeout.");
     process.exit(1);
   }, 10_000);
 });
