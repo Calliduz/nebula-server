@@ -1725,6 +1725,12 @@ app.get("/api/proxy/segment", async (req, res) => {
             }
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.setHeader("X-Proxy-Mode", "Streaming");
+            // Fix 4: HLS segments are immutable (same URL = same bytes).
+            // Cache privately in the browser for 1 hour so seek-back and
+            // repeated pausing doesn't re-fetch from CDN.
+            // 'private' prevents any intermediary (CDN/ISP) from caching
+            // and serving stale segment data to other users.
+            res.setHeader("Cache-Control", "private, max-age=3600");
           }
           res.write(chunk);
         });
@@ -1837,6 +1843,8 @@ app.get("/api/proxy/segment", async (req, res) => {
         axiosResponse.headers["content-type"] || "video/mp2t",
       );
       res.setHeader("Access-Control-Allow-Origin", "*");
+      // Fix 4: browser-private segment cache — 1 hour, not shared with CDNs.
+      res.setHeader("Cache-Control", "private, max-age=3600");
       if (axiosResponse.headers["content-length"]) {
         res.setHeader(
           "Content-Length",
