@@ -1088,23 +1088,28 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         return res.status(500).send("Proxy error");
       }
     } else {
-      // Standard fetch with bypass for other sources (VidLink, Megafiles, OpenSubtitles)
-      const headers: any = {
-        "User-Agent": UA,
-        Referer:
-          url.includes("vidlink") ||
-          url.includes("megafiles") ||
-          url.includes("storm.vodvidl.site")
-            ? "https://vidlink.pro/"
-            : process.env.FRONTEND_URL || "https://nebula.clev.studio/",
-      };
+      let referer = process.env.FRONTEND_URL || "https://nebula.clev.studio/";
+      let origin: string | undefined;
 
       if (
         url.includes("vidlink") ||
         url.includes("megafiles") ||
         url.includes("storm.vodvidl.site")
       ) {
-        headers.Origin = "https://vidlink.pro";
+        referer = "https://vidlink.pro/";
+        origin = "https://vidlink.pro";
+      } else if (url.includes("vdrk.site") || url.includes("vidrock.net")) {
+        referer = "https://vidrock.net/";
+        origin = "https://vidrock.net";
+      }
+
+      const headers: any = {
+        "User-Agent": UA,
+        Referer: referer,
+      };
+
+      if (origin) {
+        headers.Origin = origin;
       }
 
       let bypass: any;
