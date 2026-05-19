@@ -1035,6 +1035,8 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       "s.megafiles.store",
       "strem.io",
       "stremio.com",
+      "vdrk.site",
+      "cache.vdrk.site",
     ];
     const allowed = SUBTITLE_ALLOWLIST.some(
       (domain) =>
@@ -2371,6 +2373,50 @@ async function getFanartMetadata(
     return { logoUrl: null, backgroundUrl: null };
   }
 }
+
+import { generateToken as generateVidrockToken } from "./utils/vidrock_token.js";
+
+app.get("/api/vidrock", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const type = req.query.type as "movie" | "tv";
+  const season = req.query.season as string;
+  const episode = req.query.episode as string;
+
+  if (!tmdbId || !type) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  try {
+    const token = generateVidrockToken(tmdbId, type, season, episode);
+    
+    const url = `https://vidrock.net/api/${type}/${token}`;
+    const headers = {
+      'accept': '*/*',
+      'accept-language': 'en-US,en;q=0.9',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'referer': `https://vidrock.net/${type}/${tmdbId}`,
+      'sec-ch-ua': '"Chromium";v="148", "Brave";v="148", "Not/A)Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'sec-gpc': '1',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
+    };
+    
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: "Upstream error" });
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error("[VIDROCK] fetch failed", error);
+    res.status(500).json({ error: "Failed to fetch from VidRock" });
+  }
+});
 
 const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, () => {
