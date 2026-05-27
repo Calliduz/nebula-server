@@ -1037,6 +1037,9 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       "stremio.com",
       "vdrk.site",
       "cache.vdrk.site",
+      "vidrock.ru",
+      "storrrrrrm.site",
+      "workers.dev",
     ];
     const allowed = SUBTITLE_ALLOWLIST.some(
       (domain) =>
@@ -1098,7 +1101,12 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       ) {
         referer = "https://vidlink.pro/";
         origin = "https://vidlink.pro";
-      } else if (url.includes("vdrk.site") || url.includes("vidrock.ru")) {
+      } else if (
+        url.includes("vdrk.site") ||
+        url.includes("vidrock.ru") ||
+        /stor+m\.site/.test(url) ||
+        url.includes("workers.dev")
+      ) {
         referer = "https://vidrock.ru/";
         origin = "https://vidrock.ru";
       }
@@ -1327,6 +1335,16 @@ function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
 
     // Final overrides for specific providers that are extremely sensitive to outer Referer
     if (
+      /stor+m\.site/.test(lower) ||
+      lower.includes("vdrk.site") ||
+      lower.includes("vidrock.ru") ||
+      lower.includes("vidrock.net") ||
+      lower.includes("hydrostorm") ||
+      lower.includes("workers.dev")
+    ) {
+      referer = "https://vidrock.ru/";
+      origin = "https://vidrock.ru";
+    } else if (
       lower.includes("storm.vodvidl.site") ||
       lower.includes("vidlink.pro") ||
       lower.includes("nightbreeze") ||
@@ -1511,6 +1529,29 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     if (typeof manifest !== "string") {
       return res.status(502).send("Invalid manifest content");
+    }
+
+    // Handle JSON playlist (e.g. Atlas / vdrk.site MP4 resolution list)
+    if (manifest.trim().startsWith("[")) {
+      try {
+        const playlist = JSON.parse(manifest);
+        if (Array.isArray(playlist) && playlist.length > 0) {
+          // Sort by resolution descending (highest resolution first)
+          playlist.sort((a: any, b: any) => (b.resolution || 0) - (a.resolution || 0));
+          const bestTrack = playlist[0];
+          if (bestTrack && bestTrack.url) {
+            const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+            const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+            const proxiedUrl = `${currentHost}/api/proxy/segment?url=${encodeURIComponent(bestTrack.url)}`;
+            
+            console.log(`[PROXY/stream] JSON playlist detected. Redirecting to best MP4: ${bestTrack.resolution}p -> ${bestTrack.url.substring(0, 80)}...`);
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            return res.redirect(302, proxiedUrl);
+          }
+        }
+      } catch (err: any) {
+        console.error(`[PROXY/stream] Failed to parse JSON playlist: ${err.message}`);
+      }
     }
 
     // Use the actual final URL after redirects for resolving relative paths
@@ -1738,6 +1779,12 @@ app.get("/api/proxy/segment", async (req, res) => {
             // 'private' prevents any intermediary (CDN/ISP) from caching
             // and serving stale segment data to other users.
             res.setHeader("Cache-Control", "private, max-age=3600");
+
+            if (req.method === "HEAD") {
+              res.end();
+              upstream.destroy();
+              return;
+            }
           }
           res.write(chunk);
         });
@@ -1860,6 +1907,12 @@ app.get("/api/proxy/segment", async (req, res) => {
       }
       if (axiosResponse.headers["content-range"]) {
         res.setHeader("Content-Range", axiosResponse.headers["content-range"]);
+      }
+
+      if (req.method === "HEAD") {
+        res.end();
+        (axiosResponse.data as any).destroy();
+        return;
       }
 
       // STREAM: pipe bytes directly to client as they arrive
