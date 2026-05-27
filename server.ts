@@ -1098,9 +1098,9 @@ app.get("/api/proxy/subtitle", async (req, res) => {
       ) {
         referer = "https://vidlink.pro/";
         origin = "https://vidlink.pro";
-      } else if (url.includes("vdrk.site") || url.includes("vidrock.net")) {
-        referer = "https://vidrock.net/";
-        origin = "https://vidrock.net";
+      } else if (url.includes("vdrk.site") || url.includes("vidrock.ru")) {
+        referer = "https://vidrock.ru/";
+        origin = "https://vidrock.ru";
       }
 
       const headers: any = {
@@ -2393,24 +2393,25 @@ app.get("/api/vidrock", async (req, res) => {
 
   try {
     const token = generateVidrockToken(tmdbId, type, season, episode);
-    
-    const url = `https://vidrock.net/api/${type}/${token}`;
+
+    const url = `https://vidrock.ru/api/${type}/${token}`;
     const headers = {
-      'accept': '*/*',
-      'accept-language': 'en-US,en;q=0.9',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'referer': `https://vidrock.net/${type}/${tmdbId}`,
-      'sec-ch-ua': '"Chromium";v="148", "Brave";v="148", "Not/A)Brand";v="99"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'sec-gpc': '1',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
+      accept: "*/*",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+      referer: `https://vidrock.ru/${type}/${tmdbId}`,
+      "sec-ch-ua": '"Chromium";v="148", "Brave";v="148", "Not/A)Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sec-gpc": "1",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     };
-    
+
     const response = await fetch(url, { headers });
     if (!response.ok) {
       return res.status(response.status).json({ error: "Upstream error" });
