@@ -113,3 +113,14 @@ DeadPoolSchema.index(
 );
 DeadPoolSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const DeadPool = mongoose.model("DeadPool", DeadPoolSchema);
+
+// TMDB Cache (Stores generic TMDB proxy response payloads)
+const TmdbCacheSchema = new mongoose.Schema({
+  key: { type: String, required: true },
+  data: { type: mongoose.Schema.Types.Mixed, required: true },
+  expiresAt: { type: Date, required: true },
+});
+
+TmdbCacheSchema.index({ key: 1 }, { unique: true });
+TmdbCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const TmdbCache = mongoose.model("TmdbCache", TmdbCacheSchema);

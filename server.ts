@@ -14,6 +14,7 @@ import {
   DiscoveryCache,
   DramaDetailCache,
   DeadPool,
+  TmdbCache,
 } from "./models/Cache.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "./utils/bypass.js";
 import { getSubtitles } from "./utils/subtitles.js";
@@ -892,6 +893,92 @@ app.get("/api/tv-details/:tmdbId", async (req, res) => {
     return res.json(r.data);
   } catch (err: any) {
     return res.status(err.response?.status || 500).json({ error: err.message });
+  }
+});
+
+// Endpoint: TMDB Proxy with local MongoDB caching (TTL 6 hours)
+app.get("/api/tmdb-proxy", async (req, res) => {
+  const rawEndpoint = req.query.endpoint as string;
+  if (!rawEndpoint) {
+    return res.status(400).json({ error: "Missing endpoint parameter" });
+  }
+
+  const endpoint = rawEndpoint.startsWith("/") ? rawEndpoint : "/" + rawEndpoint;
+
+  if (!TMDB_API_KEY) {
+    return res.status(500).json({ error: "TMDB_API_KEY not configured on server" });
+  }
+
+  // Safety: never fetch KissKH IDs from TMDB
+  const lastPart = endpoint.split("/").pop() || "";
+  if (lastPart.startsWith("k")) {
+    return res.json({ results: [] });
+  }
+
+  // Extract query parameters (excluding the endpoint key itself)
+  const params: Record<string, string> = {};
+  for (const [key, val] of Object.entries(req.query)) {
+    if (key !== "endpoint" && typeof val === "string") {
+      params[key] = val;
+    }
+  }
+
+  // Create a sorted query string to construct a deterministic cache key
+  const sortedQuery = new URLSearchParams();
+  sortedQuery.append("language", params.language || "en-US");
+  Object.keys(params)
+    .sort()
+    .forEach((k) => {
+      if (k !== "language") {
+        sortedQuery.append(k, params[k]);
+      }
+    });
+
+  const cacheKey = `tmdb-proxy-${endpoint}-${sortedQuery.toString()}`;
+
+  try {
+    // 1. Cache Check
+    const cached = await TmdbCache.findOne({ key: cacheKey });
+    if (cached) {
+      return res.json(cached.data);
+    }
+
+    // 2. Fetch from TMDB
+    const isV4Token = TMDB_API_KEY.length > 40;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (isV4Token) {
+      headers["Authorization"] = `Bearer ${TMDB_API_KEY}`;
+    } else {
+      sortedQuery.append("api_key", TMDB_API_KEY);
+    }
+
+    const tmdbUrl = `https://api.themoviedb.org/3${endpoint}?${sortedQuery.toString()}`;
+    const response = await axios.get(tmdbUrl, {
+      headers,
+      timeout: 10000,
+    });
+
+    const data = response.data;
+
+    // Default caching: 6 hours (matches frontend TTL concepts)
+    const ttl = 1000 * 60 * 60 * 6;
+
+    // 3. Save to Cache
+    await TmdbCache.findOneAndUpdate(
+      { key: cacheKey },
+      {
+        data,
+        expiresAt: new Date(Date.now() + ttl),
+      },
+      { upsert: true },
+    ).catch(() => null);
+
+    return res.json(data);
+  } catch (err: any) {
+    console.error(`[TMDB PROXY ERROR] For ${endpoint}: ${err.message}`);
+    return res.status(err.response?.status || 500).json({
+      error: err.response?.data?.status_message || err.message,
+    });
   }
 });
 
