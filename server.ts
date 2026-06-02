@@ -444,8 +444,425 @@ interface InFlightStreamEntry {
 const inFlightStreams = new Map<string, InFlightStreamEntry>();
 
 // Endpoint: Health Check (Lightweight, No Rate Limit)
-app.get("/api/health", (req, res) => {
+app.get(["/health", "/api/health"], (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+async function getExternalIMDBId(tmdbId: string, type: "movie" | "tv") {
+  try {
+    if (type === "movie") {
+      const res = await axios.get(
+        `https://api.themoviedb.org/3/movie/${tmdbId}`,
+        {
+          headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+        },
+      );
+      return res.data.imdb_id;
+    } else {
+      const res = await axios.get(
+        `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`,
+        {
+          headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+        },
+      );
+      return res.data.imdb_id;
+    }
+  } catch (e) {
+    return null;
+  }
+}
+
+function formatBytes(bytes: number, decimals = 2) {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+}
+
+function parseTorrentioTitle(title: string) {
+  const parts = title.split("\n");
+  const filename = parts[0] || "Unknown Title";
+  const statsLine = parts[1] || "";
+  
+  let seeds = 0;
+  let peers = 0;
+  let size = "Unknown Size";
+  let provider = "Torrentio";
+
+  const seedsMatch = statsLine.match(/👤\s*(\d+)/);
+  if (seedsMatch) seeds = parseInt(seedsMatch[1]) || 0;
+
+  const peersMatch = statsLine.match(/👥\s*(\d+)/) || statsLine.match(/👤\s*\d+\s*(\d+)/);
+  if (peersMatch) peers = parseInt(peersMatch[1]) || 0;
+
+  const sizeMatch = statsLine.match(/💾\s*([\d\.]+\s*[MGB]+)/i) || statsLine.match(/💾\s*([^⚙️\n]+)/);
+  if (sizeMatch) size = sizeMatch[1].trim();
+
+  const providerMatch = statsLine.match(/⚙️\s*([^\n\r]+)/);
+  if (providerMatch) provider = providerMatch[1].trim();
+
+  return { filename, seeds, peers, size, provider };
+}
+
+// Endpoint: Download Torrent Links
+app.get("/api/download", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const kind = req.query.type as "movie" | "tv";
+
+  if (!tmdbId || !kind) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  const cacheKey = `torrent-downloads-${tmdbId}-${kind}`;
+
+  try {
+    // 1. Cache Check
+    const cached = await TmdbCache.findOne({ key: cacheKey });
+    if (cached) {
+      return res.json(cached.data);
+    }
+
+    // 2. Resolve IMDB ID
+    let imdbId = await getExternalIMDBId(tmdbId, kind);
+    if (!imdbId) {
+      return res.status(404).json({ error: "IMDB ID not found for this title" });
+    }
+
+    let torrents: any[] = [];
+    let title = "";
+
+    if (kind === "movie") {
+      // 1. YTS API (Primary)
+      try {
+        const ytsUrl = `https://yts.bz/api/v2/movie_details.json?imdb_id=${imdbId}`;
+        const response = await axios.get(ytsUrl, { timeout: 8000 });
+        const movie = response.data?.data?.movie;
+        if (movie && movie.torrents) {
+          title = movie.title_long || movie.title || "Movie";
+          torrents = movie.torrents.map((t: any) => {
+            const magnet = `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(title)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce`;
+            return {
+              title,
+              quality: t.quality,
+              size: t.size,
+              seeds: t.seeds,
+              peers: t.peers,
+              magnet,
+              torrent_url: t.url,
+              source: "YTS",
+              type: "movie"
+            };
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[DOWNLOAD] YTS search error: ${err.message}`);
+      }
+
+      // 2. Torrentio API (Backup & Multi-Provider Search)
+      try {
+        const torrentioUrl = `https://torrentio.strem.fun/providers=yts,eztv,1337x,rarbg,torrentgalaxy/stream/movie/${imdbId}.json`;
+        const response = await axios.get(torrentioUrl, { timeout: 8000 });
+        const streams = response.data?.streams || [];
+
+        streams.forEach((s: any) => {
+          if (!s.infoHash) return;
+          const parsed = parseTorrentioTitle(s.title);
+          const quality = s.name.split("\n")[1] || "HD";
+
+          // Avoid duplicating identical torrent info hashes if YTS already got them
+          if (torrents.some(t => t.magnet.toLowerCase().includes(s.infoHash.toLowerCase()))) {
+            return;
+          }
+
+          const magnet = `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(parsed.filename)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce`;
+          torrents.push({
+            title: parsed.filename,
+            quality,
+            size: parsed.size,
+            seeds: parsed.seeds,
+            peers: parsed.peers,
+            magnet,
+            source: parsed.provider,
+            type: "movie"
+          });
+        });
+      } catch (err: any) {
+        console.warn(`[DOWNLOAD] Torrentio movie fallback failed: ${err.message}`);
+      }
+
+      // 3. Apibay API (The Pirate Bay Backup)
+      try {
+        const apibayUrl = `https://apibay.org/q.php?q=${imdbId}`;
+        const response = await axios.get(apibayUrl, { timeout: 8000 });
+        const results = response.data || [];
+        if (Array.isArray(results)) {
+          results.forEach((t: any) => {
+            if (!t.info_hash || t.info_hash === "0000000000000000000000000000000000000000") return;
+            const sizeBytes = parseInt(t.size) || 0;
+            if (t.name === "No results found" || sizeBytes === 0) return;
+
+            // Deduplicate by info hash
+            if (torrents.some(ex => ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()))) {
+              return;
+            }
+
+            const sizeStr = formatBytes(sizeBytes);
+            const seeds = parseInt(t.seeders) || 0;
+            const peers = parseInt(t.leechers) || 0;
+
+            // Simple quality heuristic
+            let quality = "HD";
+            if (/2160p|4k/i.test(t.name)) quality = "2160p (4K)";
+            else if (/1080p/i.test(t.name)) quality = "1080p";
+            else if (/720p/i.test(t.name)) quality = "720p";
+            else if (/480p/i.test(t.name)) quality = "480p";
+            else if (/hdrip|webrip|web-dl/i.test(t.name)) quality = "WEBRip";
+            else if (/bluray/i.test(t.name)) quality = "BluRay";
+
+            const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.openbittorrent.com:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.torrent.eu.org:451/announce`;
+            
+            torrents.push({
+              title: t.name,
+              quality,
+              size: sizeStr,
+              seeds,
+              peers,
+              magnet,
+              source: "ThePirateBay",
+              type: "movie"
+            });
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[DOWNLOAD] Apibay movie fallback failed: ${err.message}`);
+      }
+    } else {
+      // TV Show
+      // 1. Primary: EZTV API
+      try {
+        const numericImdbId = imdbId.replace(/^tt/, "");
+        const eztvUrl = `https://eztv.re/api/get-torrents?imdb_id=${numericImdbId}`;
+        const response = await axios.get(eztvUrl, { timeout: 12000 });
+        const eztvTorrents = response.data?.torrents || [];
+        
+        torrents = eztvTorrents.map((t: any) => {
+          const sizeBytes = parseInt(t.size_bytes) || 0;
+          const sizeStr = sizeBytes > 0 ? formatBytes(sizeBytes) : "Unknown Size";
+          return {
+            title: t.title,
+            filename: t.filename,
+            season: parseInt(t.season) || 0,
+            episode: parseInt(t.episode) || 0,
+            seeds: parseInt(t.seeds) || 0,
+            peers: parseInt(t.peers) || 0,
+            size: sizeStr,
+            magnet: t.magnet_url,
+            torrent_url: t.torrent_url,
+            source: "EZTV",
+            type: "tv"
+          };
+        });
+      } catch (err: any) {
+        console.warn(`[DOWNLOAD] EZTV search error: ${err.message}`);
+      }
+
+      // 2. Backup: Apibay API (The Pirate Bay) - fetches complete season packs and backup episodes
+      try {
+        const apibayUrl = `https://apibay.org/q.php?q=${imdbId}`;
+        const response = await axios.get(apibayUrl, { timeout: 8000 });
+        const results = response.data || [];
+        if (Array.isArray(results)) {
+          results.forEach((t: any) => {
+            if (!t.info_hash || t.info_hash === "0000000000000000000000000000000000000000") return;
+            const sizeBytes = parseInt(t.size) || 0;
+            if (t.name === "No results found" || sizeBytes === 0) return;
+
+            // Deduplicate
+            if (torrents.some(ex => ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()))) {
+              return;
+            }
+
+            const sizeStr = formatBytes(sizeBytes);
+            const seeds = parseInt(t.seeders) || 0;
+            const peers = parseInt(t.leechers) || 0;
+
+            // Parse season/episode from name
+            let season = 0;
+            let episode = 0;
+
+            const s00e00Match = t.name.match(/s(\d+)\s*e(\d+)/i);
+            if (s00e00Match) {
+              season = parseInt(s00e00Match[1]) || 0;
+              episode = parseInt(s00e00Match[2]) || 0;
+            } else {
+              const seasonOnlyMatch = t.name.match(/season\s*(\d+)/i) || t.name.match(/\bs(\d+)\b/i);
+              if (seasonOnlyMatch) {
+                season = parseInt(seasonOnlyMatch[1]) || 0;
+                episode = 0; // Season pack
+              }
+            }
+
+            const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.openbittorrent.com:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.torrent.eu.org:451/announce`;
+
+            torrents.push({
+              title: t.name,
+              filename: t.name,
+              season,
+              episode,
+              seeds,
+              peers,
+              size: sizeStr,
+              magnet,
+              source: "ThePirateBay",
+              type: "tv"
+            });
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[DOWNLOAD] Apibay TV fallback failed: ${err.message}`);
+      }
+    }
+
+    const payload = {
+      title,
+      imdbId,
+      torrents
+    };
+
+    // Cache the result for 24 hours
+    const ttl = 1000 * 60 * 60 * 24;
+    await TmdbCache.findOneAndUpdate(
+      { key: cacheKey },
+      {
+        data: payload,
+        expiresAt: new Date(Date.now() + ttl),
+      },
+      { upsert: true },
+    ).catch(() => null);
+
+    return res.json(payload);
+
+  } catch (error: any) {
+    console.error(`[DOWNLOAD API ERROR] For ${tmdbId}: ${error.message}`);
+    return res.status(500).json({ error: error.message || "Failed to fetch torrents" });
+  }
+});
+
+// Endpoint: Download TV Episode Backups (On-Demand Torrentio Search)
+app.get("/api/download/episode", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const season = parseInt(req.query.season as string) || 1;
+  const episode = parseInt(req.query.episode as string) || 1;
+
+  if (!tmdbId) {
+    return res.status(400).json({ error: "Missing tmdbId" });
+  }
+
+  const cacheKey = `torrent-downloads-episode-${tmdbId}-${season}-${episode}`;
+
+  try {
+    // 1. Cache Check
+    const cached = await TmdbCache.findOne({ key: cacheKey });
+    if (cached) {
+      return res.json(cached.data);
+    }
+
+    // 2. Resolve IMDB ID
+    let imdbId = await getExternalIMDBId(tmdbId, "tv");
+    if (!imdbId) {
+      return res.status(404).json({ error: "IMDB ID not found for this TV show" });
+    }
+
+    const torrents: any[] = [];
+
+    // 3. Query Torrentio
+    try {
+      const torrentioUrl = `https://torrentio.strem.fun/providers=yts,eztv,1337x,rarbg,torrentgalaxy/stream/series/${imdbId}:${season}:${episode}.json`;
+      const response = await axios.get(torrentioUrl, { timeout: 10000 });
+      const streams = response.data?.streams || [];
+
+      streams.forEach((s: any) => {
+        if (!s.infoHash) return;
+        const parsed = parseTorrentioTitle(s.title);
+        const quality = s.name.split("\n")[1] || "HD";
+        const magnet = `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(parsed.filename)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce`;
+        
+        torrents.push({
+          title: parsed.filename,
+          quality,
+          size: parsed.size,
+          seeds: parsed.seeds,
+          peers: parsed.peers,
+          magnet,
+          source: parsed.provider,
+          type: "tv"
+        });
+      });
+    } catch (err: any) {
+      console.warn(`[DOWNLOAD EPISODE] Torrentio backup failed: ${err.message}`);
+    }
+
+    // 4. Query Apibay (The Pirate Bay) for exact season & episode
+    try {
+      const formattedEp = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
+      const apibayUrl = `https://apibay.org/q.php?q=${imdbId}+${formattedEp}`;
+      const response = await axios.get(apibayUrl, { timeout: 8000 });
+      const results = response.data || [];
+
+      if (Array.isArray(results)) {
+        results.forEach((t: any) => {
+          if (!t.info_hash || t.info_hash === "0000000000000000000000000000000000000000") return;
+          const sizeBytes = parseInt(t.size) || 0;
+          if (t.name === "No results found" || sizeBytes === 0) return;
+
+          // Deduplicate
+          if (torrents.some(ex => ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()))) {
+            return;
+          }
+
+          const sizeStr = formatBytes(sizeBytes);
+          const seeds = parseInt(t.seeders) || 0;
+          const peers = parseInt(t.leechers) || 0;
+
+          const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.openbittorrent.com:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.torrent.eu.org:451/announce`;
+
+          torrents.push({
+            title: t.name,
+            quality: "HD",
+            size: sizeStr,
+            seeds,
+            peers,
+            magnet,
+            source: "ThePirateBay",
+            type: "tv"
+          });
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[DOWNLOAD EPISODE] Apibay backup failed: ${err.message}`);
+    }
+
+    const payload = { torrents };
+
+    // Cache results for 24 hours
+    const ttl = 1000 * 60 * 60 * 24;
+    await TmdbCache.findOneAndUpdate(
+      { key: cacheKey },
+      {
+        data: payload,
+        expiresAt: new Date(Date.now() + ttl),
+      },
+      { upsert: true },
+    ).catch(() => null);
+
+    return res.json(payload);
+
+  } catch (error: any) {
+    console.error(`[DOWNLOAD EPISODE ERROR] ${error.message}`);
+    return res.status(500).json({ error: error.message || "Failed to fetch backup streams" });
+  }
 });
 
 // Endpoint: Fetch Media Stream
