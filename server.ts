@@ -435,6 +435,14 @@ const connectDB = async (retryCount = 5) => {
 
 connectDB();
 
+// For coalescing concurrent stream scrape requests
+interface InFlightStreamEntry {
+  promise: Promise<any>;
+  abortController: AbortController;
+  refCount: number;
+}
+const inFlightStreams = new Map<string, InFlightStreamEntry>();
+
 // Endpoint: Health Check (Lightweight, No Rate Limit)
 app.get("/api/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
@@ -519,324 +527,302 @@ app.get("/api/stream", async (req, res) => {
       }
     }
 
-    const mirrors: MirrorStream[] = [];
-    let sourceName = "none";
-    let qualityTag = "UNKNOWN";
-    let resolution = "UNKNOWN";
-    let streamUrl: string | null = null;
-    let proxyUsed: string | undefined = undefined;
+    const cacheKey = `${tmdbId}-${kind}-${season}-${episode}`;
+    let entry = inFlightStreams.get(cacheKey);
+    let isCoalesced = false;
 
-    const controller = new AbortController();
-    const signal = controller.signal;
+    if (entry) {
+      entry.refCount++;
+      isCoalesced = true;
+      console.log(`[STREAM] Coalescing request for key: ${cacheKey}. Active listeners: ${entry.refCount}`);
+    } else {
+      const controller = new AbortController();
+      const signal = controller.signal;
 
-    req.on("close", () => {
-      controller.abort();
-      console.log(`[STREAM] User cancelled request. Aborting scrapers...`);
-    });
+      const scrapePromise = (async () => {
+        const mirrors: MirrorStream[] = [];
+        let sourceName = "none";
+        let qualityTag = "UNKNOWN";
+        let resolution = "UNKNOWN";
+        let streamUrl: string | null = null;
+        let proxyUsed: string | undefined = undefined;
 
-    // ── Phase A: Handle Drama Section (Dramacool) ─────────────────────
-    // ONLY fire for explicit drama IDs (k-prefixed slugs from Dramacool).
-    // Normal TMDB TV IDs are numeric strings (e.g. "94605") and must go straight
-    // to Phase B (VidLink) — the old condition fired Phase A on every TV request.
-    if (tmdbId.startsWith("k")) {
-      console.log(
-        `[STREAM] Phase A: Drama ID detected (k-prefix). Checking Dramacool...`,
-      );
-      try {
-        const searchResults = await DramacoolScraper.search(
-          title,
-          undefined,
-          signal,
-        );
-        const match = searchResults[0]; // Take first result
-
-        if (match) {
-          const details = await DramacoolScraper.getDramaDetail(
-            match.id,
-            signal,
-          );
-          const ep = details?.episodes?.find((e: any) => e.number === episode);
-          if (ep) {
-            const dramaMirrors = await DramacoolScraper.getStream(
-              match.id,
-              ep.url,
-            );
-            if (dramaMirrors && dramaMirrors.length > 0) {
-              console.log(`[STREAM] Dramacool HIT ✔`);
-              mirrors.push(...dramaMirrors);
-            }
-          }
-        }
-      } catch (e: any) {
-        if (e.name === "AbortError") return;
-        console.error(`[STREAM] Dramacool Phase A failed:`, e.message);
-      }
-    }
-
-    // ── Phase B: Direct TMDB Path (VidLink) ──────────────────────────
-    if (mirrors.length === 0) {
-      console.log(`[STREAM] Phase B: Checking VidLink (Direct TMDB Path)...`);
-      try {
-        const vidlinkMirrors = await VidLinkScraper.getStream(
-          tmdbId.toString(),
-          kind as any,
-          season,
-          episode,
-          signal,
-        );
-        if (vidlinkMirrors && vidlinkMirrors.length > 0) {
+        // ── Phase A: Handle Drama Section (Dramacool) ─────────────────────
+        // ONLY fire for explicit drama IDs (k-prefixed slugs from Dramacool).
+        // Normal TMDB TV IDs are numeric strings (e.g. "94605") and must go straight
+        // to Phase B (VidLink) — the old condition fired Phase A on every TV request.
+        if (tmdbId.startsWith("k")) {
           console.log(
-            `[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`,
+            `[STREAM] Phase A: Drama ID detected (k-prefix). Checking Dramacool...`,
           );
-          const apiBase = req.headers.host
-            ? (req.headers["x-forwarded-proto"] || "http") +
-              "://" +
-              req.headers.host
-            : "";
-          mirrors.push(...vidlinkMirrors);
-        }
-      } catch (e) {
-        console.error(`[STREAM] VidLink failed:`, e);
-      }
-    }
-
-    // ── Phase C: Fallback Scrapers (Dramacool Search) [CRIPPLED] ─────────
-    /*
-    if (mirrors.length === 0 && title) {
-      console.log(
-        `[STREAM] Phase C: Fallback to Dramacool Search for "${title}"...`,
-      );
-      try {
-        const searchResults = await DramacoolScraper.search(title, undefined, signal);
-        const match = searchResults.find(
-          (r: any) =>
-            r.title.toLowerCase().includes(title.toLowerCase()) ||
-            title.toLowerCase().includes(r.title.toLowerCase()),
-        );
-
-        if (match) {
-          const details = await DramacoolScraper.getDramaDetail(match.id, signal);
-          const ep = details?.episodes?.find((e: any) => e.number === episode);
-          if (ep) {
-            const dramaMirrors = await DramacoolScraper.getStream(
-              match.id,
-              ep.url,
+          try {
+            const searchResults = await DramacoolScraper.search(
+              title,
+              undefined,
+              signal,
             );
-            if (dramaMirrors && dramaMirrors.length > 0) {
-              console.log(`[STREAM] Dramacool Fallback HIT ✔`);
-              mirrors.push(...dramaMirrors);
+            const match = searchResults[0]; // Take first result
+
+            if (match) {
+              const details = await DramacoolScraper.getDramaDetail(
+                match.id,
+                signal,
+              );
+              const ep = details?.episodes?.find((e: any) => e.number === episode);
+              if (ep) {
+                const dramaMirrors = await DramacoolScraper.getStream(
+                  match.id,
+                  ep.url,
+                );
+                if (dramaMirrors && dramaMirrors.length > 0) {
+                  console.log(`[STREAM] Dramacool HIT ✔`);
+                  mirrors.push(...dramaMirrors);
+                }
+              }
             }
+          } catch (e: any) {
+            if (e.name === "AbortError") throw e;
+            console.error(`[STREAM] Dramacool Phase A failed:`, e.message);
           }
         }
-      } catch (e: any) {
-        if (e.name === 'AbortError') return;
-        console.error(`[STREAM] Dramacool Fallback failed:`, e.message);
-      }
-    }
-    */
 
-    if (mirrors.length === 0) {
-      // Record in DeadPool
-      try {
-        await DeadPool.findOneAndUpdate(
-          { tmdbId: tmdbId.toString(), type: kind, season, episode },
-          {
-            lastChecked: new Date(),
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h TTL
-          },
-          { upsert: true },
-        );
-      } catch (err) {
-        console.error(`[DEADPOOL] Failed to log failure:`, err);
-      }
+        // ── Phase B: Direct TMDB Path (VidLink) ──────────────────────────
+        if (mirrors.length === 0) {
+          console.log(`[STREAM] Phase B: Checking VidLink (Direct TMDB Path)...`);
+          try {
+            const vidlinkMirrors = await VidLinkScraper.getStream(
+              tmdbId.toString(),
+              kind as any,
+              season,
+              episode,
+              signal,
+            );
+            if (vidlinkMirrors && vidlinkMirrors.length > 0) {
+              console.log(
+                `[STREAM] VidLink HIT ✔ (Found ${vidlinkMirrors.length} mirrors)`,
+              );
+              mirrors.push(...vidlinkMirrors);
+            }
+          } catch (e) {
+            console.error(`[STREAM] VidLink failed:`, e);
+          }
+        }
 
-      throw new Error("No stream sources found. (Tried VidLink + Scrapers)");
-    }
+        if (mirrors.length === 0) {
+          // Record in DeadPool
+          try {
+            await DeadPool.findOneAndUpdate(
+              { tmdbId: tmdbId.toString(), type: kind, season, episode },
+              {
+                lastChecked: new Date(),
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h TTL
+              },
+              { upsert: true },
+            );
+          } catch (err) {
+            console.error(`[DEADPOOL] Failed to log failure:`, err);
+          }
 
-    const allSubtitles: any[] = [];
-    if (mirrors.length > 0) {
-      streamUrl = mirrors[0]!.url;
-      sourceName = mirrors[0]!.source;
-      resolution = mirrors[0]!.quality || "1080p";
-      qualityTag = resolution.includes("2160") ? "4K" : "HD";
+          throw new Error("No stream sources found. (Tried VidLink + Scrapers)");
+        }
 
-      // Collect all subtitles from mirrors, deduplicating by URL
-      const subMap = new Map();
-      mirrors.forEach((m) => {
-        if (m.subtitles) {
-          m.subtitles.forEach((s: any) => {
-            if (!subMap.has(s.url)) subMap.set(s.url, s);
+        const allSubtitles: any[] = [];
+        if (mirrors.length > 0) {
+          streamUrl = mirrors[0]!.url;
+          sourceName = mirrors[0]!.source;
+          resolution = mirrors[0]!.quality || "1080p";
+          qualityTag = resolution.includes("2160") ? "4K" : "HD";
+
+          // Collect all subtitles from mirrors, deduplicating by URL
+          const subMap = new Map();
+          mirrors.forEach((m) => {
+            if (m.subtitles) {
+              m.subtitles.forEach((s: any) => {
+                if (!subMap.has(s.url)) subMap.set(s.url, s);
+              });
+            }
+          });
+
+          // P9 - REMOVED the blocking getSubtitles (OpenSubtitles) call since client fetches it in parallel
+
+          allSubtitles.push(...subMap.values());
+
+          // Sort to prioritize English and VidLink source
+          allSubtitles.sort((a, b) => {
+            const aIsVidLink = a.source === "VidLink";
+            const bIsVidLink = b.source === "VidLink";
+            const aIsEng =
+              a.languageName?.toLowerCase().includes("english") ||
+              a.lang?.toLowerCase().startsWith("en");
+            const bIsEng =
+              b.languageName?.toLowerCase().includes("english") ||
+              b.lang?.toLowerCase().startsWith("en");
+
+            // English + VidLink is highest priority
+            if (aIsEng && aIsVidLink && !(bIsEng && bIsVidLink)) return -1;
+            if (!(aIsEng && aIsVidLink) && bIsEng && bIsVidLink) return 1;
+
+            // Then just English
+            if (aIsEng && !bIsEng) return -1;
+            if (!aIsEng && bIsEng) return 1;
+
+            // Then VidLink (for other languages)
+            if (aIsVidLink && !bIsVidLink) return -1;
+            if (!aIsVidLink && bIsVidLink) return 1;
+
+            return 0;
           });
         }
-      });
 
-      // Merge with OpenSubtitles as fallback
-      try {
-        const osSubs = await getSubtitles(
-          tmdbId,
-          kind as any,
-          season,
-          episode,
-          title,
-        );
-        if (osSubs && osSubs.length > 0) {
-          osSubs.forEach((s: any) => {
-            // Avoid duplicates if a mirror already had it
-            if (!subMap.has(s.url)) subMap.set(s.url, s);
-          });
+        if (mirrors.length === 0) {
+          throw new Error("No stream sources found across all tiers.");
         }
-      } catch (e) {
-        console.warn(`[STREAM] OpenSubtitles fetch failed:`, e);
-      }
 
-      allSubtitles.push(...subMap.values());
+        // 3. Optional: Cache the result with Intelligent Rotation
+        if (streamUrl) {
+          const releaseDateStr = req.query.releaseDate as string;
+          const isCAM =
+            qualityTag === "CAM" || qualityTag === "TC" || qualityTag === "UNKNOWN";
 
-      // Sort to prioritize English and VidLink source
-      allSubtitles.sort((a, b) => {
-        const aIsVidLink = a.source === "VidLink";
-        const bIsVidLink = b.source === "VidLink";
-        const aIsEng =
-          a.languageName?.toLowerCase().includes("english") ||
-          a.lang?.toLowerCase().startsWith("en");
-        const bIsEng =
-          b.languageName?.toLowerCase().includes("english") ||
-          b.lang?.toLowerCase().startsWith("en");
+          let expiresAt = new Date();
+          let isNewMovie = false;
 
-        // English + VidLink is highest priority
-        if (aIsEng && aIsVidLink && !(bIsEng && bIsVidLink)) return -1;
-        if (!(aIsEng && aIsVidLink) && bIsEng && bIsVidLink) return 1;
+          if (releaseDateStr) {
+            try {
+              const releaseDate = new Date(releaseDateStr);
+              const oneMonthAgo = new Date();
+              oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+              isNewMovie = releaseDate > oneMonthAgo;
+            } catch {}
+          }
 
-        // Then just English
-        if (aIsEng && !bIsEng) return -1;
-        if (!aIsEng && bIsEng) return 1;
+          if (isNewMovie && isCAM) {
+            console.log(
+              `[CACHE] New CAM detected. Setting short TTL (6h) for rotation.`,
+            );
+            expiresAt.setHours(expiresAt.getHours() + 6);
+          } else {
+            // High quality or old movie — cache for 4 hours
+            console.log(`[CACHE] Standard movie. Setting 4h TTL.`);
+            expiresAt.setHours(expiresAt.getHours() + 4);
+          }
 
-        // Then VidLink (for other languages)
-        if (aIsVidLink && !bIsVidLink) return -1;
-        if (!aIsVidLink && bIsVidLink) return 1;
+          await StreamCache.findOneAndUpdate(
+            { tmdbId, type: kind, season, episode },
+            {
+              streamUrl,
+              source: sourceName,
+              qualityTag,
+              resolution,
+              mirrors,
+              streamExpiresAt: expiresAt,
+            },
+            { upsert: true },
+          )
+            .then(() => {
+              // If we found a stream, it's no longer "Dead"
+              DeadPool.deleteOne({
+                tmdbId: tmdbId.toString(),
+                type: kind,
+                season,
+                episode,
+              }).catch(() => {});
+            })
+            .catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
+        }
 
-        return 0;
-      });
-    }
+        // 4. Proxy URL injection — only for non-KissKH sources that used a proxy during scrape
+        let finalUrl = streamUrl;
+        if (finalUrl && proxyUsed && !finalUrl.includes("cdnvideo11.shop")) {
+          try {
+            const urlObj = new URL(finalUrl);
+            urlObj.searchParams.set("nebula_proxy", proxyUsed);
+            finalUrl = urlObj.href;
+          } catch {}
+        }
 
-    if (mirrors.length === 0) {
-      throw new Error("No stream sources found across all tiers.");
-    }
-
-    // 3. Optional: Cache the result with Intelligent Rotation
-    if (streamUrl) {
-      const releaseDateStr = req.query.releaseDate as string;
-      const isCAM =
-        qualityTag === "CAM" || qualityTag === "TC" || qualityTag === "UNKNOWN";
-
-      let expiresAt = new Date();
-      let isNewMovie = false;
-
-      if (releaseDateStr) {
-        try {
-          const releaseDate = new Date(releaseDateStr);
-          const oneMonthAgo = new Date();
-          oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
-          isNewMovie = releaseDate > oneMonthAgo;
-        } catch {}
-      }
-
-      // ROTATION STRATEGY:
-      // - New Movie (< 1mo) AND CAM/Low Quality: Cache for 6 hours
-      // - High Quality (HD/BluRay) or Old Movie: Cache for 4 hours
-      // Reduced from 30 days because CDN links are ephemeral and IP-locked.
-
-      if (isNewMovie && isCAM) {
         console.log(
-          `[CACHE] New CAM detected. Setting short TTL (6h) for rotation.`,
+          `[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`,
         );
-        expiresAt.setHours(expiresAt.getHours() + 6);
-      } else {
-        // High quality or old movie — cache for 4 hours
-        console.log(`[CACHE] Standard movie. Setting 4h TTL.`);
-        expiresAt.setHours(expiresAt.getHours() + 4);
-      }
 
-      StreamCache.findOneAndUpdate(
-        { tmdbId, type: kind, season, episode },
-        {
-          streamUrl,
+        return {
+          streamUrl: finalUrl,
+          streams: [finalUrl],
+          mirrors: mirrors.map((m) => {
+            // Inject proxy if needed for the specific mirror (vsembed)
+            if (m.source.includes("vsembed") && proxyUsed) {
+              try {
+                const u = new URL(m.url);
+                u.searchParams.set("nebula_proxy", proxyUsed);
+                m.url = u.href;
+              } catch {}
+            }
+            // Inject subtitle proxy for all external subs
+            if (m.subtitles) {
+              m.subtitles = m.subtitles.map((s) => {
+                if (s.url.startsWith("http")) {
+                  return {
+                    ...s,
+                    url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
+                  };
+                }
+                return s;
+              });
+            }
+
+            return m;
+          }),
+          subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(
+            (s) => {
+              if (s.url.startsWith("http")) {
+                return {
+                  ...s,
+                  url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
+                };
+              }
+              return s;
+            },
+          ),
           source: sourceName,
           qualityTag,
           resolution,
-          mirrors,
-          streamExpiresAt: expiresAt,
-        },
-        { upsert: true },
-      )
-        .then(() => {
-          // If we found a stream, it's no longer "Dead"
-          DeadPool.deleteOne({
-            tmdbId: tmdbId.toString(),
-            type: kind,
-            season,
-            episode,
-          }).catch(() => {});
-        })
-        .catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
+        };
+      })();
+
+      entry = {
+        promise: scrapePromise,
+        abortController: controller,
+        refCount: 1,
+      };
+      inFlightStreams.set(cacheKey, entry);
     }
 
-    // 4. Proxy URL injection — only for non-KissKH sources that used a proxy during scrape
-    let finalUrl = streamUrl;
-    if (finalUrl && proxyUsed && !finalUrl.includes("cdnvideo11.shop")) {
-      try {
-        const urlObj = new URL(finalUrl);
-        urlObj.searchParams.set("nebula_proxy", proxyUsed);
-        finalUrl = urlObj.href;
-      } catch {}
+    const currentEntry = entry;
+    const onReqClose = () => {
+      currentEntry.refCount--;
+      if (currentEntry.refCount <= 0) {
+        console.log(`[STREAM] All listeners for ${cacheKey} closed. Aborting scraper.`);
+        currentEntry.abortController.abort();
+      }
+    };
+    req.on("close", onReqClose);
+
+    try {
+      const result = await currentEntry.promise;
+      req.off("close", onReqClose);
+      return res.json(result);
+    } catch (err: any) {
+      req.off("close", onReqClose);
+      throw err;
+    } finally {
+      if (!isCoalesced) {
+        inFlightStreams.delete(cacheKey);
+      }
     }
-
-    console.log(
-      `[STREAM] ✔ Found ${mirrors.length} mirrors. Primary source: ${sourceName}`,
-    );
-
-    return res.json({
-      streamUrl: finalUrl,
-      streams: [finalUrl],
-      mirrors: mirrors.map((m) => {
-        // Inject proxy if needed for the specific mirror (vsembed)
-        if (m.source.includes("vsembed") && proxyUsed) {
-          try {
-            const u = new URL(m.url);
-            u.searchParams.set("nebula_proxy", proxyUsed);
-            m.url = u.href;
-          } catch {}
-        }
-        // Inject subtitle proxy for all external subs
-        if (m.subtitles) {
-          m.subtitles = m.subtitles.map((s) => {
-            if (s.url.startsWith("http")) {
-              return {
-                ...s,
-                url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
-              };
-            }
-            return s;
-          });
-        }
-
-        return m;
-      }),
-      subtitles: (allSubtitles.length > 0 ? allSubtitles : undefined)?.map(
-        (s) => {
-          if (s.url.startsWith("http")) {
-            return {
-              ...s,
-              url: `/api/proxy/subtitle?url=${encodeURIComponent(s.url)}`,
-            };
-          }
-          return s;
-        },
-      ),
-      source: sourceName,
-      qualityTag,
-      resolution,
-    });
   } catch (error: any) {
+    if (error.name === "AbortError") {
+      return res.status(499).json({ error: "Request aborted by client" });
+    }
     console.error(`[STREAM] ✘ Failed for tmdbId=${tmdbId}: ${error.message}`);
     return res
       .status(404)
@@ -930,7 +916,7 @@ app.get("/api/tmdb-proxy", async (req, res) => {
     .sort()
     .forEach((k) => {
       if (k !== "language") {
-        sortedQuery.append(k, params[k]);
+        sortedQuery.append(k, params[k] || "");
       }
     });
 
@@ -1335,6 +1321,12 @@ app.get("/api/stream/stop", (req, res) => {
 
 // Endpoint: Flush stream cache (force re-scrape on next play)
 app.post("/api/stream/flush", async (req, res) => {
+  const key = req.headers["x-admin-key"] || req.query.key;
+  if (key !== ADMIN_KEY)
+    return res
+      .status(401)
+      .json({ error: "Unauthorized access — specify ?key= in URL" });
+
   const tmdbId = req.body?.tmdbId as string;
   if (!tmdbId) return res.status(400).json({ error: "Missing tmdbId" });
   await StreamCache.findOneAndUpdate(
@@ -2519,6 +2511,7 @@ async function getFanartMetadata(
   }
 }
 
+// @ts-ignore
 import { generateToken as generateVidrockToken } from "./utils/vidrock_token.js";
 
 app.get("/api/vidrock", async (req, res) => {
