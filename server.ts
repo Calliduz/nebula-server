@@ -276,6 +276,8 @@ app.use(
 
 // 2. Optimized CORS: Restrict to your frontend only
 const allowedOrigins = [
+  "https://nebulawatch.tech",
+  "https://www.nebulawatch.tech",
   "https://nebula.clev.studio",
   "http://localhost:5173",
   "http://localhost:3000",
@@ -1581,7 +1583,7 @@ app.get("/api/proxy/subtitle", async (req, res) => {
         return res.status(500).send("Proxy error");
       }
     } else {
-      let referer = process.env.FRONTEND_URL || "https://nebula.clev.studio/";
+      let referer = process.env.FRONTEND_URL || "https://nebulawatch.tech/";
       let origin: string | undefined;
 
       if (
