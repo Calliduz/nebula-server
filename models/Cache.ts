@@ -15,10 +15,17 @@ const MetadataCacheSchema = new mongoose.Schema({
   logoUrl: { type: String },
   backgroundUrl: { type: String },
   logoFetchedAt: { type: Date },
+
+  // TTL field: new documents receive a 30-day expiry so stale art is eventually
+  // cleaned up. Existing documents without this field are ignored by the reaper.
+  expiresAt: { type: Date },
 });
 
 // Generic Metadata Cache (Logos & Backgrounds)
 MetadataCacheSchema.index({ tmdbId: 1, type: 1 }, { unique: true });
+// TTL index — deletes documents exactly when expiresAt is reached.
+// expireAfterSeconds: 0 = "delete at the stored date, no additional delay".
+MetadataCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const MetadataCache = mongoose.model(
   "MetadataCache",
   MetadataCacheSchema,
@@ -49,7 +56,7 @@ StreamCacheSchema.index(
 StreamCacheSchema.index({ streamExpiresAt: 1 }, { expireAfterSeconds: 0 });
 export const StreamCache = mongoose.model("StreamCache", StreamCacheSchema);
 
-// Permanent Subtitle Cache (Aggregated from Stremio, Subscene, etc.)
+// Subtitle Cache (Aggregated from Stremio, Subscene, etc. — 90-day TTL)
 const SubtitleCacheSchema = new mongoose.Schema({
   tmdbId: { type: String, required: true },
   type: { type: String, enum: ["movie", "tv"], default: "movie" },
@@ -58,12 +65,18 @@ const SubtitleCacheSchema = new mongoose.Schema({
 
   subtitles: { type: Array, default: [] }, // Array of { id, url, lang, languageName }
   aggregatedAt: { type: Date, default: Date.now },
+
+  // TTL field: new documents receive a 90-day expiry for eventual cleanup.
+  // Existing documents without this field are safely ignored by the reaper.
+  expiresAt: { type: Date },
 });
 
 SubtitleCacheSchema.index(
   { tmdbId: 1, type: 1, season: 1, episode: 1 },
   { unique: true },
 );
+// TTL index — deletes documents exactly when expiresAt is reached.
+SubtitleCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const SubtitleCache = mongoose.model(
   "SubtitleCache",
   SubtitleCacheSchema,

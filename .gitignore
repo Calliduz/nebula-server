@@ -6,3 +6,5 @@ logs/
 scratch/
 data/
 session.json
+tests/
+scripts/

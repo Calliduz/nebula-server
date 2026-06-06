@@ -68,19 +68,42 @@ const proxyCache = new Map<
   { body: Buffer; headers: any; expires: number }
 >();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const MAX_CACHE_ENTRIES = 100; // Increased to 100 now that we are in production mode (saves network)
+// 500 entries supports ~125 concurrent viewers (1 master + ~4 variant manifests each).
+const MAX_CACHE_ENTRIES = 500;
 
+/**
+ * LRU-aware setter: re-inserts the key at the end of the Map so that
+ * Map's insertion-order iteration gives us LRU eviction for free.
+ */
 function setProxyCache(
   key: string,
   value: { body: Buffer; headers: any; expires: number },
 ) {
+  // Remove before re-inserting to move to the end (LRU semantics)
+  proxyCache.delete(key);
   if (proxyCache.size >= MAX_CACHE_ENTRIES) {
-    const oldestKey = proxyCache.keys().next().value;
-    if (oldestKey) {
-      proxyCache.delete(oldestKey);
-    }
+    // Evict the least-recently-used (first in insertion order)
+    const lruKey = proxyCache.keys().next().value;
+    if (lruKey) proxyCache.delete(lruKey);
   }
   proxyCache.set(key, value);
+}
+
+/**
+ * LRU-aware getter: moves the hit entry to the end so it survives
+ * the next eviction cycle. Returns null on miss or expiry.
+ */
+function getProxyCache(key: string) {
+  const entry = proxyCache.get(key);
+  if (!entry) return null;
+  if (entry.expires < Date.now()) {
+    proxyCache.delete(key);
+    return null;
+  }
+  // LRU touch: re-insert at end
+  proxyCache.delete(key);
+  proxyCache.set(key, entry);
+  return entry;
 }
 
 let cacheHits = 0;
@@ -163,6 +186,15 @@ const httpsAgent = new https.Agent({
   maxFreeSockets: 64,
   timeout: 30000, // Increased to 30s for slower CDN segments
 });
+
+// Shared TLS-hardened agent for non-VidLink CDN segment requests.
+// Created once at startup so every segment request reuses the same
+// socket pool instead of allocating a new TLS context per request.
+let _sharedHardenedAgent: ReturnType<typeof createHardenedAgent> | null = null;
+function getSharedHardenedAgent() {
+  if (!_sharedHardenedAgent) _sharedHardenedAgent = createHardenedAgent();
+  return _sharedHardenedAgent;
+}
 
 function fetchVidLinkRaw(
   rawUrl: string,
@@ -251,11 +283,8 @@ function fetchVidLinkRaw(
       reject(err);
     });
 
-    // Add a strict 15s timeout to avoid hanging the Node.js event loop
-    req.setTimeout(15000, () => {
-      req.destroy();
-      reject(new Error("Request timeout"));
-    });
+    // Note: Only one setTimeout is registered (30s). A second 15s call
+    // was previously overriding this one silently — removed.
 
     req.end();
   });
@@ -329,7 +358,8 @@ const limiter = rateLimit({
 // Apply the rate limiter to all requests
 app.use(limiter);
 
-app.use(express.json());
+// express.json() is applied per-route (only POST/mutation routes need body parsing).
+// Applying it globally wastes CPU on every GET proxy/segment request that never has a body.
 
 // Initialize MongoDB
 const MONGODB_URI =
@@ -418,6 +448,11 @@ const connectDB = async (retryCount = 5) => {
       connectTimeoutMS: 10000,
       socketTimeoutMS: 45000, // Close sockets after 45s of inactivity (client-side)
       family: 4, // Force IPv4 to avoid slow dual-stack lookups on Oracle
+      // Connection pool tuning: default of 5 is too small for concurrent
+      // scrape + cache + metadata lookups under burst traffic.
+      maxPoolSize: 20,
+      minPoolSize: 5,
+      maxIdleTimeMS: 30000, // Match Atlas idle timeout (Atlas drops TCP after 30min)
     });
     console.log("MongoDB Uplink Established");
   } catch (err: any) {
@@ -450,8 +485,15 @@ app.get(["/health", "/api/health"], (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// In-memory cache for external IDs (IMDB/TVDB). These IDs are permanent
+// for any given title so there is no need for TTL-based expiry.
+const _externalIdCache = new Map<string, string | null>();
+
 async function getExternalIMDBId(tmdbId: string, type: "movie" | "tv") {
+  const cacheKey = `imdb-${tmdbId}-${type}`;
+  if (_externalIdCache.has(cacheKey)) return _externalIdCache.get(cacheKey)!;
   try {
+    let imdbId: string | null = null;
     if (type === "movie") {
       const res = await axios.get(
         `https://api.themoviedb.org/3/movie/${tmdbId}`,
@@ -459,7 +501,7 @@ async function getExternalIMDBId(tmdbId: string, type: "movie" | "tv") {
           headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
         },
       );
-      return res.data.imdb_id;
+      imdbId = res.data.imdb_id || null;
     } else {
       const res = await axios.get(
         `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`,
@@ -467,9 +509,12 @@ async function getExternalIMDBId(tmdbId: string, type: "movie" | "tv") {
           headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
         },
       );
-      return res.data.imdb_id;
+      imdbId = res.data.imdb_id || null;
     }
+    _externalIdCache.set(cacheKey, imdbId);
+    return imdbId;
   } catch (e) {
+    // Do NOT cache failures — let them retry on the next request
     return null;
   }
 }
@@ -521,7 +566,7 @@ app.get("/api/download", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({ key: cacheKey });
+    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
     if (cached) {
       return res.json(cached.data);
     }
@@ -766,7 +811,7 @@ app.get("/api/download/episode", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({ key: cacheKey });
+    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
     if (cached) {
       return res.json(cached.data);
     }
@@ -1343,7 +1388,7 @@ app.get("/api/tmdb-proxy", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({ key: cacheKey });
+    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
     if (cached) {
       return res.json(cached.data);
     }
@@ -1483,7 +1528,12 @@ app.get("/api/subtitles", async (req, res) => {
     if (sorted.length > 0) {
       await SubtitleCache.findOneAndUpdate(
         { tmdbId, type: kind, season, episode },
-        { subtitles: sorted, aggregatedAt: new Date() },
+        {
+          subtitles: sorted,
+          aggregatedAt: new Date(),
+          // 90-day TTL — subtitle URLs don't change but we want eventual cleanup
+          expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+        },
         { upsert: true },
       ).catch(() => null);
     }
@@ -1739,7 +1789,7 @@ app.get("/api/stream/stop", (req, res) => {
 });
 
 // Endpoint: Flush stream cache (force re-scrape on next play)
-app.post("/api/stream/flush", async (req, res) => {
+app.post("/api/stream/flush", express.json(), async (req, res) => {
   const key = req.headers["x-admin-key"] || req.query.key;
   if (key !== ADMIN_KEY)
     return res
@@ -1965,8 +2015,8 @@ app.get("/api/proxy/stream", async (req, res) => {
   }
 
   const cacheKey = targetUrl;
-  const cached = proxyCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) {
+  const cached = getProxyCache(cacheKey);
+  if (cached) {
     console.log(
       `[PROXY/stream] ⚡ Cache Hit: ${targetUrl.substring(0, 60)}...`,
     );
@@ -2367,7 +2417,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         proxy: false, // disable axios auto-proxy; we set it via httpsAgent if needed
         httpsAgent: proxyUrl
           ? new (await import("https-proxy-agent")).HttpsProxyAgent(proxyUrl)
-          : createHardenedAgent(),
+          : getSharedHardenedAgent(), // reuse singleton to avoid per-request TLS context allocation
         maxRedirects: 5,
       });
 
@@ -2467,7 +2517,7 @@ app.get("/api/proxy/segment", async (req, res) => {
   await streamSegment(false);
 });
 
-app.all("/api/cache/clear", async (req, res) => {
+app.all("/api/cache/clear", express.json(), async (req, res) => {
   const key = req.headers["x-admin-key"] || req.query.key;
   if (key !== ADMIN_KEY)
     return res
@@ -2698,6 +2748,8 @@ app.get("/api/image", async (req, res) => {
 });
 
 async function getIMDBId(tmdbId: string) {
+  const cacheKey = `imdb-movie-${tmdbId}`;
+  if (_externalIdCache.has(cacheKey)) return _externalIdCache.get(cacheKey)!;
   try {
     const res = await axios.get(
       `https://api.themoviedb.org/3/movie/${tmdbId}`,
@@ -2705,13 +2757,17 @@ async function getIMDBId(tmdbId: string) {
         headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
       },
     );
-    return res.data.imdb_id;
+    const id = res.data.imdb_id || null;
+    _externalIdCache.set(cacheKey, id);
+    return id;
   } catch (e) {
     return null;
   }
 }
 
 async function getTVDBId(tmdbId: string) {
+  const cacheKey = `tvdb-${tmdbId}`;
+  if (_externalIdCache.has(cacheKey)) return _externalIdCache.get(cacheKey)!;
   try {
     const res = await axios.get(
       `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`,
@@ -2719,7 +2775,9 @@ async function getTVDBId(tmdbId: string) {
         headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
       },
     );
-    return res.data.tvdb_id;
+    const id = res.data.tvdb_id ? String(res.data.tvdb_id) : null;
+    _externalIdCache.set(cacheKey, id);
+    return id;
   } catch (e) {
     return null;
   }
@@ -2896,10 +2954,16 @@ async function getFanartMetadata(
       if (selection) backgroundUrl = selection.url;
     }
 
-    // Save to Cache with Type
+    // Save to Cache with Type (30-day TTL for stale art cleanup)
     await MetadataCache.findOneAndUpdate(
       { tmdbId, type },
-      { logoUrl: hdLogo, backgroundUrl, logoFetchedAt: new Date(), type },
+      {
+        logoUrl: hdLogo,
+        backgroundUrl,
+        logoFetchedAt: new Date(),
+        type,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
       { upsert: true },
     ).catch(() => null);
 
