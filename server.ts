@@ -455,6 +455,23 @@ const connectDB = async (retryCount = 5) => {
       maxIdleTimeMS: 30000, // Match Atlas idle timeout (Atlas drops TCP after 30min)
     });
     console.log("MongoDB Uplink Established");
+
+    // One-time migration: drop the old TTL index on streamExpiresAt (4-6h)
+    // so documents aren't reaped before the new 14-day expiresAt TTL kicks in.
+    // Mongoose will auto-create the new expiresAt TTL index from the schema.
+    // Once the old index is gone, this dropIndex call is a harmless no-op.
+    try {
+      const db = mongoose.connection.db;
+      if (db) {
+        await db.collection("streamcaches").dropIndex("streamExpiresAt_1");
+        console.log("[DB] Dropped old streamExpiresAt TTL index (migrated to expiresAt)");
+      }
+    } catch (e: any) {
+      // Index doesn't exist (already migrated) — ignore
+      if (!e.message?.includes("index not found")) {
+        console.warn("[DB] Index migration note:", e.message);
+      }
+    }
   } catch (err: any) {
     if (retryCount > 0) {
       console.warn(
@@ -1180,6 +1197,12 @@ app.get("/api/stream", async (req, res) => {
               resolution,
               mirrors,
               streamExpiresAt: expiresAt,
+              // Document lives 14 days so the "Verified" badge persists on
+              // movie cards long after the stream URL expires (4-6h).
+              // The code-level check on streamExpiresAt prevents stale URLs
+              // from being served, but the document's existence is enough
+              // for the availability endpoint to report isVerified=true.
+              expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
             },
             { upsert: true },
           )

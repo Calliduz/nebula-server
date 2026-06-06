@@ -44,16 +44,24 @@ const StreamCacheSchema = new mongoose.Schema({
   resolution: { type: String, default: "UNKNOWN" },
   mirrors: { type: Array, default: [] }, // Array of { url, source, quality }
   subtitles: { type: Array, default: [] },
+
+  // URL freshness: stream URLs expire in 4-6h (CDN-side).
+  // The code checks this field before serving a cached URL.
   streamExpiresAt: { type: Date },
+
+  // Document lifetime: 14 days. Keeps the document alive so the
+  // "Verified" badge on movie cards persists long after the URL expires.
+  // When a user re-plays the movie, a fresh scrape runs but the badge stays.
+  expiresAt: { type: Date },
 });
 
 StreamCacheSchema.index(
   { tmdbId: 1, type: 1, season: 1, episode: 1 },
   { unique: true },
 );
-// TTL index: MongoDB automatically deletes expired stream docs when streamExpiresAt is reached.
-// expireAfterSeconds: 0 means "delete exactly at the date stored in the field".
-StreamCacheSchema.index({ streamExpiresAt: 1 }, { expireAfterSeconds: 0 });
+// TTL index on expiresAt (14 days) — NOT streamExpiresAt (4-6h).
+// The document stays for 2 weeks so /api/stream/availability reports isVerified=true.
+StreamCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const StreamCache = mongoose.model("StreamCache", StreamCacheSchema);
 
 // Subtitle Cache (Aggregated from Stremio, Subscene, etc. — 90-day TTL)
@@ -137,3 +145,4 @@ const TmdbCacheSchema = new mongoose.Schema({
 TmdbCacheSchema.index({ key: 1 }, { unique: true });
 TmdbCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const TmdbCache = mongoose.model("TmdbCache", TmdbCacheSchema);
+
