@@ -1944,16 +1944,41 @@ app.get("/api/subtitles", async (req, res) => {
           })()
         : Promise.resolve([]),
       getSubtitles(tmdbId, kind, season, episode, title),
+      // 3. VidVault subtitles extraction
+      (async () => {
+        if (
+          tmdbId.toString().startsWith("k") ||
+          (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))
+        ) {
+          return [];
+        }
+        try {
+          const downloads = await fetchVidVaultDownloads(kind, tmdbId, season, episode);
+          const firstWithSubs = downloads.find((d) => d.subtitles && d.subtitles.length > 0);
+          if (firstWithSubs) {
+            return firstWithSubs.subtitles.map((s) => ({
+              id: kind === "tv" ? `vidvault-${s.lan}-${season}-${episode}` : `vidvault-${s.lan}`,
+              url: s.url,
+              lang: s.lan,
+              languageName: `${s.lanName} (VidVault)`,
+              source: "VidVault"
+            }));
+          }
+        } catch (err: any) {
+          console.warn(`[SUBS] VidVault extraction failed: ${err.message}`);
+        }
+        return [];
+      })()
     ]);
 
     const aggregated = results
       .filter((r) => r.status === "fulfilled")
       .flatMap((r) => (r as PromiseFulfilledResult<any[]>).value);
 
-    // 2. Sort to prioritize English and VidLink source
+    // 2. Sort to prioritize English and priority sources (VidLink/VidVault)
     const sorted = aggregated.sort((a, b) => {
-      const aIsVidLink = a.source === "VidLink";
-      const bIsVidLink = b.source === "VidLink";
+      const aIsPrioritySource = a.source === "VidLink" || a.source === "VidVault";
+      const bIsPrioritySource = b.source === "VidLink" || b.source === "VidVault";
       const aIsEng =
         a.languageName?.toLowerCase().includes("english") ||
         a.lang?.toLowerCase().startsWith("en") ||
@@ -1963,17 +1988,17 @@ app.get("/api/subtitles", async (req, res) => {
         b.lang?.toLowerCase().startsWith("en") ||
         b.language?.toLowerCase().startsWith("en");
 
-      // English + VidLink is highest priority
-      if (aIsEng && aIsVidLink && !(bIsEng && bIsVidLink)) return -1;
-      if (!(aIsEng && aIsVidLink) && bIsEng && bIsVidLink) return 1;
+      // English + PrioritySource is highest priority
+      if (aIsEng && aIsPrioritySource && !(bIsEng && bIsPrioritySource)) return -1;
+      if (!(aIsEng && aIsPrioritySource) && bIsEng && bIsPrioritySource) return 1;
 
       // Then just English
       if (aIsEng && !bIsEng) return -1;
       if (!aIsEng && bIsEng) return 1;
 
-      // Then VidLink (for other languages)
-      if (aIsVidLink && !bIsVidLink) return -1;
-      if (!aIsVidLink && bIsVidLink) return 1;
+      // Then PrioritySource (for other languages)
+      if (aIsPrioritySource && !bIsPrioritySource) return -1;
+      if (!aIsPrioritySource && bIsPrioritySource) return 1;
 
       return 0;
     });
