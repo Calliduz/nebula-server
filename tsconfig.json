@@ -41,5 +41,10 @@
     "moduleDetection": "force",
     "skipLibCheck": true
   },
-  "exclude": ["node_modules", "dist", "scratch", "scratch_decode_vidlink.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "scratch",
+    "scratch/scratch_decode_vidlink.ts"
+  ]
 }

@@ -545,6 +545,32 @@ function formatBytes(bytes: number, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
+function parseSizeToBytes(rawSize: any): number {
+  if (!rawSize) return 0;
+  if (typeof rawSize === "number") return rawSize;
+  const str = String(rawSize).toLowerCase().trim();
+  const num = parseFloat(str);
+  if (isNaN(num)) return 0;
+  if (str.includes("gb")) return num * 1024 * 1024 * 1024;
+  if (str.includes("mb")) return num * 1024 * 1024;
+  if (str.includes("kb")) return num * 1024;
+  return num;
+}
+
+function parseAndFormatSize(rawSize: any): string {
+  if (rawSize === undefined || rawSize === null) return "Unknown";
+  if (typeof rawSize === "number") {
+    return formatBytes(rawSize);
+  }
+  const str = String(rawSize).trim();
+  if (/[a-zA-Z]/.test(str)) {
+    // Already contains unit suffix, use directly
+    return str;
+  }
+  const bytes = parseInt(str, 10);
+  return bytes > 0 ? formatBytes(bytes) : "Unknown";
+}
+
 function parseTorrentioTitle(title: string) {
   const parts = title.split("\n");
   const filename = parts[0] || "Unknown Title";
@@ -556,19 +582,352 @@ function parseTorrentioTitle(title: string) {
   let provider = "Torrentio";
 
   const seedsMatch = statsLine.match(/👤\s*(\d+)/);
-  if (seedsMatch) seeds = parseInt(seedsMatch[1]) || 0;
+  if (seedsMatch && seedsMatch[1]) seeds = parseInt(seedsMatch[1]) || 0;
 
   const peersMatch = statsLine.match(/👥\s*(\d+)/) || statsLine.match(/👤\s*\d+\s*(\d+)/);
-  if (peersMatch) peers = parseInt(peersMatch[1]) || 0;
+  if (peersMatch && peersMatch[1]) peers = parseInt(peersMatch[1]) || 0;
 
   const sizeMatch = statsLine.match(/💾\s*([\d\.]+\s*[MGB]+)/i) || statsLine.match(/💾\s*([^⚙️\n]+)/);
-  if (sizeMatch) size = sizeMatch[1].trim();
+  if (sizeMatch && sizeMatch[1]) size = sizeMatch[1].trim();
 
   const providerMatch = statsLine.match(/⚙️\s*([^\n\r]+)/);
-  if (providerMatch) provider = providerMatch[1].trim();
+  if (providerMatch && providerMatch[1]) provider = providerMatch[1].trim();
 
   return { filename, seeds, peers, size, provider };
 }
+
+// ── VidVault Direct Download Helper ─────────────────────────────────────────
+// VidVault returns signed CDN URLs (hakunaymatata.com) that expire after ~6 hours.
+// The token itself is stateless — no session cookies required from server context.
+// We do NOT cache VidVault results long-term because the signed URLs expire.
+
+const VIDVAULT_BASE = "https://vidvault.ru";
+const VIDVAULT_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
+
+async function fetchVidVaultToken(): Promise<string | null> {
+  try {
+    const res = await fetch(`${VIDVAULT_BASE}/api/get-token`, {
+      method: "GET",
+      headers: {
+        accept: "*/*",
+        "user-agent": VIDVAULT_UA,
+        referer: `${VIDVAULT_BASE}/`,
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      console.warn(`[VIDVAULT] Token fetch failed: HTTP ${res.status}`);
+      return null;
+    }
+    // Response: { "t": "<hex token>", "e": <expiry epoch ms> }
+    const json = (await res.json()) as { t?: string; token?: string; e?: number };
+    const token = json.t ?? json.token ?? null;
+    if (!token) {
+      console.warn(`[VIDVAULT] Token parse failed — unexpected shape:`, Object.keys(json));
+      return null;
+    }
+    return token;
+  } catch (err: any) {
+    console.warn(`[VIDVAULT] Token request error: ${err.message}`);
+    return null;
+  }
+}
+
+async function getMediaTitleAndYear(tmdbId: string, type: "movie" | "tv"): Promise<{ title: string; year: string }> {
+  const cacheKey = `media-title-year-${tmdbId}-${type}`;
+  try {
+    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    if (cached) return cached.data;
+  } catch (e) {
+    console.warn(`[TMDB] Cache read failed for title-year lookup:`, e);
+  }
+
+  try {
+    const res = await axios.get(
+      `https://api.themoviedb.org/3/${type}/${tmdbId}`,
+      {
+        headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
+        timeout: 5000,
+      }
+    );
+    const data = res.data;
+    const title = type === "movie" ? (data.title || data.original_title) : (data.name || data.original_name);
+    const dateStr = type === "movie" ? data.release_date : data.first_air_date;
+    const year = dateStr ? dateStr.substring(0, 4) : "";
+    const result = { title: title || "Media", year: year || "" };
+    
+    const ttl = 1000 * 60 * 60 * 24 * 30; // 30 days
+    await TmdbCache.findOneAndUpdate(
+      { key: cacheKey },
+      { data: result, expiresAt: new Date(Date.now() + ttl) },
+      { upsert: true }
+    ).catch(() => null);
+
+    return result;
+  } catch (err: any) {
+    console.warn(`[TMDB] Failed to fetch title and year for ${type} ${tmdbId}: ${err.message}`);
+    return { title: "Media", year: "" };
+  }
+}
+
+interface VidVaultCaption {
+  lan: string;     // ISO language code, e.g. "en"
+  lanName: string; // Human-readable name, e.g. "English"
+  url: string;     // Direct .srt / .vtt URL
+}
+
+interface VidVaultDownload {
+  title: string;
+  quality: string;
+  size: string;
+  direct_url: string;
+  source: "VidVault";
+  format: "mp4" | "mkv"; // mp4 = no embedded subs; mkv = embedded subs
+  subtitles: VidVaultCaption[]; // populated for mp4 entries only
+  type: "movie" | "tv";
+  season?: number;
+  episode?: number;
+}
+
+async function fetchVidVaultDownloads(
+  kind: "movie" | "tv",
+  tmdbId: string,
+  season?: number,
+  episode?: number,
+): Promise<VidVaultDownload[]> {
+  const token = await fetchVidVaultToken();
+  if (!token) return [];
+
+  const mediaInfo = await getMediaTitleAndYear(tmdbId, kind);
+
+  const requestBody: Record<string, any> =
+    kind === "movie"
+      ? { type: "movie", tmdbId }
+      : { type: "tv", tmdbId, season: season ?? 1, episode: episode ?? 1 };
+
+  let proxyRes: Response;
+  try {
+    proxyRes = await fetch(`${VIDVAULT_BASE}/api/download-proxy`, {
+      method: "POST",
+      headers: {
+        accept: "*/*",
+        "content-type": "application/json",
+        "user-agent": VIDVAULT_UA,
+        referer: `${VIDVAULT_BASE}/`,
+        "x-request-token": token,
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (err: any) {
+    console.warn(`[VIDVAULT] Proxy request error: ${err.message}`);
+    return [];
+  }
+
+  if (!proxyRes.ok) {
+    console.warn(`[VIDVAULT] Proxy returned HTTP ${proxyRes.status}`);
+    return [];
+  }
+
+  let data: any;
+  try {
+    data = await proxyRes.json();
+  } catch {
+    console.warn(`[VIDVAULT] Proxy response is not JSON`);
+    return [];
+  }
+
+  const results: VidVaultDownload[] = [];
+
+  // ── Extract Subtitles ──────────────────────────────────────────────────────
+  const rawCaptions: any[] = data?.mp4Data?.downloadInfo?.data?.captions ?? [];
+  const captions: VidVaultCaption[] = rawCaptions
+    .filter((c: any) => c?.url?.startsWith("http"))
+    .map((c: any) => {
+      const subExt = c.url.split("?")[0].split(".").pop() || "srt";
+      const subFileName = kind === "movie"
+        ? `${mediaInfo.title} (${mediaInfo.year}) - ${c.lanName}.${subExt}`
+        : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, '0')}E${(episode ?? 1).toString().padStart(2, '0')} - ${c.lanName}.${subExt}`;
+
+      const subUrl = `/api/download/stream-file?url=${encodeURIComponent(c.url)}&name=${encodeURIComponent(subFileName)}`;
+
+      return {
+        lan: String(c.lan ?? "und"),
+        lanName: String(c.lanName ?? c.lan ?? "Unknown"),
+        url: subUrl,
+      };
+    });
+
+  // ── Extract MP4 downloads ──────────────────────────────────────────────────
+  const downloads: any[] = data?.mp4Data?.downloadInfo?.data?.downloads ?? [];
+  const mp4FileName = kind === "movie"
+    ? `${mediaInfo.title} (${mediaInfo.year}).mp4`
+    : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, '0')}E${(episode ?? 1).toString().padStart(2, '0')}.mp4`;
+
+  for (const d of downloads) {
+    if (!d.url || !d.url.startsWith("http")) continue;
+    const rawQuality = String(d.quality ?? d.definition ?? d.label ?? "HD").trim();
+    const sizeBytes = parseSizeToBytes(d.filesize ?? d.size);
+    const sizeStr = parseAndFormatSize(d.filesize ?? d.size);
+
+    // VidVault always returns "HD" for quality — infer resolution from file size
+    let quality = rawQuality;
+    if (/^hd$/i.test(rawQuality) && sizeBytes > 0) {
+      if (sizeBytes < 200 * 1024 * 1024)        quality = "360p";
+      else if (sizeBytes < 400 * 1024 * 1024)   quality = "480p";
+      else if (sizeBytes < 750 * 1024 * 1024)   quality = "720p";
+      else if (sizeBytes < 2000 * 1024 * 1024)  quality = "1080p";
+      else                                     quality = "4K";
+    }
+
+    const direct_url = `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`;
+
+    const entry: VidVaultDownload = {
+      title: "",
+      quality,
+      size: String(sizeStr),
+      direct_url,
+      source: "VidVault",
+      format: "mp4",
+      subtitles: captions, // same subtitle list for every quality tier
+      type: kind,
+    };
+    if (kind === "tv" && season !== undefined) entry.season = season;
+    if (kind === "tv" && episode !== undefined) entry.episode = episode;
+    results.push(entry);
+  }
+
+  // ── Extract MKV downloads (mkvData, mkvV2Data, mkvV3Data) ────────────
+  const mkvFileName = kind === "movie"
+    ? `${mediaInfo.title} (${mediaInfo.year}).mkv`
+    : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, '0')}E${(episode ?? 1).toString().padStart(2, '0')}.mkv`;
+
+  const mkvKeys = ["mkvData", "mkvV2Data", "mkvV3Data"] as const;
+  for (const key of mkvKeys) {
+    const mkvObj = data?.[key];
+    if (!mkvObj) continue;
+
+    if (Array.isArray(mkvObj.files)) {
+      for (const file of mkvObj.files) {
+        if (file && typeof file.url === "string" && file.url.startsWith("http")) {
+          const sizeBytes = parseSizeToBytes(file.size);
+          const sizeStr = parseAndFormatSize(file.size);
+
+          let mkvQuality = file.quality ?? mkvObj.quality ?? "HD";
+          mkvQuality = String(mkvQuality).replace(/\s*\(mkv\)/gi, "").trim();
+          if (/^hd$/i.test(mkvQuality) && sizeBytes > 0) {
+            if (sizeBytes < 200 * 1024 * 1024)       mkvQuality = "360p";
+            else if (sizeBytes < 400 * 1024 * 1024)  mkvQuality = "480p";
+            else if (sizeBytes < 750 * 1024 * 1024)  mkvQuality = "720p";
+            else if (sizeBytes < 2000 * 1024 * 1024) mkvQuality = "1080p";
+            else                                   mkvQuality = "4K";
+          }
+
+          const direct_url = `/api/download/stream-file?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(mkvFileName)}`;
+
+          const mkvEntry: VidVaultDownload = {
+            title: "",
+            quality: String(mkvQuality),
+            size: String(sizeStr),
+            direct_url,
+            source: "VidVault",
+            format: "mkv",
+            subtitles: [], // embedded — no external .srt needed
+            type: kind,
+          };
+          if (kind === "tv" && season !== undefined) mkvEntry.season = season;
+          if (kind === "tv" && episode !== undefined) mkvEntry.episode = episode;
+          results.push(mkvEntry);
+        }
+      }
+    } else if (typeof mkvObj.url === "string" && mkvObj.url.startsWith("http")) {
+      const rawMkvQuality = String(mkvObj.quality ?? "HD").replace(/\s*\(mkv\)/gi, "").trim();
+      const sizeBytes = parseSizeToBytes(mkvObj.size);
+      const mkvSizeStr = parseAndFormatSize(mkvObj.size);
+
+      let mkvQuality = rawMkvQuality;
+      if (/^hd$/i.test(rawMkvQuality) && sizeBytes > 0) {
+        if (sizeBytes < 200 * 1024 * 1024)       mkvQuality = "360p";
+        else if (sizeBytes < 400 * 1024 * 1024)  mkvQuality = "480p";
+        else if (sizeBytes < 750 * 1024 * 1024)  mkvQuality = "720p";
+        else if (sizeBytes < 2000 * 1024 * 1024) mkvQuality = "1080p";
+        else                                       mkvQuality = "4K";
+      }
+
+      const direct_url = `/api/download/stream-file?url=${encodeURIComponent(mkvObj.url)}&name=${encodeURIComponent(mkvFileName)}`;
+
+      const mkvEntry: VidVaultDownload = {
+        title: "",
+        quality: String(mkvQuality),
+        size: String(mkvSizeStr),
+        direct_url,
+        source: "VidVault",
+        format: "mkv",
+        subtitles: [], // embedded — no external .srt needed
+        type: kind,
+      };
+      if (kind === "tv" && season !== undefined) mkvEntry.season = season;
+      if (kind === "tv" && episode !== undefined) mkvEntry.episode = episode;
+      results.push(mkvEntry);
+    }
+  }
+
+  console.log(`[VIDVAULT] Found ${results.length} download(s) for ${kind} tmdbId=${tmdbId}${
+    kind === "tv" ? ` S${season}E${episode}` : ""
+  }`);
+  return results;
+}
+
+// Endpoint: Stream Proxy for direct downloads (bypasses hotlink protection & sets friendly filenames)
+app.get("/api/download/stream-file", async (req, res) => {
+  let targetUrl = req.query.url as string;
+  const filename = req.query.name as string || "download";
+
+  if (!targetUrl) {
+    return res.status(400).json({ error: "Missing url parameter" });
+  }
+
+  // Route hakunaymatata.com CDN requests through Cloudflare worker to bypass datacenter IP blocks
+  if (targetUrl.includes("hakunaymatata.com") && !targetUrl.includes("workers.dev")) {
+    targetUrl = `https://dl.gemlelispe.workers.dev/${encodeURIComponent(targetUrl)}`;
+  }
+
+  try {
+    // Set headers to trigger a file download in the browser with friendly filename
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader("Content-Type", "application/octet-stream");
+
+    const response = await axios({
+      method: "get",
+      url: targetUrl,
+      responseType: "stream",
+      headers: {
+        "User-Agent": VIDVAULT_UA,
+        "Referer": "https://vidvault.ru/",
+        "Origin": "https://vidvault.ru",
+        "Accept": "*/*"
+      }
+    });
+
+    if (response.headers["content-length"]) {
+      res.setHeader("Content-Length", response.headers["content-length"]);
+    }
+
+    response.data.pipe(res);
+  } catch (error: any) {
+    console.error(`[STREAM PROXY ERROR] Failed to stream ${targetUrl}: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to download file" });
+    }
+  }
+});
 
 // Endpoint: Download Torrent Links
 app.get("/api/download", async (req, res) => {
@@ -587,6 +946,7 @@ app.get("/api/download", async (req, res) => {
     if (cached) {
       return res.json(cached.data);
     }
+
 
     // 2. Resolve IMDB ID
     let imdbId = await getExternalIMDBId(tmdbId, kind);
@@ -789,24 +1149,18 @@ app.get("/api/download", async (req, res) => {
       }
     }
 
-    const payload = {
-      title,
-      imdbId,
-      torrents
-    };
-
-    // Cache the result for 24 hours
+    const cachePayload = { title, imdbId, torrents };
     const ttl = 1000 * 60 * 60 * 24;
     await TmdbCache.findOneAndUpdate(
       { key: cacheKey },
       {
-        data: payload,
+        data: cachePayload,
         expiresAt: new Date(Date.now() + ttl),
       },
       { upsert: true },
     ).catch(() => null);
 
-    return res.json(payload);
+    return res.json({ title, imdbId, torrents });
 
   } catch (error: any) {
     console.error(`[DOWNLOAD API ERROR] For ${tmdbId}: ${error.message}`);
@@ -908,24 +1262,101 @@ app.get("/api/download/episode", async (req, res) => {
       console.warn(`[DOWNLOAD EPISODE] Apibay backup failed: ${err.message}`);
     }
 
-    const payload = { torrents };
-
-    // Cache results for 24 hours
+    const cachePayload = { torrents };
     const ttl = 1000 * 60 * 60 * 24;
     await TmdbCache.findOneAndUpdate(
       { key: cacheKey },
       {
-        data: payload,
+        data: cachePayload,
         expiresAt: new Date(Date.now() + ttl),
       },
       { upsert: true },
     ).catch(() => null);
 
-    return res.json(payload);
+    return res.json({ torrents });
 
   } catch (error: any) {
     console.error(`[DOWNLOAD EPISODE ERROR] ${error.message}`);
     return res.status(500).json({ error: error.message || "Failed to fetch backup streams" });
+  }
+});
+
+// Endpoint: Download Movie/TV Direct Links (VidVault)
+app.get("/api/download/direct", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const kind = req.query.type as "movie" | "tv";
+
+  if (!tmdbId || !kind) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  const cacheKey = `direct-downloads-${tmdbId}-${kind}`;
+
+  try {
+    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    if (cached) {
+      return res.json({ directDownloads: cached.data });
+    }
+
+    const directDownloads = await fetchVidVaultDownloads(kind, tmdbId);
+
+    // Only cache if we got actual links
+    if (directDownloads.length > 0) {
+      const ttl = 1000 * 60 * 5; // 5 minutes cache
+      await TmdbCache.findOneAndUpdate(
+        { key: cacheKey },
+        {
+          data: directDownloads,
+          expiresAt: new Date(Date.now() + ttl),
+        },
+        { upsert: true }
+      ).catch(() => null);
+    }
+
+    return res.json({ directDownloads });
+  } catch (error: any) {
+    console.error(`[DIRECT DOWNLOAD API ERROR] For ${tmdbId}: ${error.message}`);
+    return res.status(500).json({ error: error.message || "Failed to fetch direct downloads" });
+  }
+});
+
+// Endpoint: Download TV Episode Direct Links (VidVault)
+app.get("/api/download/episode/direct", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const season = parseInt(req.query.season as string) || 1;
+  const episode = parseInt(req.query.episode as string) || 1;
+
+  if (!tmdbId) {
+    return res.status(400).json({ error: "Missing tmdbId" });
+  }
+
+  const cacheKey = `direct-downloads-episode-${tmdbId}-${season}-${episode}`;
+
+  try {
+    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    if (cached) {
+      return res.json({ directDownloads: cached.data });
+    }
+
+    const directDownloads = await fetchVidVaultDownloads("tv", tmdbId, season, episode);
+
+    // Only cache if we got actual links
+    if (directDownloads.length > 0) {
+      const ttl = 1000 * 60 * 5; // 5 minutes cache
+      await TmdbCache.findOneAndUpdate(
+        { key: cacheKey },
+        {
+          data: directDownloads,
+          expiresAt: new Date(Date.now() + ttl),
+        },
+        { upsert: true }
+      ).catch(() => null);
+    }
+
+    return res.json({ directDownloads });
+  } catch (error: any) {
+    console.error(`[DIRECT DOWNLOAD EPISODE ERROR] For ${tmdbId} S${season}E${episode}: ${error.message}`);
+    return res.status(500).json({ error: error.message || "Failed to fetch direct episode downloads" });
   }
 });
 
