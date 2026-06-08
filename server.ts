@@ -2798,6 +2798,7 @@ app.get("/api/proxy/segment", async (req, res) => {
                 upstreamRes.headers["content-range"],
               );
             }
+            res.setHeader("Accept-Ranges", "bytes");
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.setHeader("X-Proxy-Mode", "Streaming");
             // Fix 4: HLS segments are immutable (same URL = same bytes).
@@ -2935,6 +2936,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       if (axiosResponse.headers["content-range"]) {
         res.setHeader("Content-Range", axiosResponse.headers["content-range"]);
       }
+      res.setHeader("Accept-Ranges", "bytes");
 
       if (req.method === "HEAD") {
         res.end();
