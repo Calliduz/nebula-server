@@ -3033,14 +3033,33 @@ app.get("/api/stream/availability", async (req, res) => {
       DeadPool.find({ tmdbId: { $in: tmdbIds } }),
     ]);
 
-    const cachedIds = new Set(cachedStreams.map((s) => s.tmdbId));
-    const deadIds = new Set(deadPool.map((d) => d.tmdbId));
+    const results = tmdbIds.map((id) => {
+      const showCached = cachedStreams.filter((s) => String(s.tmdbId) === String(id));
+      const showDead = deadPool.filter((d) => String(d.tmdbId) === String(id));
 
-    const results = tmdbIds.map((id) => ({
-      id,
-      isVerified: cachedIds.has(id),
-      isDead: deadIds.has(id),
-    }));
+      const hasCached = showCached.length > 0;
+      const hasDead = showDead.length > 0;
+
+      const type = showCached[0]?.type || showDead[0]?.type || "movie";
+
+      let isVerified = false;
+      let isDead = false;
+
+      if (type === "tv") {
+        isVerified = hasCached;
+        // Live (not dead) if at least one cached episode exists
+        isDead = hasDead && !hasCached;
+      } else {
+        isVerified = hasCached;
+        isDead = hasDead;
+      }
+
+      return {
+        id,
+        isVerified,
+        isDead,
+      };
+    });
 
     res.json({ results });
   } catch (error) {
@@ -3048,7 +3067,83 @@ app.get("/api/stream/availability", async (req, res) => {
   }
 });
 
+const playbackLimiterMap = new Map<string, number[]>();
+
+// Prevent memory leak by periodically pruning inactive IP addresses from the rate limiter map
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of playbackLimiterMap.entries()) {
+    const active = timestamps.filter((ts) => now - ts < 60000);
+    if (active.length === 0) {
+      playbackLimiterMap.delete(ip);
+    } else if (active.length !== timestamps.length) {
+      playbackLimiterMap.set(ip, active);
+    }
+  }
+}, 300000).unref(); // Run every 5 minutes and allow process to exit cleanly
+
+app.post("/api/stream/playback-success", express.json(), async (req, res) => {
+  const { tmdbId, type, season: seasonVal, episode: episodeVal } = req.body;
+
+  if (!tmdbId || !type) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  if (type === "tv" && (seasonVal === undefined || episodeVal === undefined)) {
+    return res.status(400).json({ error: "Missing season or episode for TV show" });
+  }
+
+  const season = type === "tv" ? parseInt(seasonVal, 10) : 1;
+  const episode = type === "tv" ? parseInt(episodeVal, 10) : 1;
+
+  if (isNaN(season) || isNaN(episode)) {
+    return res.status(400).json({ error: "Invalid season or episode format (must be integer)" });
+  }
+
+  // 1. Sliding window rate limiter (max 5 requests per minute per IP)
+  const ip = req.ip || "unknown";
+  const now = Date.now();
+  let timestamps = playbackLimiterMap.get(ip) || [];
+  timestamps = timestamps.filter((ts) => now - ts < 60000);
+  if (timestamps.length >= 5) {
+    return res.status(429).json({ error: "Too many playback success reports. Maximum 5 per minute." });
+  }
+  timestamps.push(now);
+  playbackLimiterMap.set(ip, timestamps);
+
+  try {
+    // 2. Validate that a matching StreamCache entry exists
+    const cacheExists = await StreamCache.findOne({
+      tmdbId: tmdbId.toString(),
+      type,
+      season,
+      episode,
+    });
+
+    if (!cacheExists) {
+      return res.status(400).json({ error: "No matching stream cache found. Playback success rejected." });
+    }
+
+    // 3. Delete from Deadpool (logging warning on deletion error)
+    await DeadPool.deleteOne({
+      tmdbId: tmdbId.toString(),
+      type,
+      season,
+      episode,
+    }).catch((err) => {
+      console.warn(`[DEADPOOL] Failed to delete entry on successful playback for ${tmdbId}:`, err);
+    });
+
+    console.log(`[DEADPOOL] Removed dead entry on successful playback: ${tmdbId} ${type} S${season}E${episode}`);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("[DEADPOOL] Failed to process playback success:", error);
+    return res.status(500).json({ error: "Failed to mark as live" });
+  }
+});
+
 app.get("/api/metadata", async (req, res) => {
+
   const tmdbId = req.query.tmdbId as string;
   const isBatch = req.query.batch as string;
   const type = (req.query.type as any) || "movie";
@@ -3479,11 +3574,22 @@ import { generateToken as generateVidrockToken } from "./utils/vidrock_token.js"
 app.get("/api/vidrock", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const type = req.query.type as "movie" | "tv";
-  const season = req.query.season as string;
-  const episode = req.query.episode as string;
+  const seasonStr = req.query.season as string;
+  const episodeStr = req.query.episode as string;
 
   if (!tmdbId || !type) {
     return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  if (type === "tv" && (!seasonStr || !episodeStr)) {
+    return res.status(400).json({ error: "Missing season or episode for TV show" });
+  }
+
+  const season = type === "tv" ? parseInt(seasonStr, 10) : 1;
+  const episode = type === "tv" ? parseInt(episodeStr, 10) : 1;
+
+  if (isNaN(season) || isNaN(episode)) {
+    return res.status(400).json({ error: "Invalid season or episode format (must be integer)" });
   }
 
   try {
@@ -3512,12 +3618,53 @@ app.get("/api/vidrock", async (req, res) => {
       return res.status(response.status).json({ error: "Upstream error" });
     }
     const data = await response.json();
+
+    // Parse active mirrors to cache them if present
+    const activeSources = Object.entries(data)
+      .filter(([_, v]: any) => v && v.url)
+      .map(([name, v]: any) => ({
+        source: name,
+        url: v.url,
+        type: v.type || "hls",
+      }));
+
+    if (activeSources.length > 0) {
+      const streamUrl = activeSources[0].url;
+      const sourceName = activeSources[0].source;
+      const cacheExpires = new Date();
+      cacheExpires.setHours(cacheExpires.getHours() + 4);
+
+      await StreamCache.findOneAndUpdate(
+        { tmdbId: tmdbId.toString(), type, season, episode },
+        {
+          streamUrl,
+          source: `VidRock (${sourceName})`,
+          qualityTag: "HD",
+          resolution: "1080p",
+          mirrors: activeSources,
+          streamExpiresAt: cacheExpires,
+          expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        },
+        { upsert: true }
+      );
+
+      await DeadPool.deleteOne({
+        tmdbId: tmdbId.toString(),
+        type,
+        season,
+        episode,
+      }).catch((err) => {
+        console.warn(`[DEADPOOL] Failed to delete entry for ${tmdbId}:`, err);
+      });
+    }
+
     res.json(data);
   } catch (error) {
     console.error("[VIDROCK] fetch failed", error);
     res.status(500).json({ error: "Failed to fetch from VidRock" });
   }
 });
+
 
 const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, () => {
