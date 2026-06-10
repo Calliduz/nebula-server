@@ -2367,7 +2367,10 @@ function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vidrock.ru") ||
       lower.includes("vidrock.net") ||
       lower.includes("hydrostorm") ||
-      lower.includes("workers.dev")
+      lower.includes("workers.dev") ||
+      lower.includes("tiktokcdn") ||
+      lower.includes("byteoversea") ||
+      lower.includes("ibyteimg")
     ) {
       referer = "https://vidrock.ru/";
       origin = "https://vidrock.ru";
@@ -2761,9 +2764,11 @@ app.get("/api/proxy/segment", async (req, res) => {
       const chunks: Buffer[] = [];
 
       const upstream = https.request(reqOptions, (upstreamRes) => {
+        if (req.destroyed || (req as any).signal?.aborted) return;
         const status = upstreamRes.statusCode ?? 502;
 
         if (status >= 400) {
+          if (req.destroyed || (req as any).signal?.aborted) return;
           if (retryCount < 3 && [502, 503, 504, 520, 521].includes(status)) {
             console.warn(
               `[PROXY/segment] Retrying VidLink ${status} (attempt ${retryCount + 1})...`,
@@ -2779,6 +2784,10 @@ app.get("/api/proxy/segment", async (req, res) => {
         }
 
         upstreamRes.on("data", (chunk) => {
+          if (req.destroyed || (req as any).signal?.aborted) {
+            upstreamRes.destroy();
+            return;
+          }
           if (!headersSent && !res.headersSent) {
             headersSent = true;
             res.status(status);
@@ -2822,6 +2831,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         });
 
         upstreamRes.on("error", (err) => {
+          if (req.destroyed || (req as any).signal?.aborted) return;
           if (retryCount < 3 && !res.headersSent) {
             console.warn(
               `[PROXY/segment] Upstream error during download: ${err.message}. Retrying...`,
@@ -2833,6 +2843,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       });
 
       upstream.on("error", (err) => {
+        if (req.destroyed || (req as any).signal?.aborted) return;
         if (
           retryCount < 3 &&
           (err.message.includes("socket hang up") ||
@@ -2853,6 +2864,7 @@ app.get("/api/proxy/segment", async (req, res) => {
 
       upstream.setTimeout(30000, () => {
         upstream.destroy();
+        if (req.destroyed || (req as any).signal?.aborted) return;
         if (retryCount < 3) {
           console.warn(
             `[PROXY/segment] Retrying VidLink timeout (attempt ${retryCount + 1})...`,
@@ -2894,6 +2906,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         headers,
         responseType: "stream",
         timeout: 20000,
+        signal: (req as any).signal,
         proxy: false, // disable axios auto-proxy; we set it via httpsAgent if needed
         httpsAgent: proxyUrl
           ? new (await import("https-proxy-agent")).HttpsProxyAgent(proxyUrl)
@@ -2910,6 +2923,10 @@ app.get("/api/proxy/segment", async (req, res) => {
       }
 
       if (status >= 400) {
+        if (req.destroyed || (req as any).signal?.aborted) {
+          (axiosResponse.data as any).destroy();
+          return;
+        }
         console.error(
           `[PROXY/segment] ✘ ${status} | proxy=${useProxy ? "YES" : "NO"} | url=${targetUrl.substring(0, 60)}...`,
         );
@@ -2949,6 +2966,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       dataStream.pipe(res);
 
       dataStream.on("error", (err: Error) => {
+        if (req.destroyed || (req as any).signal?.aborted) return;
         console.error(`[PROXY/segment] Stream error: ${err.message}`);
         if (!res.writableEnded) res.end();
       });
@@ -2958,6 +2976,9 @@ app.get("/api/proxy/segment", async (req, res) => {
         dataStream.destroy();
       });
     } catch (e: any) {
+      if (req.destroyed || (req as any).signal?.aborted || axios.isCancel(e)) {
+        return;
+      }
       const status = e?.response?.status || e?.response?.statusCode || 0;
 
       // Retry logic for network errors (socket hang up, timeout, etc) and specific 5xx errors
@@ -3630,9 +3651,10 @@ app.get("/api/vidrock", async (req, res) => {
         type: v.type || "hls",
       }));
 
-    if (activeSources.length > 0) {
-      const streamUrl = activeSources[0].url;
-      const sourceName = activeSources[0].source;
+    const firstActiveSource = activeSources[0];
+    if (firstActiveSource) {
+      const streamUrl = firstActiveSource.url;
+      const sourceName = firstActiveSource.source;
       const cacheExpires = new Date();
       cacheExpires.setHours(cacheExpires.getHours() + 4);
 
