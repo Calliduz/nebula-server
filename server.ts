@@ -2277,10 +2277,9 @@ app.post("/api/stream/flush", express.json(), async (req, res) => {
 
   const tmdbId = req.body?.tmdbId as string;
   if (!tmdbId) return res.status(400).json({ error: "Missing tmdbId" });
-  await StreamCache.findOneAndUpdate(
-    { tmdbId },
+  await StreamCache.updateMany(
+    { tmdbId: { $in: [tmdbId, `${tmdbId}-vidrock`] } },
     { streamUrl: null, streamExpiresAt: null, subtitles: [] },
-    {},
   ).catch(() => null);
   return res.json({ ok: true, message: "Stream cache cleared for " + tmdbId });
 });
@@ -3051,14 +3050,19 @@ app.get("/api/stream/availability", async (req, res) => {
 
   const tmdbIds = ids.split(",").filter((id) => id.trim());
   try {
+    const queryIds = [...tmdbIds, ...tmdbIds.map(id => `${id}-vidrock`)];
     const [cachedStreams, deadPool] = await Promise.all([
-      StreamCache.find({ tmdbId: { $in: tmdbIds } }),
-      DeadPool.find({ tmdbId: { $in: tmdbIds } }),
+      StreamCache.find({ tmdbId: { $in: queryIds } }),
+      DeadPool.find({ tmdbId: { $in: queryIds } }),
     ]);
 
     const results = tmdbIds.map((id) => {
-      const showCached = cachedStreams.filter((s) => String(s.tmdbId) === String(id));
-      const showDead = deadPool.filter((d) => String(d.tmdbId) === String(id));
+      const showCached = cachedStreams.filter(
+        (s) => String(s.tmdbId) === String(id) || String(s.tmdbId) === `${id}-vidrock`
+      );
+      const showDead = deadPool.filter(
+        (d) => String(d.tmdbId) === String(id) || String(d.tmdbId) === `${id}-vidrock`
+      );
 
       const hasCached = showCached.length > 0;
       const hasDead = showDead.length > 0;
@@ -3137,7 +3141,7 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   try {
     // 2. Validate that a matching StreamCache entry exists
     const cacheExists = await StreamCache.findOne({
-      tmdbId: tmdbId.toString(),
+      tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`] },
       type,
       season,
       episode,
@@ -3616,6 +3620,28 @@ app.get("/api/vidrock", async (req, res) => {
   }
 
   try {
+    // 1. Cache Check for VidRock
+    const cachedRecord = await StreamCache.findOne({
+      tmdbId: `${tmdbId}-vidrock`,
+      type,
+      season,
+      episode,
+    }).catch(() => null);
+
+    if (cachedRecord && cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
+      if (!cachedRecord.streamExpiresAt || new Date() < cachedRecord.streamExpiresAt) {
+        console.log(`[VIDROCK] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`);
+        const responseData: Record<string, any> = {};
+        cachedRecord.mirrors.forEach((m: any) => {
+          responseData[m.source] = {
+            url: m.url,
+            type: m.type || "hls",
+          };
+        });
+        return res.json(responseData);
+      }
+    }
+
     const token = generateVidrockToken(tmdbId, type, season, episode);
 
     const url = `https://vidrock.ru/api/${type}/${token}`;
@@ -3659,7 +3685,7 @@ app.get("/api/vidrock", async (req, res) => {
       cacheExpires.setHours(cacheExpires.getHours() + 4);
 
       await StreamCache.findOneAndUpdate(
-        { tmdbId: tmdbId.toString(), type, season, episode },
+        { tmdbId: `${tmdbId}-vidrock`, type, season, episode },
         {
           streamUrl,
           source: `VidRock (${sourceName})`,
@@ -3672,8 +3698,8 @@ app.get("/api/vidrock", async (req, res) => {
         { upsert: true }
       );
 
-      await DeadPool.deleteOne({
-        tmdbId: tmdbId.toString(),
+      await DeadPool.deleteMany({
+        tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`] },
         type,
         season,
         episode,
