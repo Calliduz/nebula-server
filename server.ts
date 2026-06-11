@@ -2278,7 +2278,7 @@ app.post("/api/stream/flush", express.json(), async (req, res) => {
   const tmdbId = req.body?.tmdbId as string;
   if (!tmdbId) return res.status(400).json({ error: "Missing tmdbId" });
   await StreamCache.updateMany(
-    { tmdbId: { $in: [tmdbId, `${tmdbId}-vidrock`] } },
+    { tmdbId: { $in: [tmdbId, `${tmdbId}-vidrock`, `${tmdbId}-videasy`] } },
     { streamUrl: null, streamExpiresAt: null, subtitles: [] },
   ).catch(() => null);
   return res.json({ ok: true, message: "Stream cache cleared for " + tmdbId });
@@ -3050,7 +3050,7 @@ app.get("/api/stream/availability", async (req, res) => {
 
   const tmdbIds = ids.split(",").filter((id) => id.trim());
   try {
-    const queryIds = [...tmdbIds, ...tmdbIds.map(id => `${id}-vidrock`)];
+    const queryIds = [...tmdbIds, ...tmdbIds.map(id => `${id}-vidrock`), ...tmdbIds.map(id => `${id}-videasy`)];
     const [cachedStreams, deadPool] = await Promise.all([
       StreamCache.find({ tmdbId: { $in: queryIds } }),
       DeadPool.find({ tmdbId: { $in: queryIds } }),
@@ -3058,10 +3058,10 @@ app.get("/api/stream/availability", async (req, res) => {
 
     const results = tmdbIds.map((id) => {
       const showCached = cachedStreams.filter(
-        (s) => String(s.tmdbId) === String(id) || String(s.tmdbId) === `${id}-vidrock`
+        (s) => String(s.tmdbId) === String(id) || String(s.tmdbId) === `${id}-vidrock` || String(s.tmdbId) === `${id}-videasy`
       );
       const showDead = deadPool.filter(
-        (d) => String(d.tmdbId) === String(id) || String(d.tmdbId) === `${id}-vidrock`
+        (d) => String(d.tmdbId) === String(id) || String(d.tmdbId) === `${id}-vidrock` || String(d.tmdbId) === `${id}-videasy`
       );
 
       const hasCached = showCached.length > 0;
@@ -3141,7 +3141,7 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   try {
     // 2. Validate that a matching StreamCache entry exists
     const cacheExists = await StreamCache.findOne({
-      tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`] },
+      tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`, `${tmdbId}-videasy`] },
       type,
       season,
       episode,
@@ -3597,6 +3597,8 @@ async function getFanartMetadata(
 
 // @ts-ignore
 import { generateToken as generateVidrockToken } from "./utils/vidrock_token.js";
+// @ts-ignore
+import { fetchVideasySources } from "./utils/videasy.js";
 
 app.get("/api/vidrock", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
@@ -3712,6 +3714,114 @@ app.get("/api/vidrock", async (req, res) => {
   } catch (error) {
     console.error("[VIDROCK] fetch failed", error);
     res.status(500).json({ error: "Failed to fetch from VidRock" });
+  }
+});
+
+
+app.get("/api/videasy", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const type = req.query.type as "movie" | "tv";
+  const seasonStr = req.query.season as string;
+  const episodeStr = req.query.episode as string;
+  const title = (req.query.title as string) || "";
+  const releaseYear = (req.query.releaseYear as string) || "";
+
+  if (!tmdbId || !type) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  if (type === "tv" && (!seasonStr || !episodeStr)) {
+    return res.status(400).json({ error: "Missing season or episode for TV show" });
+  }
+
+  const season = type === "tv" ? parseInt(seasonStr, 10) : 1;
+  const episode = type === "tv" ? parseInt(episodeStr, 10) : 1;
+
+  if (isNaN(season) || isNaN(episode)) {
+    return res.status(400).json({ error: "Invalid season or episode format (must be integer)" });
+  }
+
+  try {
+    // 1. Cache Check for Videasy
+    const cachedRecord = await StreamCache.findOne({
+      tmdbId: `${tmdbId}-videasy`,
+      type,
+      season,
+      episode,
+    }).catch(() => null);
+
+    if (cachedRecord && cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
+      if (!cachedRecord.streamExpiresAt || new Date() < cachedRecord.streamExpiresAt) {
+        console.log(`[VIDEASY] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`);
+        const responseData: Record<string, any> = {};
+        cachedRecord.mirrors.forEach((m: any) => {
+          responseData[m.source] = {
+            url: m.url,
+            type: m.type || "hls",
+            audio: m.audio || "",
+            flag: m.flag || "us",
+          };
+        });
+        return res.json(responseData);
+      }
+    }
+
+    // 2. Fetch from Videasy providers
+    const activeMirrors = await fetchVideasySources(
+      title,
+      type,
+      releaseYear,
+      tmdbId,
+      season,
+      episode
+    );
+
+    // Parse active mirrors to cache them if present
+    const activeSources = Object.entries(activeMirrors)
+      .filter(([_, v]: any) => v && v.url)
+      .map(([name, v]: any) => ({
+        source: name,
+        url: v.url,
+        type: v.type || "hls",
+        audio: v.audio || "",
+        flag: v.flag || "us",
+      }));
+
+    const firstActiveSource = activeSources[0];
+    if (firstActiveSource) {
+      const streamUrl = firstActiveSource.url;
+      const sourceName = firstActiveSource.source;
+      const cacheExpires = new Date();
+      cacheExpires.setHours(cacheExpires.getHours() + 4);
+
+      await StreamCache.findOneAndUpdate(
+        { tmdbId: `${tmdbId}-videasy`, type, season, episode },
+        {
+          streamUrl,
+          source: `Videasy (${sourceName})`,
+          qualityTag: "HD",
+          resolution: "1080p",
+          mirrors: activeSources,
+          streamExpiresAt: cacheExpires,
+          expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        },
+        { upsert: true }
+      );
+
+      await DeadPool.deleteMany({
+        tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-videasy`] },
+        type,
+        season,
+        episode,
+      }).catch((err) => {
+        console.warn(`[DEADPOOL] Failed to delete entry for ${tmdbId}:`, err);
+      });
+    }
+
+    res.json(activeMirrors);
+  } catch (error) {
+    console.error("[VIDEASY] fetch failed", error);
+    res.status(500).json({ error: "Failed to fetch from Videasy" });
   }
 });
 
