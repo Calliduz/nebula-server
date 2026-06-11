@@ -2615,7 +2615,15 @@ app.get("/api/proxy/stream", async (req, res) => {
         `[PROXY/stream] ✘ ${status} (${duration}ms) | url=${targetUrl.substring(0, 60)}...`,
       );
       res.setHeader("Access-Control-Allow-Origin", "*");
-      return res.status(status).send(upstream.body);
+      return res.status(status).send(upstream.body || "Upstream error");
+    }
+
+    if (!upstream.body || upstream.body.length === 0) {
+      console.error(
+        `[PROXY/stream] ✘ Empty body from CDN (${duration}ms) | url=${targetUrl.substring(0, 60)}...`,
+      );
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.status(502).send("Empty response from CDN");
     }
 
     const manifest = upstream.body.toString("utf-8");

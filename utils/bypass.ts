@@ -126,7 +126,7 @@ export async function fetchWithGotScraping(
       return {
         statusCode: err.response.statusCode,
         headers: err.response.headers,
-        body: err.response.body,
+        body: err.response.body || Buffer.from(""),
         finalUrl: err.response.url,
       };
     }

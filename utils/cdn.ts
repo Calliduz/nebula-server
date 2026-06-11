@@ -66,6 +66,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("digitalsun.app") ||
       lower.includes("itsdeskmate.com") ||
       lower.includes("keymi417exx.com") ||
+      lower.includes("goldweather.net") ||
       lower.includes("cfw557.workers.dev") ||
       lower.includes("videasy.to")
     ) {
