@@ -2361,6 +2361,16 @@ function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
 
     // Final overrides for specific providers that are extremely sensitive to outer Referer
     if (
+      lower.includes("ironwallnet.net") ||
+      lower.includes("digitalsun.app") ||
+      lower.includes("itsdeskmate.com") ||
+      lower.includes("keymi417exx.com") ||
+      lower.includes("cfw557.workers.dev") ||
+      lower.includes("videasy.to")
+    ) {
+      referer = "https://player.videasy.to/";
+      origin = "https://player.videasy.to";
+    } else if (
       /stor+m\.site/.test(lower) ||
       lower.includes("vdrk.site") ||
       lower.includes("vidrock.ru") ||
