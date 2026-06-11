@@ -18,6 +18,7 @@ import {
 } from "./models/Cache.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "./utils/bypass.js";
 import { getSubtitles } from "./utils/subtitles.js";
+import { cdnHeaders } from "./utils/cdn.js";
 import {
   decryptKissKHSubtitle,
   isKissKHSubtitleUrl,
@@ -464,7 +465,9 @@ const connectDB = async (retryCount = 5) => {
       const db = mongoose.connection.db;
       if (db) {
         await db.collection("streamcaches").dropIndex("streamExpiresAt_1");
-        console.log("[DB] Dropped old streamExpiresAt TTL index (migrated to expiresAt)");
+        console.log(
+          "[DB] Dropped old streamExpiresAt TTL index (migrated to expiresAt)",
+        );
       }
     } catch (e: any) {
       // Index doesn't exist (already migrated) — ignore
@@ -575,7 +578,7 @@ function parseTorrentioTitle(title: string) {
   const parts = title.split("\n");
   const filename = parts[0] || "Unknown Title";
   const statsLine = parts[1] || "";
-  
+
   let seeds = 0;
   let peers = 0;
   let size = "Unknown Size";
@@ -584,10 +587,13 @@ function parseTorrentioTitle(title: string) {
   const seedsMatch = statsLine.match(/👤\s*(\d+)/);
   if (seedsMatch && seedsMatch[1]) seeds = parseInt(seedsMatch[1]) || 0;
 
-  const peersMatch = statsLine.match(/👥\s*(\d+)/) || statsLine.match(/👤\s*\d+\s*(\d+)/);
+  const peersMatch =
+    statsLine.match(/👥\s*(\d+)/) || statsLine.match(/👤\s*\d+\s*(\d+)/);
   if (peersMatch && peersMatch[1]) peers = parseInt(peersMatch[1]) || 0;
 
-  const sizeMatch = statsLine.match(/💾\s*([\d\.]+\s*[MGB]+)/i) || statsLine.match(/💾\s*([^⚙️\n]+)/);
+  const sizeMatch =
+    statsLine.match(/💾\s*([\d\.]+\s*[MGB]+)/i) ||
+    statsLine.match(/💾\s*([^⚙️\n]+)/);
   if (sizeMatch && sizeMatch[1]) size = sizeMatch[1].trim();
 
   const providerMatch = statsLine.match(/⚙️\s*([^\n\r]+)/);
@@ -624,10 +630,17 @@ async function fetchVidVaultToken(): Promise<string | null> {
       return null;
     }
     // Response: { "t": "<hex token>", "e": <expiry epoch ms> }
-    const json = (await res.json()) as { t?: string; token?: string; e?: number };
+    const json = (await res.json()) as {
+      t?: string;
+      token?: string;
+      e?: number;
+    };
     const token = json.t ?? json.token ?? null;
     if (!token) {
-      console.warn(`[VIDVAULT] Token parse failed — unexpected shape:`, Object.keys(json));
+      console.warn(
+        `[VIDVAULT] Token parse failed — unexpected shape:`,
+        Object.keys(json),
+      );
       return null;
     }
     return token;
@@ -637,10 +650,16 @@ async function fetchVidVaultToken(): Promise<string | null> {
   }
 }
 
-async function getMediaTitleAndYear(tmdbId: string, type: "movie" | "tv"): Promise<{ title: string; year: string }> {
+async function getMediaTitleAndYear(
+  tmdbId: string,
+  type: "movie" | "tv",
+): Promise<{ title: string; year: string }> {
   const cacheKey = `media-title-year-${tmdbId}-${type}`;
   try {
-    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    const cached = await TmdbCache.findOne({
+      key: cacheKey,
+      expiresAt: { $gt: new Date() },
+    });
     if (cached) return cached.data;
   } catch (e) {
     console.warn(`[TMDB] Cache read failed for title-year lookup:`, e);
@@ -652,32 +671,37 @@ async function getMediaTitleAndYear(tmdbId: string, type: "movie" | "tv"): Promi
       {
         headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
         timeout: 5000,
-      }
+      },
     );
     const data = res.data;
-    const title = type === "movie" ? (data.title || data.original_title) : (data.name || data.original_name);
+    const title =
+      type === "movie"
+        ? data.title || data.original_title
+        : data.name || data.original_name;
     const dateStr = type === "movie" ? data.release_date : data.first_air_date;
     const year = dateStr ? dateStr.substring(0, 4) : "";
     const result = { title: title || "Media", year: year || "" };
-    
+
     const ttl = 1000 * 60 * 60 * 24 * 30; // 30 days
     await TmdbCache.findOneAndUpdate(
       { key: cacheKey },
       { data: result, expiresAt: new Date(Date.now() + ttl) },
-      { upsert: true }
+      { upsert: true },
     ).catch(() => null);
 
     return result;
   } catch (err: any) {
-    console.warn(`[TMDB] Failed to fetch title and year for ${type} ${tmdbId}: ${err.message}`);
+    console.warn(
+      `[TMDB] Failed to fetch title and year for ${type} ${tmdbId}: ${err.message}`,
+    );
     return { title: "Media", year: "" };
   }
 }
 
 interface VidVaultCaption {
-  lan: string;     // ISO language code, e.g. "en"
+  lan: string; // ISO language code, e.g. "en"
   lanName: string; // Human-readable name, e.g. "English"
-  url: string;     // Direct .srt / .vtt URL
+  url: string; // Direct .srt / .vtt URL
 }
 
 interface VidVaultDownload {
@@ -752,9 +776,10 @@ async function fetchVidVaultDownloads(
     .filter((c: any) => c?.url?.startsWith("http"))
     .map((c: any) => {
       const subExt = c.url.split("?")[0].split(".").pop() || "srt";
-      const subFileName = kind === "movie"
-        ? `${mediaInfo.title} (${mediaInfo.year}) - ${c.lanName}.${subExt}`
-        : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, '0')}E${(episode ?? 1).toString().padStart(2, '0')} - ${c.lanName}.${subExt}`;
+      const subFileName =
+        kind === "movie"
+          ? `${mediaInfo.title} (${mediaInfo.year}) - ${c.lanName}.${subExt}`
+          : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")} - ${c.lanName}.${subExt}`;
 
       const subUrl = `/api/download/stream-file?url=${encodeURIComponent(c.url)}&name=${encodeURIComponent(subFileName)}`;
 
@@ -767,24 +792,27 @@ async function fetchVidVaultDownloads(
 
   // ── Extract MP4 downloads ──────────────────────────────────────────────────
   const downloads: any[] = data?.mp4Data?.downloadInfo?.data?.downloads ?? [];
-  const mp4FileName = kind === "movie"
-    ? `${mediaInfo.title} (${mediaInfo.year}).mp4`
-    : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, '0')}E${(episode ?? 1).toString().padStart(2, '0')}.mp4`;
+  const mp4FileName =
+    kind === "movie"
+      ? `${mediaInfo.title} (${mediaInfo.year}).mp4`
+      : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")}.mp4`;
 
   for (const d of downloads) {
     if (!d.url || !d.url.startsWith("http")) continue;
-    const rawQuality = String(d.quality ?? d.definition ?? d.label ?? "HD").trim();
+    const rawQuality = String(
+      d.quality ?? d.definition ?? d.label ?? "HD",
+    ).trim();
     const sizeBytes = parseSizeToBytes(d.filesize ?? d.size);
     const sizeStr = parseAndFormatSize(d.filesize ?? d.size);
 
     // VidVault always returns "HD" for quality — infer resolution from file size
     let quality = rawQuality;
     if (/^hd$/i.test(rawQuality) && sizeBytes > 0) {
-      if (sizeBytes < 200 * 1024 * 1024)        quality = "360p";
-      else if (sizeBytes < 400 * 1024 * 1024)   quality = "480p";
-      else if (sizeBytes < 750 * 1024 * 1024)   quality = "720p";
-      else if (sizeBytes < 2000 * 1024 * 1024)  quality = "1080p";
-      else                                     quality = "4K";
+      if (sizeBytes < 200 * 1024 * 1024) quality = "360p";
+      else if (sizeBytes < 400 * 1024 * 1024) quality = "480p";
+      else if (sizeBytes < 750 * 1024 * 1024) quality = "720p";
+      else if (sizeBytes < 2000 * 1024 * 1024) quality = "1080p";
+      else quality = "4K";
     }
 
     const direct_url = `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`;
@@ -805,9 +833,10 @@ async function fetchVidVaultDownloads(
   }
 
   // ── Extract MKV downloads (mkvData, mkvV2Data, mkvV3Data) ────────────
-  const mkvFileName = kind === "movie"
-    ? `${mediaInfo.title} (${mediaInfo.year}).mkv`
-    : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, '0')}E${(episode ?? 1).toString().padStart(2, '0')}.mkv`;
+  const mkvFileName =
+    kind === "movie"
+      ? `${mediaInfo.title} (${mediaInfo.year}).mkv`
+      : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")}.mkv`;
 
   const mkvKeys = ["mkvData", "mkvV2Data", "mkvV3Data"] as const;
   for (const key of mkvKeys) {
@@ -816,18 +845,24 @@ async function fetchVidVaultDownloads(
 
     if (Array.isArray(mkvObj.files)) {
       for (const file of mkvObj.files) {
-        if (file && typeof file.url === "string" && file.url.startsWith("http")) {
+        if (
+          file &&
+          typeof file.url === "string" &&
+          file.url.startsWith("http")
+        ) {
           const sizeBytes = parseSizeToBytes(file.size);
           const sizeStr = parseAndFormatSize(file.size);
 
           let mkvQuality = file.quality ?? mkvObj.quality ?? "HD";
-          mkvQuality = String(mkvQuality).replace(/\s*\(mkv\)/gi, "").trim();
+          mkvQuality = String(mkvQuality)
+            .replace(/\s*\(mkv\)/gi, "")
+            .trim();
           if (/^hd$/i.test(mkvQuality) && sizeBytes > 0) {
-            if (sizeBytes < 200 * 1024 * 1024)       mkvQuality = "360p";
-            else if (sizeBytes < 400 * 1024 * 1024)  mkvQuality = "480p";
-            else if (sizeBytes < 750 * 1024 * 1024)  mkvQuality = "720p";
+            if (sizeBytes < 200 * 1024 * 1024) mkvQuality = "360p";
+            else if (sizeBytes < 400 * 1024 * 1024) mkvQuality = "480p";
+            else if (sizeBytes < 750 * 1024 * 1024) mkvQuality = "720p";
             else if (sizeBytes < 2000 * 1024 * 1024) mkvQuality = "1080p";
-            else                                   mkvQuality = "4K";
+            else mkvQuality = "4K";
           }
 
           const direct_url = `/api/download/stream-file?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(mkvFileName)}`;
@@ -843,22 +878,28 @@ async function fetchVidVaultDownloads(
             type: kind,
           };
           if (kind === "tv" && season !== undefined) mkvEntry.season = season;
-          if (kind === "tv" && episode !== undefined) mkvEntry.episode = episode;
+          if (kind === "tv" && episode !== undefined)
+            mkvEntry.episode = episode;
           results.push(mkvEntry);
         }
       }
-    } else if (typeof mkvObj.url === "string" && mkvObj.url.startsWith("http")) {
-      const rawMkvQuality = String(mkvObj.quality ?? "HD").replace(/\s*\(mkv\)/gi, "").trim();
+    } else if (
+      typeof mkvObj.url === "string" &&
+      mkvObj.url.startsWith("http")
+    ) {
+      const rawMkvQuality = String(mkvObj.quality ?? "HD")
+        .replace(/\s*\(mkv\)/gi, "")
+        .trim();
       const sizeBytes = parseSizeToBytes(mkvObj.size);
       const mkvSizeStr = parseAndFormatSize(mkvObj.size);
 
       let mkvQuality = rawMkvQuality;
       if (/^hd$/i.test(rawMkvQuality) && sizeBytes > 0) {
-        if (sizeBytes < 200 * 1024 * 1024)       mkvQuality = "360p";
-        else if (sizeBytes < 400 * 1024 * 1024)  mkvQuality = "480p";
-        else if (sizeBytes < 750 * 1024 * 1024)  mkvQuality = "720p";
+        if (sizeBytes < 200 * 1024 * 1024) mkvQuality = "360p";
+        else if (sizeBytes < 400 * 1024 * 1024) mkvQuality = "480p";
+        else if (sizeBytes < 750 * 1024 * 1024) mkvQuality = "720p";
         else if (sizeBytes < 2000 * 1024 * 1024) mkvQuality = "1080p";
-        else                                       mkvQuality = "4K";
+        else mkvQuality = "4K";
       }
 
       const direct_url = `/api/download/stream-file?url=${encodeURIComponent(mkvObj.url)}&name=${encodeURIComponent(mkvFileName)}`;
@@ -879,29 +920,37 @@ async function fetchVidVaultDownloads(
     }
   }
 
-  console.log(`[VIDVAULT] Found ${results.length} download(s) for ${kind} tmdbId=${tmdbId}${
-    kind === "tv" ? ` S${season}E${episode}` : ""
-  }`);
+  console.log(
+    `[VIDVAULT] Found ${results.length} download(s) for ${kind} tmdbId=${tmdbId}${
+      kind === "tv" ? ` S${season}E${episode}` : ""
+    }`,
+  );
   return results;
 }
 
 // Endpoint: Stream Proxy for direct downloads (bypasses hotlink protection & sets friendly filenames)
 app.get("/api/download/stream-file", async (req, res) => {
   let targetUrl = req.query.url as string;
-  const filename = req.query.name as string || "download";
+  const filename = (req.query.name as string) || "download";
 
   if (!targetUrl) {
     return res.status(400).json({ error: "Missing url parameter" });
   }
 
   // Route hakunaymatata.com CDN requests through Cloudflare worker to bypass datacenter IP blocks
-  if (targetUrl.includes("hakunaymatata.com") && !targetUrl.includes("workers.dev")) {
+  if (
+    targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("workers.dev")
+  ) {
     targetUrl = `https://dl.gemlelispe.workers.dev/${encodeURIComponent(targetUrl)}`;
   }
 
   try {
     // Set headers to trigger a file download in the browser with friendly filename
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(filename)}"`,
+    );
     res.setHeader("Content-Type", "application/octet-stream");
 
     const response = await axios({
@@ -910,10 +959,10 @@ app.get("/api/download/stream-file", async (req, res) => {
       responseType: "stream",
       headers: {
         "User-Agent": VIDVAULT_UA,
-        "Referer": "https://vidvault.ru/",
-        "Origin": "https://vidvault.ru",
-        "Accept": "*/*"
-      }
+        Referer: "https://vidvault.ru/",
+        Origin: "https://vidvault.ru",
+        Accept: "*/*",
+      },
     });
 
     if (response.headers["content-length"]) {
@@ -922,7 +971,9 @@ app.get("/api/download/stream-file", async (req, res) => {
 
     response.data.pipe(res);
   } catch (error: any) {
-    console.error(`[STREAM PROXY ERROR] Failed to stream ${targetUrl}: ${error.message}`);
+    console.error(
+      `[STREAM PROXY ERROR] Failed to stream ${targetUrl}: ${error.message}`,
+    );
     if (!res.headersSent) {
       res.status(500).json({ error: "Failed to download file" });
     }
@@ -942,16 +993,20 @@ app.get("/api/download", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    const cached = await TmdbCache.findOne({
+      key: cacheKey,
+      expiresAt: { $gt: new Date() },
+    });
     if (cached) {
       return res.json(cached.data);
     }
 
-
     // 2. Resolve IMDB ID
     let imdbId = await getExternalIMDBId(tmdbId, kind);
     if (!imdbId) {
-      return res.status(404).json({ error: "IMDB ID not found for this title" });
+      return res
+        .status(404)
+        .json({ error: "IMDB ID not found for this title" });
     }
 
     let torrents: any[] = [];
@@ -976,7 +1031,7 @@ app.get("/api/download", async (req, res) => {
               magnet,
               torrent_url: t.url,
               source: "YTS",
-              type: "movie"
+              type: "movie",
             };
           });
         }
@@ -996,7 +1051,11 @@ app.get("/api/download", async (req, res) => {
           const quality = s.name.split("\n")[1] || "HD";
 
           // Avoid duplicating identical torrent info hashes if YTS already got them
-          if (torrents.some(t => t.magnet.toLowerCase().includes(s.infoHash.toLowerCase()))) {
+          if (
+            torrents.some((t) =>
+              t.magnet.toLowerCase().includes(s.infoHash.toLowerCase()),
+            )
+          ) {
             return;
           }
 
@@ -1009,11 +1068,13 @@ app.get("/api/download", async (req, res) => {
             peers: parsed.peers,
             magnet,
             source: parsed.provider,
-            type: "movie"
+            type: "movie",
           });
         });
       } catch (err: any) {
-        console.warn(`[DOWNLOAD] Torrentio movie fallback failed: ${err.message}`);
+        console.warn(
+          `[DOWNLOAD] Torrentio movie fallback failed: ${err.message}`,
+        );
       }
 
       // 3. Apibay API (The Pirate Bay Backup)
@@ -1023,12 +1084,20 @@ app.get("/api/download", async (req, res) => {
         const results = response.data || [];
         if (Array.isArray(results)) {
           results.forEach((t: any) => {
-            if (!t.info_hash || t.info_hash === "0000000000000000000000000000000000000000") return;
+            if (
+              !t.info_hash ||
+              t.info_hash === "0000000000000000000000000000000000000000"
+            )
+              return;
             const sizeBytes = parseInt(t.size) || 0;
             if (t.name === "No results found" || sizeBytes === 0) return;
 
             // Deduplicate by info hash
-            if (torrents.some(ex => ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()))) {
+            if (
+              torrents.some((ex) =>
+                ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()),
+              )
+            ) {
               return;
             }
 
@@ -1046,7 +1115,7 @@ app.get("/api/download", async (req, res) => {
             else if (/bluray/i.test(t.name)) quality = "BluRay";
 
             const magnet = `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.name)}&tr=udp://tracker.coppersurfer.tk:6969/announce&tr=udp://tracker.openbittorrent.com:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.torrent.eu.org:451/announce`;
-            
+
             torrents.push({
               title: t.name,
               quality,
@@ -1055,7 +1124,7 @@ app.get("/api/download", async (req, res) => {
               peers,
               magnet,
               source: "ThePirateBay",
-              type: "movie"
+              type: "movie",
             });
           });
         }
@@ -1070,10 +1139,11 @@ app.get("/api/download", async (req, res) => {
         const eztvUrl = `https://eztv.re/api/get-torrents?imdb_id=${numericImdbId}`;
         const response = await axios.get(eztvUrl, { timeout: 12000 });
         const eztvTorrents = response.data?.torrents || [];
-        
+
         torrents = eztvTorrents.map((t: any) => {
           const sizeBytes = parseInt(t.size_bytes) || 0;
-          const sizeStr = sizeBytes > 0 ? formatBytes(sizeBytes) : "Unknown Size";
+          const sizeStr =
+            sizeBytes > 0 ? formatBytes(sizeBytes) : "Unknown Size";
           return {
             title: t.title,
             filename: t.filename,
@@ -1085,7 +1155,7 @@ app.get("/api/download", async (req, res) => {
             magnet: t.magnet_url,
             torrent_url: t.torrent_url,
             source: "EZTV",
-            type: "tv"
+            type: "tv",
           };
         });
       } catch (err: any) {
@@ -1099,12 +1169,20 @@ app.get("/api/download", async (req, res) => {
         const results = response.data || [];
         if (Array.isArray(results)) {
           results.forEach((t: any) => {
-            if (!t.info_hash || t.info_hash === "0000000000000000000000000000000000000000") return;
+            if (
+              !t.info_hash ||
+              t.info_hash === "0000000000000000000000000000000000000000"
+            )
+              return;
             const sizeBytes = parseInt(t.size) || 0;
             if (t.name === "No results found" || sizeBytes === 0) return;
 
             // Deduplicate
-            if (torrents.some(ex => ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()))) {
+            if (
+              torrents.some((ex) =>
+                ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()),
+              )
+            ) {
               return;
             }
 
@@ -1121,7 +1199,8 @@ app.get("/api/download", async (req, res) => {
               season = parseInt(s00e00Match[1]) || 0;
               episode = parseInt(s00e00Match[2]) || 0;
             } else {
-              const seasonOnlyMatch = t.name.match(/season\s*(\d+)/i) || t.name.match(/\bs(\d+)\b/i);
+              const seasonOnlyMatch =
+                t.name.match(/season\s*(\d+)/i) || t.name.match(/\bs(\d+)\b/i);
               if (seasonOnlyMatch) {
                 season = parseInt(seasonOnlyMatch[1]) || 0;
                 episode = 0; // Season pack
@@ -1140,7 +1219,7 @@ app.get("/api/download", async (req, res) => {
               size: sizeStr,
               magnet,
               source: "ThePirateBay",
-              type: "tv"
+              type: "tv",
             });
           });
         }
@@ -1161,10 +1240,11 @@ app.get("/api/download", async (req, res) => {
     ).catch(() => null);
 
     return res.json({ title, imdbId, torrents });
-
   } catch (error: any) {
     console.error(`[DOWNLOAD API ERROR] For ${tmdbId}: ${error.message}`);
-    return res.status(500).json({ error: error.message || "Failed to fetch torrents" });
+    return res
+      .status(500)
+      .json({ error: error.message || "Failed to fetch torrents" });
   }
 });
 
@@ -1182,7 +1262,10 @@ app.get("/api/download/episode", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    const cached = await TmdbCache.findOne({
+      key: cacheKey,
+      expiresAt: { $gt: new Date() },
+    });
     if (cached) {
       return res.json(cached.data);
     }
@@ -1190,7 +1273,9 @@ app.get("/api/download/episode", async (req, res) => {
     // 2. Resolve IMDB ID
     let imdbId = await getExternalIMDBId(tmdbId, "tv");
     if (!imdbId) {
-      return res.status(404).json({ error: "IMDB ID not found for this TV show" });
+      return res
+        .status(404)
+        .json({ error: "IMDB ID not found for this TV show" });
     }
 
     const torrents: any[] = [];
@@ -1206,7 +1291,7 @@ app.get("/api/download/episode", async (req, res) => {
         const parsed = parseTorrentioTitle(s.title);
         const quality = s.name.split("\n")[1] || "HD";
         const magnet = `magnet:?xt=urn:btih:${s.infoHash}&dn=${encodeURIComponent(parsed.filename)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.opentrackr.org:1337/announce`;
-        
+
         torrents.push({
           title: parsed.filename,
           quality,
@@ -1215,28 +1300,38 @@ app.get("/api/download/episode", async (req, res) => {
           peers: parsed.peers,
           magnet,
           source: parsed.provider,
-          type: "tv"
+          type: "tv",
         });
       });
     } catch (err: any) {
-      console.warn(`[DOWNLOAD EPISODE] Torrentio backup failed: ${err.message}`);
+      console.warn(
+        `[DOWNLOAD EPISODE] Torrentio backup failed: ${err.message}`,
+      );
     }
 
     // 4. Query Apibay (The Pirate Bay) for exact season & episode
     try {
-      const formattedEp = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
+      const formattedEp = `s${season.toString().padStart(2, "0")}e${episode.toString().padStart(2, "0")}`;
       const apibayUrl = `https://apibay.org/q.php?q=${imdbId}+${formattedEp}`;
       const response = await axios.get(apibayUrl, { timeout: 8000 });
       const results = response.data || [];
 
       if (Array.isArray(results)) {
         results.forEach((t: any) => {
-          if (!t.info_hash || t.info_hash === "0000000000000000000000000000000000000000") return;
+          if (
+            !t.info_hash ||
+            t.info_hash === "0000000000000000000000000000000000000000"
+          )
+            return;
           const sizeBytes = parseInt(t.size) || 0;
           if (t.name === "No results found" || sizeBytes === 0) return;
 
           // Deduplicate
-          if (torrents.some(ex => ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()))) {
+          if (
+            torrents.some((ex) =>
+              ex.magnet.toLowerCase().includes(t.info_hash.toLowerCase()),
+            )
+          ) {
             return;
           }
 
@@ -1254,7 +1349,7 @@ app.get("/api/download/episode", async (req, res) => {
             peers,
             magnet,
             source: "ThePirateBay",
-            type: "tv"
+            type: "tv",
           });
         });
       }
@@ -1274,10 +1369,11 @@ app.get("/api/download/episode", async (req, res) => {
     ).catch(() => null);
 
     return res.json({ torrents });
-
   } catch (error: any) {
     console.error(`[DOWNLOAD EPISODE ERROR] ${error.message}`);
-    return res.status(500).json({ error: error.message || "Failed to fetch backup streams" });
+    return res
+      .status(500)
+      .json({ error: error.message || "Failed to fetch backup streams" });
   }
 });
 
@@ -1293,7 +1389,10 @@ app.get("/api/download/direct", async (req, res) => {
   const cacheKey = `direct-downloads-${tmdbId}-${kind}`;
 
   try {
-    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    const cached = await TmdbCache.findOne({
+      key: cacheKey,
+      expiresAt: { $gt: new Date() },
+    });
     if (cached) {
       return res.json({ directDownloads: cached.data });
     }
@@ -1309,14 +1408,18 @@ app.get("/api/download/direct", async (req, res) => {
           data: directDownloads,
           expiresAt: new Date(Date.now() + ttl),
         },
-        { upsert: true }
+        { upsert: true },
       ).catch(() => null);
     }
 
     return res.json({ directDownloads });
   } catch (error: any) {
-    console.error(`[DIRECT DOWNLOAD API ERROR] For ${tmdbId}: ${error.message}`);
-    return res.status(500).json({ error: error.message || "Failed to fetch direct downloads" });
+    console.error(
+      `[DIRECT DOWNLOAD API ERROR] For ${tmdbId}: ${error.message}`,
+    );
+    return res
+      .status(500)
+      .json({ error: error.message || "Failed to fetch direct downloads" });
   }
 });
 
@@ -1333,12 +1436,20 @@ app.get("/api/download/episode/direct", async (req, res) => {
   const cacheKey = `direct-downloads-episode-${tmdbId}-${season}-${episode}`;
 
   try {
-    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    const cached = await TmdbCache.findOne({
+      key: cacheKey,
+      expiresAt: { $gt: new Date() },
+    });
     if (cached) {
       return res.json({ directDownloads: cached.data });
     }
 
-    const directDownloads = await fetchVidVaultDownloads("tv", tmdbId, season, episode);
+    const directDownloads = await fetchVidVaultDownloads(
+      "tv",
+      tmdbId,
+      season,
+      episode,
+    );
 
     // Only cache if we got actual links
     if (directDownloads.length > 0) {
@@ -1349,14 +1460,20 @@ app.get("/api/download/episode/direct", async (req, res) => {
           data: directDownloads,
           expiresAt: new Date(Date.now() + ttl),
         },
-        { upsert: true }
+        { upsert: true },
       ).catch(() => null);
     }
 
     return res.json({ directDownloads });
   } catch (error: any) {
-    console.error(`[DIRECT DOWNLOAD EPISODE ERROR] For ${tmdbId} S${season}E${episode}: ${error.message}`);
-    return res.status(500).json({ error: error.message || "Failed to fetch direct episode downloads" });
+    console.error(
+      `[DIRECT DOWNLOAD EPISODE ERROR] For ${tmdbId} S${season}E${episode}: ${error.message}`,
+    );
+    return res
+      .status(500)
+      .json({
+        error: error.message || "Failed to fetch direct episode downloads",
+      });
   }
 });
 
@@ -1446,7 +1563,9 @@ app.get("/api/stream", async (req, res) => {
     if (entry) {
       entry.refCount++;
       isCoalesced = true;
-      console.log(`[STREAM] Coalescing request for key: ${cacheKey}. Active listeners: ${entry.refCount}`);
+      console.log(
+        `[STREAM] Coalescing request for key: ${cacheKey}. Active listeners: ${entry.refCount}`,
+      );
     } else {
       const controller = new AbortController();
       const signal = controller.signal;
@@ -1480,7 +1599,9 @@ app.get("/api/stream", async (req, res) => {
                 match.id,
                 signal,
               );
-              const ep = details?.episodes?.find((e: any) => e.number === episode);
+              const ep = details?.episodes?.find(
+                (e: any) => e.number === episode,
+              );
               if (ep) {
                 const dramaMirrors = await DramacoolScraper.getStream(
                   match.id,
@@ -1500,7 +1621,9 @@ app.get("/api/stream", async (req, res) => {
 
         // ── Phase B: Direct TMDB Path (VidLink) ──────────────────────────
         if (mirrors.length === 0) {
-          console.log(`[STREAM] Phase B: Checking VidLink (Direct TMDB Path)...`);
+          console.log(
+            `[STREAM] Phase B: Checking VidLink (Direct TMDB Path)...`,
+          );
           try {
             const vidlinkMirrors = await VidLinkScraper.getStream(
               tmdbId.toString(),
@@ -1535,7 +1658,9 @@ app.get("/api/stream", async (req, res) => {
             console.error(`[DEADPOOL] Failed to log failure:`, err);
           }
 
-          throw new Error("No stream sources found. (Tried VidLink + Scrapers)");
+          throw new Error(
+            "No stream sources found. (Tried VidLink + Scrapers)",
+          );
         }
 
         const allSubtitles: any[] = [];
@@ -1594,7 +1719,9 @@ app.get("/api/stream", async (req, res) => {
         if (streamUrl) {
           const releaseDateStr = req.query.releaseDate as string;
           const isCAM =
-            qualityTag === "CAM" || qualityTag === "TC" || qualityTag === "UNKNOWN";
+            qualityTag === "CAM" ||
+            qualityTag === "TC" ||
+            qualityTag === "UNKNOWN";
 
           let expiresAt = new Date();
           let isNewMovie = false;
@@ -1646,7 +1773,9 @@ app.get("/api/stream", async (req, res) => {
                 episode,
               }).catch(() => {});
             })
-            .catch((err) => console.error("[CACHE] Failed to save mirrors:", err));
+            .catch((err) =>
+              console.error("[CACHE] Failed to save mirrors:", err),
+            );
         }
 
         // 4. Proxy URL injection — only for non-KissKH sources that used a proxy during scrape
@@ -1719,7 +1848,9 @@ app.get("/api/stream", async (req, res) => {
     const onReqClose = () => {
       currentEntry.refCount--;
       if (currentEntry.refCount <= 0) {
-        console.log(`[STREAM] All listeners for ${cacheKey} closed. Aborting scraper.`);
+        console.log(
+          `[STREAM] All listeners for ${cacheKey} closed. Aborting scraper.`,
+        );
         currentEntry.abortController.abort();
       }
     };
@@ -1807,10 +1938,14 @@ app.get("/api/tmdb-proxy", async (req, res) => {
     return res.status(400).json({ error: "Missing endpoint parameter" });
   }
 
-  const endpoint = rawEndpoint.startsWith("/") ? rawEndpoint : "/" + rawEndpoint;
+  const endpoint = rawEndpoint.startsWith("/")
+    ? rawEndpoint
+    : "/" + rawEndpoint;
 
   if (!TMDB_API_KEY) {
-    return res.status(500).json({ error: "TMDB_API_KEY not configured on server" });
+    return res
+      .status(500)
+      .json({ error: "TMDB_API_KEY not configured on server" });
   }
 
   // Safety: never fetch KissKH IDs from TMDB
@@ -1842,7 +1977,10 @@ app.get("/api/tmdb-proxy", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({ key: cacheKey, expiresAt: { $gt: new Date() } });
+    const cached = await TmdbCache.findOne({
+      key: cacheKey,
+      expiresAt: { $gt: new Date() },
+    });
     if (cached) {
       return res.json(cached.data);
     }
@@ -1953,22 +2091,32 @@ app.get("/api/subtitles", async (req, res) => {
           return [];
         }
         try {
-          const downloads = await fetchVidVaultDownloads(kind, tmdbId, season, episode);
-          const firstWithSubs = downloads.find((d) => d.subtitles && d.subtitles.length > 0);
+          const downloads = await fetchVidVaultDownloads(
+            kind,
+            tmdbId,
+            season,
+            episode,
+          );
+          const firstWithSubs = downloads.find(
+            (d) => d.subtitles && d.subtitles.length > 0,
+          );
           if (firstWithSubs) {
             return firstWithSubs.subtitles.map((s) => ({
-              id: kind === "tv" ? `vidvault-${s.lan}-${season}-${episode}` : `vidvault-${s.lan}`,
+              id:
+                kind === "tv"
+                  ? `vidvault-${s.lan}-${season}-${episode}`
+                  : `vidvault-${s.lan}`,
               url: s.url,
               lang: s.lan,
               languageName: `${s.lanName} (VidVault)`,
-              source: "VidVault"
+              source: "VidVault",
             }));
           }
         } catch (err: any) {
           console.warn(`[SUBS] VidVault extraction failed: ${err.message}`);
         }
         return [];
-      })()
+      })(),
     ]);
 
     const aggregated = results
@@ -1977,8 +2125,10 @@ app.get("/api/subtitles", async (req, res) => {
 
     // 2. Sort to prioritize English and priority sources (VidLink/VidVault)
     const sorted = aggregated.sort((a, b) => {
-      const aIsPrioritySource = a.source === "VidLink" || a.source === "VidVault";
-      const bIsPrioritySource = b.source === "VidLink" || b.source === "VidVault";
+      const aIsPrioritySource =
+        a.source === "VidLink" || a.source === "VidVault";
+      const bIsPrioritySource =
+        b.source === "VidLink" || b.source === "VidVault";
       const aIsEng =
         a.languageName?.toLowerCase().includes("english") ||
         a.lang?.toLowerCase().startsWith("en") ||
@@ -1989,8 +2139,10 @@ app.get("/api/subtitles", async (req, res) => {
         b.language?.toLowerCase().startsWith("en");
 
       // English + PrioritySource is highest priority
-      if (aIsEng && aIsPrioritySource && !(bIsEng && bIsPrioritySource)) return -1;
-      if (!(aIsEng && aIsPrioritySource) && bIsEng && bIsPrioritySource) return 1;
+      if (aIsEng && aIsPrioritySource && !(bIsEng && bIsPrioritySource))
+        return -1;
+      if (!(aIsEng && aIsPrioritySource) && bIsEng && bIsPrioritySource)
+        return 1;
 
       // Then just English
       if (aIsEng && !bIsEng) return -1;
@@ -2299,120 +2451,6 @@ app.post("/api/stream/flush", express.json(), async (req, res) => {
 //     — Fetches a raw .ts segment or AES key and streams it back as-is.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CDN_REFERER = "https://cloudnestra.com/";
-
-// Random residential IP generator for spoofing
-const randomIP = () => {
-  const p = () => Math.floor(Math.random() * 255);
-  let first = p();
-  while ([0, 10, 127, 169, 172, 192].includes(first)) first = p();
-  return `${first}.${p()}.${p()}.${p()}`;
-};
-
-function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
-  let referer = CDN_REFERER;
-  let origin = new URL(CDN_REFERER).origin;
-  let cookie: string | null = null;
-
-  // Default browser headers for fetch/CORS
-  const headers: any = {
-    accept: "*/*",
-    "accept-language": "en-US,en;q=0.7",
-    "cache-control": "no-cache",
-    pragma: "no-cache",
-    priority: "u=1, i",
-    "sec-ch-ua":
-      '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "sec-fetch-dest": isManifest ? "empty" : "video",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "cross-site",
-    "user-agent": UA,
-    "x-forwarded-for": randomIP(),
-    "x-real-ip": randomIP(),
-  };
-
-  if (targetUrl) {
-    const lower = targetUrl.toLowerCase();
-
-    // Extract embedded headers if present (VidLink/Storm CDNs use this for inner requests)
-    try {
-      const urlObj = new URL(targetUrl);
-      const customHeaders = urlObj.searchParams.get("headers");
-      const hostParam = urlObj.searchParams.get("host");
-
-      if (customHeaders) {
-        const parsed = JSON.parse(customHeaders);
-        if (parsed.referer) referer = parsed.referer;
-        if (parsed.origin) origin = parsed.origin;
-        if (parsed.cookie) cookie = parsed.cookie;
-      }
-
-      // If a host param is provided, it might be the target host for the proxy
-      if (hostParam) {
-        // Use it only if not already set by customHeaders
-        if (referer === CDN_REFERER)
-          referer = hostParam.endsWith("/") ? hostParam : hostParam + "/";
-        if (origin === "https://cloudnestra.com")
-          origin = new URL(hostParam).origin;
-      }
-    } catch {}
-
-    // Final overrides for specific providers that are extremely sensitive to outer Referer
-    if (
-      lower.includes("ironwallnet.net") ||
-      lower.includes("digitalsun.app") ||
-      lower.includes("itsdeskmate.com") ||
-      lower.includes("keymi417exx.com") ||
-      lower.includes("cfw557.workers.dev") ||
-      lower.includes("videasy.to")
-    ) {
-      referer = "https://player.videasy.to/";
-      origin = "https://player.videasy.to";
-    } else if (
-      /stor+m\.site/.test(lower) ||
-      lower.includes("vdrk.site") ||
-      lower.includes("vidrock.ru") ||
-      lower.includes("vidrock.net") ||
-      lower.includes("hydrostorm") ||
-      lower.includes("workers.dev") ||
-      lower.includes("tiktokcdn") ||
-      lower.includes("byteoversea") ||
-      lower.includes("ibyteimg")
-    ) {
-      referer = "https://vidrock.ru/";
-      origin = "https://vidrock.ru";
-    } else if (
-      lower.includes("storm.vodvidl.site") ||
-      lower.includes("vidlink.pro") ||
-      lower.includes("nightbreeze") ||
-      lower.includes("thunderleaf")
-    ) {
-      referer = "https://vidlink.pro/";
-      origin = "https://vidlink.pro";
-    }
-
-    // Auto-detect KissKH CDNs
-    if (
-      lower.includes("kisskh") ||
-      lower.includes("cdnvideo") ||
-      /stream\d+\.store/.test(lower) ||
-      lower.includes("stream.store")
-    ) {
-      referer = "https://kisskh.do";
-      origin = "https://kisskh.do";
-    }
-  }
-
-  headers["referer"] = referer;
-  headers["origin"] = origin;
-
-  if (cookie) headers["cookie"] = cookie;
-
-  return headers;
-}
-
 /**
  * Creates a TLS-hardened agent that mimics a browser's JA3 fingerprint.
  * This helps bypass CDN blocks that detect standard Node.js handshakes.
@@ -2576,20 +2614,27 @@ app.get("/api/proxy/stream", async (req, res) => {
         const playlist = JSON.parse(manifest);
         if (Array.isArray(playlist) && playlist.length > 0) {
           // Sort by resolution descending (highest resolution first)
-          playlist.sort((a: any, b: any) => (b.resolution || 0) - (a.resolution || 0));
+          playlist.sort(
+            (a: any, b: any) => (b.resolution || 0) - (a.resolution || 0),
+          );
           const bestTrack = playlist[0];
           if (bestTrack && bestTrack.url) {
             const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-            const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+            const currentHost =
+              process.env.API_URL || `${protocol}://${req.get("host")}`;
             const proxiedUrl = `${currentHost}/api/proxy/segment?url=${encodeURIComponent(bestTrack.url)}`;
-            
-            console.log(`[PROXY/stream] JSON playlist detected. Redirecting to best MP4: ${bestTrack.resolution}p -> ${bestTrack.url.substring(0, 80)}...`);
+
+            console.log(
+              `[PROXY/stream] JSON playlist detected. Redirecting to best MP4: ${bestTrack.resolution}p -> ${bestTrack.url.substring(0, 80)}...`,
+            );
             res.setHeader("Access-Control-Allow-Origin", "*");
             return res.redirect(302, proxiedUrl);
           }
         }
       } catch (err: any) {
-        console.error(`[PROXY/stream] Failed to parse JSON playlist: ${err.message}`);
+        console.error(
+          `[PROXY/stream] Failed to parse JSON playlist: ${err.message}`,
+        );
       }
     }
 
@@ -3060,7 +3105,11 @@ app.get("/api/stream/availability", async (req, res) => {
 
   const tmdbIds = ids.split(",").filter((id) => id.trim());
   try {
-    const queryIds = [...tmdbIds, ...tmdbIds.map(id => `${id}-vidrock`), ...tmdbIds.map(id => `${id}-videasy`)];
+    const queryIds = [
+      ...tmdbIds,
+      ...tmdbIds.map((id) => `${id}-vidrock`),
+      ...tmdbIds.map((id) => `${id}-videasy`),
+    ];
     const [cachedStreams, deadPool] = await Promise.all([
       StreamCache.find({ tmdbId: { $in: queryIds } }),
       DeadPool.find({ tmdbId: { $in: queryIds } }),
@@ -3068,10 +3117,16 @@ app.get("/api/stream/availability", async (req, res) => {
 
     const results = tmdbIds.map((id) => {
       const showCached = cachedStreams.filter(
-        (s) => String(s.tmdbId) === String(id) || String(s.tmdbId) === `${id}-vidrock` || String(s.tmdbId) === `${id}-videasy`
+        (s) =>
+          String(s.tmdbId) === String(id) ||
+          String(s.tmdbId) === `${id}-vidrock` ||
+          String(s.tmdbId) === `${id}-videasy`,
       );
       const showDead = deadPool.filter(
-        (d) => String(d.tmdbId) === String(id) || String(d.tmdbId) === `${id}-vidrock` || String(d.tmdbId) === `${id}-videasy`
+        (d) =>
+          String(d.tmdbId) === String(id) ||
+          String(d.tmdbId) === `${id}-vidrock` ||
+          String(d.tmdbId) === `${id}-videasy`,
       );
 
       const hasCached = showCached.length > 0;
@@ -3127,14 +3182,18 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   }
 
   if (type === "tv" && (seasonVal === undefined || episodeVal === undefined)) {
-    return res.status(400).json({ error: "Missing season or episode for TV show" });
+    return res
+      .status(400)
+      .json({ error: "Missing season or episode for TV show" });
   }
 
   const season = type === "tv" ? parseInt(seasonVal, 10) : 1;
   const episode = type === "tv" ? parseInt(episodeVal, 10) : 1;
 
   if (isNaN(season) || isNaN(episode)) {
-    return res.status(400).json({ error: "Invalid season or episode format (must be integer)" });
+    return res
+      .status(400)
+      .json({ error: "Invalid season or episode format (must be integer)" });
   }
 
   // 1. Sliding window rate limiter (max 5 requests per minute per IP)
@@ -3143,7 +3202,11 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   let timestamps = playbackLimiterMap.get(ip) || [];
   timestamps = timestamps.filter((ts) => now - ts < 60000);
   if (timestamps.length >= 5) {
-    return res.status(429).json({ error: "Too many playback success reports. Maximum 5 per minute." });
+    return res
+      .status(429)
+      .json({
+        error: "Too many playback success reports. Maximum 5 per minute.",
+      });
   }
   timestamps.push(now);
   playbackLimiterMap.set(ip, timestamps);
@@ -3151,14 +3214,20 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   try {
     // 2. Validate that a matching StreamCache entry exists
     const cacheExists = await StreamCache.findOne({
-      tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`, `${tmdbId}-videasy`] },
+      tmdbId: {
+        $in: [tmdbId.toString(), `${tmdbId}-vidrock`, `${tmdbId}-videasy`],
+      },
       type,
       season,
       episode,
     });
 
     if (!cacheExists) {
-      return res.status(400).json({ error: "No matching stream cache found. Playback success rejected." });
+      return res
+        .status(400)
+        .json({
+          error: "No matching stream cache found. Playback success rejected.",
+        });
     }
 
     // 3. Delete from Deadpool (logging warning on deletion error)
@@ -3168,10 +3237,15 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
       season,
       episode,
     }).catch((err) => {
-      console.warn(`[DEADPOOL] Failed to delete entry on successful playback for ${tmdbId}:`, err);
+      console.warn(
+        `[DEADPOOL] Failed to delete entry on successful playback for ${tmdbId}:`,
+        err,
+      );
     });
 
-    console.log(`[DEADPOOL] Removed dead entry on successful playback: ${tmdbId} ${type} S${season}E${episode}`);
+    console.log(
+      `[DEADPOOL] Removed dead entry on successful playback: ${tmdbId} ${type} S${season}E${episode}`,
+    );
     return res.json({ success: true });
   } catch (error) {
     console.error("[DEADPOOL] Failed to process playback success:", error);
@@ -3180,7 +3254,6 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
 });
 
 app.get("/api/metadata", async (req, res) => {
-
   const tmdbId = req.query.tmdbId as string;
   const isBatch = req.query.batch as string;
   const type = (req.query.type as any) || "movie";
@@ -3621,14 +3694,18 @@ app.get("/api/vidrock", async (req, res) => {
   }
 
   if (type === "tv" && (!seasonStr || !episodeStr)) {
-    return res.status(400).json({ error: "Missing season or episode for TV show" });
+    return res
+      .status(400)
+      .json({ error: "Missing season or episode for TV show" });
   }
 
   const season = type === "tv" ? parseInt(seasonStr, 10) : 1;
   const episode = type === "tv" ? parseInt(episodeStr, 10) : 1;
 
   if (isNaN(season) || isNaN(episode)) {
-    return res.status(400).json({ error: "Invalid season or episode format (must be integer)" });
+    return res
+      .status(400)
+      .json({ error: "Invalid season or episode format (must be integer)" });
   }
 
   try {
@@ -3640,9 +3717,18 @@ app.get("/api/vidrock", async (req, res) => {
       episode,
     }).catch(() => null);
 
-    if (cachedRecord && cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
-      if (!cachedRecord.streamExpiresAt || new Date() < cachedRecord.streamExpiresAt) {
-        console.log(`[VIDROCK] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`);
+    if (
+      cachedRecord &&
+      cachedRecord.mirrors &&
+      cachedRecord.mirrors.length > 0
+    ) {
+      if (
+        !cachedRecord.streamExpiresAt ||
+        new Date() < cachedRecord.streamExpiresAt
+      ) {
+        console.log(
+          `[VIDROCK] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`,
+        );
         const responseData: Record<string, any> = {};
         cachedRecord.mirrors.forEach((m: any) => {
           responseData[m.source] = {
@@ -3707,7 +3793,7 @@ app.get("/api/vidrock", async (req, res) => {
           streamExpiresAt: cacheExpires,
           expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
         },
-        { upsert: true }
+        { upsert: true },
       );
 
       await DeadPool.deleteMany({
@@ -3727,7 +3813,6 @@ app.get("/api/vidrock", async (req, res) => {
   }
 });
 
-
 app.get("/api/videasy", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const type = req.query.type as "movie" | "tv";
@@ -3741,14 +3826,18 @@ app.get("/api/videasy", async (req, res) => {
   }
 
   if (type === "tv" && (!seasonStr || !episodeStr)) {
-    return res.status(400).json({ error: "Missing season or episode for TV show" });
+    return res
+      .status(400)
+      .json({ error: "Missing season or episode for TV show" });
   }
 
   const season = type === "tv" ? parseInt(seasonStr, 10) : 1;
   const episode = type === "tv" ? parseInt(episodeStr, 10) : 1;
 
   if (isNaN(season) || isNaN(episode)) {
-    return res.status(400).json({ error: "Invalid season or episode format (must be integer)" });
+    return res
+      .status(400)
+      .json({ error: "Invalid season or episode format (must be integer)" });
   }
 
   try {
@@ -3760,9 +3849,18 @@ app.get("/api/videasy", async (req, res) => {
       episode,
     }).catch(() => null);
 
-    if (cachedRecord && cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
-      if (!cachedRecord.streamExpiresAt || new Date() < cachedRecord.streamExpiresAt) {
-        console.log(`[VIDEASY] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`);
+    if (
+      cachedRecord &&
+      cachedRecord.mirrors &&
+      cachedRecord.mirrors.length > 0
+    ) {
+      if (
+        !cachedRecord.streamExpiresAt ||
+        new Date() < cachedRecord.streamExpiresAt
+      ) {
+        console.log(
+          `[VIDEASY] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`,
+        );
         const responseData: Record<string, any> = {};
         cachedRecord.mirrors.forEach((m: any) => {
           responseData[m.source] = {
@@ -3783,7 +3881,7 @@ app.get("/api/videasy", async (req, res) => {
       releaseYear,
       tmdbId,
       season,
-      episode
+      episode,
     );
 
     // Parse active mirrors to cache them if present
@@ -3815,7 +3913,7 @@ app.get("/api/videasy", async (req, res) => {
           streamExpiresAt: cacheExpires,
           expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
         },
-        { upsert: true }
+        { upsert: true },
       );
 
       await DeadPool.deleteMany({
@@ -3834,7 +3932,6 @@ app.get("/api/videasy", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch from Videasy" });
   }
 });
-
 
 const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, () => {

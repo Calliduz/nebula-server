@@ -11,7 +11,7 @@ let wasmInstance: WebAssembly.Instance | null = null;
 
 async function getWasmInstance() {
   if (wasmInstance) return wasmInstance;
-  
+
   if (!fs.existsSync(WASM_PATH)) {
     throw new Error(`WASM file not found at ${WASM_PATH}`);
   }
@@ -19,7 +19,7 @@ async function getWasmInstance() {
   const wasmBytes = fs.readFileSync(WASM_PATH);
   const env = {
     seed: () => Date.now() * Math.random(),
-    abort() {}
+    abort() {},
   };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
@@ -28,7 +28,10 @@ async function getWasmInstance() {
 }
 
 // Helper to decrypt ciphertext returned by Videasy API
-async function decryptSources(ciphertextHex: string, tmdbId: string): Promise<any> {
+async function decryptSources(
+  ciphertextHex: string,
+  tmdbId: string,
+): Promise<any> {
   const instance = await getWasmInstance();
   const exp = instance.exports as any;
   const memory = exp.memory;
@@ -38,13 +41,13 @@ async function decryptSources(ciphertextHex: string, tmdbId: string): Promise<an
     if (!ptr) return null;
     const u32 = new Uint32Array(memory.buffer);
     const u16 = new Uint16Array(memory.buffer);
-    let endOffStr = ptr + u32[(ptr - 4) >>> 2]!; 
-    let t = endOffStr >>> 1; 
-    let n = ptr >>> 1;       
+    let endOffStr = ptr + u32[(ptr - 4) >>> 2]!;
+    let t = endOffStr >>> 1;
+    let n = ptr >>> 1;
     let s = "";
     if (t - n > 5000000 || t - n < 0) return null;
-    for (; t - n > 1024;) {
-      s += String.fromCharCode(...u16.subarray(n, n += 1024));
+    for (; t - n > 1024; ) {
+      s += String.fromCharCode(...u16.subarray(n, (n += 1024)));
     }
     return s + String.fromCharCode(...u16.subarray(n, t));
   }
@@ -64,13 +67,16 @@ async function decryptSources(ciphertextHex: string, tmdbId: string): Promise<an
   if (!serveCode) {
     throw new Error("Failed to read serve code from WASM");
   }
-  serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, '_0x36(');
+  serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, "_0x36(");
 
-  const fakeWindow = { location: { hostname: "cineby.sc", href: "https://cineby.sc/" }, hash: undefined as any };
+  const fakeWindow = {
+    location: { hostname: "cineby.sc", href: "https://cineby.sc/" },
+    hash: undefined as any,
+  };
   const fn = new Function("window", "crypto", "TextEncoder", serveCode);
   fn(fakeWindow, webcrypto, TextEncoder);
-  
-  await new Promise(r => setTimeout(r, 100));
+
+  await new Promise((r) => setTimeout(r, 100));
   const hash = String(fakeWindow.hash);
   if (!hash || hash === "undefined") {
     throw new Error("Failed to get verification hash");
@@ -89,11 +95,13 @@ async function decryptSources(ciphertextHex: string, tmdbId: string): Promise<an
   }
 
   // Decrypt the outer AES layer with key ""
-  const pt = CryptoJS.AES.decrypt(wasmDecryptedStr, "").toString(CryptoJS.enc.Utf8);
+  const pt = CryptoJS.AES.decrypt(wasmDecryptedStr, "").toString(
+    CryptoJS.enc.Utf8,
+  );
   if (!pt) {
     throw new Error("CryptoJS AES decryption yielded empty string");
   }
-  
+
   return JSON.parse(pt);
 }
 
@@ -117,18 +125,28 @@ const providers: ProviderDef[] = [
     path: "hdmovie",
     audio: "Original audio",
     flag: "us",
-    filter: (data) => (data.sources || []).filter((s: any) => s.quality === "English" || s.quality === "Original")
+    filter: (data) =>
+      (data.sources || []).filter(
+        (s: any) => s.quality === "English" || s.quality === "Original",
+      ),
   },
   {
     name: "Fade",
     path: "hdmovie",
     audio: "Hindi audio",
     flag: "in",
-    filter: (data) => (data.sources || []).filter((s: any) => s.quality === "Hindi")
+    filter: (data) =>
+      (data.sources || []).filter((s: any) => s.quality === "Hindi"),
   },
-  { name: "Killjoy", path: "meine", extraParams: { language: "german" }, audio: "German audio", flag: "de" },
+  {
+    name: "Killjoy",
+    path: "meine",
+    extraParams: { language: "german" },
+    audio: "German audio",
+    flag: "de",
+  },
   { name: "Omen", path: "lamovie", audio: "Spanish audio", flag: "mx" },
-  { name: "Raze", path: "superflix", audio: "Original audio", flag: "us" }
+  { name: "Raze", path: "superflix", audio: "Original audio", flag: "us" },
 ];
 
 async function fetchProviderStreams(
@@ -138,8 +156,14 @@ async function fetchProviderStreams(
   year: string,
   tmdbId: string,
   season: number,
-  episode: number
-): Promise<{ sourceName: string; audio: string; flag: string; sources: any[]; subtitles: any[] }> {
+  episode: number,
+): Promise<{
+  sourceName: string;
+  audio: string;
+  flag: string;
+  sources: any[];
+  subtitles: any[];
+}> {
   const url = `https://api.videasy.to/${prov.path}/sources-with-title`;
   const params: Record<string, string> = {
     title: encodeURIComponent(title),
@@ -150,7 +174,7 @@ async function fetchProviderStreams(
     seasonId: String(season),
     tmdbId,
     imdbId: "",
-    ...prov.extraParams
+    ...prov.extraParams,
   };
 
   const urlWithParams = new URL(url);
@@ -161,11 +185,12 @@ async function fetchProviderStreams(
   const res = await fetch(urlWithParams.toString(), {
     method: "GET",
     headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-      "Referer": "https://player.videasy.to/",
-      "Origin": "https://player.videasy.to"
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+      Referer: "https://player.videasy.to/",
+      Origin: "https://player.videasy.to",
     },
-    signal: AbortSignal.timeout(10000)
+    signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
@@ -178,7 +203,7 @@ async function fetchProviderStreams(
   }
 
   const decrypted = await decryptSources(ciphertext, tmdbId);
-  
+
   let sources = decrypted.sources || [];
   if (prov.filter) {
     sources = prov.filter(decrypted);
@@ -190,7 +215,7 @@ async function fetchProviderStreams(
     audio: prov.audio || "Original audio",
     flag: prov.flag || "us",
     sources,
-    subtitles
+    subtitles,
   };
 }
 
@@ -200,13 +225,23 @@ export async function fetchVideasySources(
   year: string,
   tmdbId: string,
   season: number = 1,
-  episode: number = 1
+  episode: number = 1,
 ): Promise<Record<string, any>> {
-  console.log(`[VIDEASY] Starting parallel scan for ${mediaType} ${tmdbId} S${season}E${episode}...`);
-  
+  console.log(
+    `[VIDEASY] Starting parallel scan for ${mediaType} ${tmdbId} S${season}E${episode}...`,
+  );
+
   const promises = providers.map(async (prov) => {
     try {
-      return await fetchProviderStreams(prov, title, mediaType, year, tmdbId, season, episode);
+      return await fetchProviderStreams(
+        prov,
+        title,
+        mediaType,
+        year,
+        tmdbId,
+        season,
+        episode,
+      );
     } catch (err: any) {
       console.warn(`[VIDEASY] Provider ${prov.name} failed: ${err.message}`);
       return null;
@@ -218,21 +253,22 @@ export async function fetchVideasySources(
 
   for (const res of results) {
     if (!res || !res.sources || res.sources.length === 0) continue;
-    
+
     res.sources.forEach((src) => {
       if (!src.url) return;
-      
+
       // If there are multiple qualities, name them appropriately
-      const qualitySuffix = src.quality && src.quality !== "Auto" && src.quality !== "Original"
-        ? ` - ${src.quality}`
-        : "";
-      
+      const qualitySuffix =
+        src.quality && src.quality !== "Auto" && src.quality !== "Original"
+          ? ` - ${src.quality}`
+          : "";
+
       const mirrorName = `Videasy (${res.sourceName}${qualitySuffix})`;
       activeMirrors[mirrorName] = {
         url: src.url,
         type: src.url.includes("m3u8") ? "hls" : "mp4",
         audio: res.audio,
-        flag: res.flag
+        flag: res.flag,
       };
     });
   }

@@ -145,4 +145,3 @@ const TmdbCacheSchema = new mongoose.Schema({
 TmdbCacheSchema.index({ key: 1 }, { unique: true });
 TmdbCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const TmdbCache = mongoose.model("TmdbCache", TmdbCacheSchema);
-
