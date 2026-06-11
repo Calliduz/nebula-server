@@ -172,6 +172,19 @@ export async function decryptSources(
   }
 }
 
+let decryptionQueue = Promise.resolve();
+
+export async function decryptSourcesSerialized(
+  ciphertextHex: string,
+  tmdbId: string,
+): Promise<any> {
+  const result = decryptionQueue.then(async () => {
+    return await decryptSources(ciphertextHex, tmdbId);
+  });
+  decryptionQueue = result.then(() => {}).catch(() => {});
+  return result;
+}
+
 interface ProviderDef {
   name: string;
   path: string;
@@ -257,7 +270,7 @@ async function fetchProviderStreams(
       Referer: "https://player.videasy.to/",
       Origin: "https://player.videasy.to",
     },
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(5000),
   });
 
   if (!res.ok) {
@@ -269,7 +282,7 @@ async function fetchProviderStreams(
     throw new Error(`Empty response or error message: ${ciphertext}`);
   }
 
-  const decrypted = await decryptSources(ciphertext, tmdbId);
+  const decrypted = await decryptSourcesSerialized(ciphertext, tmdbId);
 
   let sources = decrypted.sources || [];
   if (prov.filter) {
