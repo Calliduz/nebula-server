@@ -6,20 +6,26 @@ import CryptoJS from "crypto-js";
 
 const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 
-// Cache for compiled WASM module
-let wasmModule: WebAssembly.Module | null = null;
+// Cache for compiling/instantiating WASM
+let wasmInstance: WebAssembly.Instance | null = null;
 let cachedServeFn: Function | null = null;
 
-async function getWasmModule() {
-  if (wasmModule) return wasmModule;
+async function getWasmInstance() {
+  if (wasmInstance) return wasmInstance;
 
   if (!fs.existsSync(WASM_PATH)) {
     throw new Error(`WASM file not found at ${WASM_PATH}`);
   }
 
   const wasmBytes = fs.readFileSync(WASM_PATH);
-  wasmModule = await WebAssembly.compile(wasmBytes);
-  return wasmModule;
+  const env = {
+    seed: () => Date.now() * Math.random(),
+    abort() {},
+  };
+
+  const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
+  wasmInstance = instance;
+  return wasmInstance;
 }
 
 async function getCompiledServeFn(instance: WebAssembly.Instance) {
@@ -51,16 +57,8 @@ async function getCompiledServeFn(instance: WebAssembly.Instance) {
   }
   serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, "_0x36(");
 
-  cachedServeFn = new Function(
-    "window",
-    "crypto",
-    "TextEncoder",
-    "setTimeout",
-    "setInterval",
-    "clearTimeout",
-    "clearInterval",
-    serveCode,
-  );
+  // KEEP ORIGINAL SIGNATURE (3 parameters) to prevent arguments.length anti-tamper failures
+  cachedServeFn = new Function("window", "crypto", "TextEncoder", serveCode);
   return cachedServeFn;
 }
 
@@ -69,12 +67,7 @@ export async function decryptSources(
   ciphertextHex: string,
   tmdbId: string,
 ): Promise<any> {
-  const module = await getWasmModule();
-  const env = {
-    seed: () => Date.now() * Math.random(),
-    abort() {},
-  };
-  const instance = new WebAssembly.Instance(module, { env });
+  const instance = await getWasmInstance();
   const exp = instance.exports as any;
   const memory = exp.memory;
 
@@ -117,16 +110,9 @@ export async function decryptSources(
     activeIntervals.push(i);
     return i;
   };
-  const customClearTimeout = (t: any) => {
-    clearTimeout(t);
-    const idx = activeTimers.indexOf(t);
-    if (idx !== -1) activeTimers.splice(idx, 1);
-  };
-  const customClearInterval = (i: any) => {
-    clearInterval(i);
-    const idx = activeIntervals.indexOf(i);
-    if (idx !== -1) activeIntervals.splice(idx, 1);
-  };
+
+  const originalSetTimeout = global.setTimeout;
+  const originalSetInterval = global.setInterval;
 
   try {
     const serveFn = await getCompiledServeFn(instance);
@@ -136,15 +122,16 @@ export async function decryptSources(
       hash: undefined as any,
     };
 
-    serveFn(
-      fakeWindow,
-      webcrypto,
-      TextEncoder,
-      customSetTimeout,
-      customSetInterval,
-      customClearTimeout,
-      customClearInterval,
-    );
+    // Override globals temporarily during synchronous execution to capture background timers
+    global.setTimeout = customSetTimeout as any;
+    global.setInterval = customSetInterval as any;
+
+    try {
+      serveFn(fakeWindow, webcrypto, TextEncoder);
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.setInterval = originalSetInterval;
+    }
 
     await new Promise((r) => setTimeout(r, 100));
     const hash = String(fakeWindow.hash);
@@ -226,7 +213,7 @@ const providers: ProviderDef[] = [
     flag: "de",
   },
   { name: "Omen", path: "lamovie", audio: "Spanish audio", flag: "mx" },
-  { name: "Raze", path: "superflix", audio: "Original audio", flag: "us" },
+  { name: "Raze", path: "superflix", audio: "Brazil audio", flag: "br" },
 ];
 
 async function fetchProviderStreams(
