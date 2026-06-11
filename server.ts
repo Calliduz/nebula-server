@@ -197,6 +197,22 @@ function getSharedHardenedAgent() {
   return _sharedHardenedAgent;
 }
 
+// Cache proxy agents to prevent memory and socket leaks from allocating new agents per segment request
+const proxyAgentsMap = new Map<string, any>();
+async function getProxyAgent(proxyUrl: string) {
+  let agent = proxyAgentsMap.get(proxyUrl);
+  if (!agent) {
+    const HttpsProxyAgentClass = (await import("https-proxy-agent")).HttpsProxyAgent;
+    agent = new HttpsProxyAgentClass(proxyUrl, {
+      keepAlive: true,
+      maxSockets: 64,
+      timeout: 30000,
+    });
+    proxyAgentsMap.set(proxyUrl, agent);
+  }
+  return agent;
+}
+
 function fetchVidLinkRaw(
   rawUrl: string,
   customHeaders: any = {},
@@ -2963,7 +2979,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         signal: (req as any).signal,
         proxy: false, // disable axios auto-proxy; we set it via httpsAgent if needed
         httpsAgent: proxyUrl
-          ? new (await import("https-proxy-agent")).HttpsProxyAgent(proxyUrl)
+          ? await getProxyAgent(proxyUrl)
           : getSharedHardenedAgent(), // reuse singleton to avoid per-request TLS context allocation
         maxRedirects: 5,
       });
@@ -3409,7 +3425,7 @@ app.get("/api/image", async (req, res) => {
   }
 
   try {
-    const agent = createHardenedAgent();
+    const agent = getSharedHardenedAgent();
     const response = await axios.get(url, {
       responseType: "stream",
       timeout: 10000,
