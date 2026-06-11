@@ -202,7 +202,8 @@ const proxyAgentsMap = new Map<string, any>();
 async function getProxyAgent(proxyUrl: string) {
   let agent = proxyAgentsMap.get(proxyUrl);
   if (!agent) {
-    const HttpsProxyAgentClass = (await import("https-proxy-agent")).HttpsProxyAgent;
+    const HttpsProxyAgentClass = (await import("https-proxy-agent"))
+      .HttpsProxyAgent;
     agent = new HttpsProxyAgentClass(proxyUrl, {
       keepAlive: true,
       maxSockets: 64,
@@ -546,6 +547,11 @@ async function getExternalIMDBId(tmdbId: string, type: "movie" | "tv") {
         },
       );
       imdbId = res.data.imdb_id || null;
+    }
+
+    if (_externalIdCache.size >= 10000) {
+      const oldestKey = _externalIdCache.keys().next().value;
+      if (oldestKey) _externalIdCache.delete(oldestKey);
     }
     _externalIdCache.set(cacheKey, imdbId);
     return imdbId;
@@ -1485,11 +1491,9 @@ app.get("/api/download/episode/direct", async (req, res) => {
     console.error(
       `[DIRECT DOWNLOAD EPISODE ERROR] For ${tmdbId} S${season}E${episode}: ${error.message}`,
     );
-    return res
-      .status(500)
-      .json({
-        error: error.message || "Failed to fetch direct episode downloads",
-      });
+    return res.status(500).json({
+      error: error.message || "Failed to fetch direct episode downloads",
+    });
   }
 });
 
@@ -3226,11 +3230,9 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   let timestamps = playbackLimiterMap.get(ip) || [];
   timestamps = timestamps.filter((ts) => now - ts < 60000);
   if (timestamps.length >= 5) {
-    return res
-      .status(429)
-      .json({
-        error: "Too many playback success reports. Maximum 5 per minute.",
-      });
+    return res.status(429).json({
+      error: "Too many playback success reports. Maximum 5 per minute.",
+    });
   }
   timestamps.push(now);
   playbackLimiterMap.set(ip, timestamps);
@@ -3247,11 +3249,9 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
     });
 
     if (!cacheExists) {
-      return res
-        .status(400)
-        .json({
-          error: "No matching stream cache found. Playback success rejected.",
-        });
+      return res.status(400).json({
+        error: "No matching stream cache found. Playback success rejected.",
+      });
     }
 
     // 3. Delete from Deadpool (logging warning on deletion error)

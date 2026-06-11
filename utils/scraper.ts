@@ -140,39 +140,39 @@ export function startHeartbeat(
   const compositeKey = `${sessionId}:${userIp}`;
   stopHeartbeat(sessionId, userIp);
 
+  // Build the correct agent: proxy + cookies must be composed together.
+  // WRONG pattern: new HttpCookieAgent({ agent: new HttpsProxyAgent(...) })
+  //   — HttpCookieAgent ignores the nested .agent property, proxy is silently dropped.
+  // CORRECT pattern: createCookieAgent(HttpsProxyAgent) — same as createSession().
+  const rawProxy = proxyUrl || session.proxyUrl;
+  let httpAgent: any;
+  let httpsAgent: any;
+
+  if (rawProxy) {
+    const sanitizedProxy = rawProxy.endsWith("/")
+      ? rawProxy.slice(0, -1)
+      : rawProxy;
+    const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
+    const proxyAgent = new HttpsCookieProxyAgent(sanitizedProxy, {
+      cookies: { jar: session.cookieJar as any },
+    });
+    // Use the same composed agent for both HTTP and HTTPS
+    httpAgent = proxyAgent;
+    httpsAgent = proxyAgent;
+  } else {
+    // No proxy — still send cookies via plain cookie agents
+    httpAgent = new HttpCookieAgent({
+      cookies: { jar: session.cookieJar as any },
+    });
+    httpsAgent = new HttpsCookieAgent({
+      cookies: { jar: session.cookieJar as any },
+    });
+  }
+
+  const client = axios.create({ httpAgent, httpsAgent });
+
   const ping = async () => {
     try {
-      // Build the correct agent: proxy + cookies must be composed together.
-      // WRONG pattern: new HttpCookieAgent({ agent: new HttpsProxyAgent(...) })
-      //   — HttpCookieAgent ignores the nested .agent property, proxy is silently dropped.
-      // CORRECT pattern: createCookieAgent(HttpsProxyAgent) — same as createSession().
-      const rawProxy = proxyUrl || session.proxyUrl;
-      let httpAgent: any;
-      let httpsAgent: any;
-
-      if (rawProxy) {
-        const sanitizedProxy = rawProxy.endsWith("/")
-          ? rawProxy.slice(0, -1)
-          : rawProxy;
-        const HttpsCookieProxyAgent = createCookieAgent(HttpsProxyAgent);
-        const proxyAgent = new HttpsCookieProxyAgent(sanitizedProxy, {
-          cookies: { jar: session.cookieJar as any },
-        });
-        // Use the same composed agent for both HTTP and HTTPS
-        httpAgent = proxyAgent;
-        httpsAgent = proxyAgent;
-      } else {
-        // No proxy — still send cookies via plain cookie agents
-        httpAgent = new HttpCookieAgent({
-          cookies: { jar: session.cookieJar as any },
-        });
-        httpsAgent = new HttpsCookieAgent({
-          cookies: { jar: session.cookieJar as any },
-        });
-      }
-
-      const client = axios.create({ httpAgent, httpsAgent });
-
       await client.get(session.pingUrl!, {
         params: session.pingParams,
         headers: {

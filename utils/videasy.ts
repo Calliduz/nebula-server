@@ -6,33 +6,75 @@ import CryptoJS from "crypto-js";
 
 const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 
-// Cache for compiling/instantiating WASM
-let wasmInstance: WebAssembly.Instance | null = null;
+// Cache for compiled WASM module
+let wasmModule: WebAssembly.Module | null = null;
+let cachedServeFn: Function | null = null;
 
-async function getWasmInstance() {
-  if (wasmInstance) return wasmInstance;
+async function getWasmModule() {
+  if (wasmModule) return wasmModule;
 
   if (!fs.existsSync(WASM_PATH)) {
     throw new Error(`WASM file not found at ${WASM_PATH}`);
   }
 
   const wasmBytes = fs.readFileSync(WASM_PATH);
+  wasmModule = await WebAssembly.compile(wasmBytes);
+  return wasmModule;
+}
+
+async function getCompiledServeFn(instance: WebAssembly.Instance) {
+  if (cachedServeFn) return cachedServeFn;
+
+  const exp = instance.exports as any;
+  const memory = exp.memory;
+
+  // Read UTF-16 string from WASM memory
+  function readString(ptr: number) {
+    if (!ptr) return null;
+    const u32 = new Uint32Array(memory.buffer);
+    const u16 = new Uint16Array(memory.buffer);
+    let endOffStr = ptr + u32[(ptr - 4) >>> 2]!;
+    let t = endOffStr >>> 1;
+    let n = ptr >>> 1;
+    let s = "";
+    if (t - n > 5000000 || t - n < 0) return null;
+    for (; t - n > 1024; ) {
+      s += String.fromCharCode(...u16.subarray(n, (n += 1024)));
+    }
+    return s + String.fromCharCode(...u16.subarray(n, t));
+  }
+
+  const servePtr = exp.serve() >>> 0;
+  let serveCode = readString(servePtr);
+  if (!serveCode) {
+    throw new Error("Failed to read serve code from WASM");
+  }
+  serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, "_0x36(");
+
+  cachedServeFn = new Function(
+    "window",
+    "crypto",
+    "TextEncoder",
+    "setTimeout",
+    "setInterval",
+    "clearTimeout",
+    "clearInterval",
+    serveCode,
+  );
+  return cachedServeFn;
+}
+
+// Helper to decrypt ciphertext returned by Videasy API
+export async function decryptSources(
+  ciphertextHex: string,
+  tmdbId: string,
+): Promise<any> {
+  const module = await getWasmModule();
   const env = {
     seed: () => Date.now() * Math.random(),
     abort() {},
   };
-
-  const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
-  wasmInstance = instance;
-  return wasmInstance;
-}
-
-// Helper to decrypt ciphertext returned by Videasy API
-async function decryptSources(
-  ciphertextHex: string,
-  tmdbId: string,
-): Promise<any> {
-  const instance = await getWasmInstance();
+  const instance = new WebAssembly.Instance(module, { env });
   const exp = instance.exports as any;
   const memory = exp.memory;
 
@@ -62,47 +104,85 @@ async function decryptSources(
     return ptr;
   }
 
-  const servePtr = exp.serve() >>> 0;
-  let serveCode = readString(servePtr);
-  if (!serveCode) {
-    throw new Error("Failed to read serve code from WASM");
-  }
-  serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, "_0x36(");
+  const activeTimers: NodeJS.Timeout[] = [];
+  const activeIntervals: NodeJS.Timeout[] = [];
 
-  const fakeWindow = {
-    location: { hostname: "cineby.sc", href: "https://cineby.sc/" },
-    hash: undefined as any,
+  const customSetTimeout = (callback: any, delay: any, ...args: any[]) => {
+    const t = setTimeout(callback, delay, ...args);
+    activeTimers.push(t);
+    return t;
   };
-  const fn = new Function("window", "crypto", "TextEncoder", serveCode);
-  fn(fakeWindow, webcrypto, TextEncoder);
+  const customSetInterval = (callback: any, delay: any, ...args: any[]) => {
+    const i = setInterval(callback, delay, ...args);
+    activeIntervals.push(i);
+    return i;
+  };
+  const customClearTimeout = (t: any) => {
+    clearTimeout(t);
+    const idx = activeTimers.indexOf(t);
+    if (idx !== -1) activeTimers.splice(idx, 1);
+  };
+  const customClearInterval = (i: any) => {
+    clearInterval(i);
+    const idx = activeIntervals.indexOf(i);
+    if (idx !== -1) activeIntervals.splice(idx, 1);
+  };
 
-  await new Promise((r) => setTimeout(r, 100));
-  const hash = String(fakeWindow.hash);
-  if (!hash || hash === "undefined") {
-    throw new Error("Failed to get verification hash");
+  try {
+    const serveFn = await getCompiledServeFn(instance);
+
+    const fakeWindow = {
+      location: { hostname: "cineby.sc", href: "https://cineby.sc/" },
+      hash: undefined as any,
+    };
+
+    serveFn(
+      fakeWindow,
+      webcrypto,
+      TextEncoder,
+      customSetTimeout,
+      customSetInterval,
+      customClearTimeout,
+      customClearInterval,
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+    const hash = String(fakeWindow.hash);
+    if (!hash || hash === "undefined") {
+      throw new Error("Failed to get verification hash");
+    }
+
+    const hashPtr = writeString(hash);
+    if (!exp.verify(hashPtr)) {
+      throw new Error("WASM verify signature failed");
+    }
+
+    const ctPtr = writeString(ciphertextHex);
+    const resPtr = exp.decrypt(ctPtr, parseInt(tmdbId, 10)) >>> 0;
+    const wasmDecryptedStr = readString(resPtr);
+    if (!wasmDecryptedStr) {
+      throw new Error("WASM decrypt returned null");
+    }
+
+    // Decrypt the outer AES layer with key ""
+    const pt = CryptoJS.AES.decrypt(wasmDecryptedStr, "").toString(
+      CryptoJS.enc.Utf8,
+    );
+    if (!pt) {
+      throw new Error("CryptoJS AES decryption yielded empty string");
+    }
+
+    return JSON.parse(pt);
+  } finally {
+    // Clear all sandboxed background timers to prevent leaks
+    activeTimers.forEach((t) => clearTimeout(t));
+    activeIntervals.forEach((i) => clearInterval(i));
+
+    // Trigger AssemblyScript GC
+    try {
+      exp.__collect();
+    } catch {}
   }
-
-  const hashPtr = writeString(hash);
-  if (!exp.verify(hashPtr)) {
-    throw new Error("WASM verify signature failed");
-  }
-
-  const ctPtr = writeString(ciphertextHex);
-  const resPtr = exp.decrypt(ctPtr, parseInt(tmdbId, 10)) >>> 0;
-  const wasmDecryptedStr = readString(resPtr);
-  if (!wasmDecryptedStr) {
-    throw new Error("WASM decrypt returned null");
-  }
-
-  // Decrypt the outer AES layer with key ""
-  const pt = CryptoJS.AES.decrypt(wasmDecryptedStr, "").toString(
-    CryptoJS.enc.Utf8,
-  );
-  if (!pt) {
-    throw new Error("CryptoJS AES decryption yielded empty string");
-  }
-
-  return JSON.parse(pt);
 }
 
 interface ProviderDef {
