@@ -16,7 +16,11 @@ import {
   DeadPool,
   TmdbCache,
 } from "./models/Cache.js";
-import { fetchWithCycleTLS, fetchWithGotScraping, shutdownCycleTLS } from "./utils/bypass.js";
+import {
+  fetchWithCycleTLS,
+  fetchWithGotScraping,
+  shutdownCycleTLS,
+} from "./utils/bypass.js";
 
 import { getSubtitles } from "./utils/subtitles.js";
 import { cdnHeaders } from "./utils/cdn.js";
@@ -464,7 +468,7 @@ const connectDB = async (retryCount = 5) => {
   try {
     await mongoose.connect(MONGODB_URI, {
       serverSelectionTimeoutMS: 15000, // Avoid false drops on event loop lag or network spikes
-      heartbeatFrequencyMS: 30000,     // Reduce monitoring ping frequency to save CPU and connections
+      heartbeatFrequencyMS: 30000, // Reduce monitoring ping frequency to save CPU and connections
       connectTimeoutMS: 15000,
       socketTimeoutMS: 45000, // Close sockets after 45s of inactivity (client-side)
       family: 4, // Force IPv4 to avoid slow dual-stack lookups on Oracle
@@ -2537,7 +2541,9 @@ app.get("/api/proxy/stream", async (req, res) => {
 
   // Redirect local master.m3u8 requests directly to avoid proxying localhost over public proxy tunnels
   if (targetUrl.includes("/api/videasy/master.m3u8")) {
-    console.log("[PROXY/stream] Local master playlist detected. Redirecting directly.");
+    console.log(
+      "[PROXY/stream] Local master playlist detected. Redirecting directly.",
+    );
     res.setHeader("Access-Control-Allow-Origin", "*");
     return res.redirect(302, targetUrl);
   }
@@ -2555,9 +2561,12 @@ app.get("/api/proxy/stream", async (req, res) => {
     lowercaseUrl.includes(".mov");
 
   if (isDirectMedia) {
-    console.log("[PROXY/stream] Direct media URL detected. Redirecting to segment proxy.");
+    console.log(
+      "[PROXY/stream] Direct media URL detected. Redirecting to segment proxy.",
+    );
     const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-    const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+    const currentHost =
+      process.env.API_URL || `${protocol}://${req.get("host")}`;
     const proxyParam = req.query.nebula_proxy
       ? `&nebula_proxy=${encodeURIComponent(req.query.nebula_proxy as string)}`
       : "";
@@ -2715,7 +2724,8 @@ app.get("/api/proxy/stream", async (req, res) => {
       if (uri.startsWith("/")) return origin + uri;
       if (uri.startsWith("?")) {
         const qIdx = actualTargetUrl.indexOf("?");
-        const base = qIdx >= 0 ? actualTargetUrl.substring(0, qIdx) : actualTargetUrl;
+        const base =
+          qIdx >= 0 ? actualTargetUrl.substring(0, qIdx) : actualTargetUrl;
         return base + uri;
       }
       return baseDir + uri;
@@ -3897,7 +3907,7 @@ app.get("/api/videasy/master.m3u8", (req, res) => {
   }
 
   try {
-    const urls = urlsParam.split(",").map(url => decodeURIComponent(url));
+    const urls = urlsParam.split(",").map((url) => decodeURIComponent(url));
     const qualities = qualitiesParam.split(",");
 
     let m3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n";
@@ -3931,7 +3941,8 @@ app.get("/api/videasy/master.m3u8", (req, res) => {
       }
 
       const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-      const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+      const currentHost =
+        process.env.API_URL || `${protocol}://${req.get("host")}`;
       const proxiedUrl = `${currentHost}/api/proxy/stream?url=${encodeURIComponent(url)}`;
 
       m3u8 += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth}${resolution ? `,RESOLUTION=${resolution}` : ""},NAME="${height}p"\n`;
@@ -3995,7 +4006,8 @@ app.get("/api/videasy", async (req, res) => {
           `[VIDEASY] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`,
         );
         const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-        const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+        const currentHost =
+          process.env.API_URL || `${protocol}://${req.get("host")}`;
 
         const responseData: Record<string, any> = {};
         cachedRecord.mirrors.forEach((m: any) => {
@@ -4067,7 +4079,8 @@ app.get("/api/videasy", async (req, res) => {
     }
 
     const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-    const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+    const currentHost =
+      process.env.API_URL || `${protocol}://${req.get("host")}`;
     const responseData: Record<string, any> = {};
     Object.entries(activeMirrors).forEach(([key, val]: any) => {
       let url = val.url;
@@ -4099,7 +4112,7 @@ const server = app.listen(PORT, () => {
 // We stop accepting new connections, disconnect from DB, stop CycleTLS, and exit.
 async function handleGracefulShutdown(signal: string) {
   console.log(`[SHUTDOWN] ${signal} received — starting clean shutdown...`);
-  
+
   // 1. Stop CycleTLS Go helper binary
   await shutdownCycleTLS();
 

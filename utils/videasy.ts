@@ -11,6 +11,9 @@ const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 let wasmInstance: WebAssembly.Instance | null = null;
 let cachedServeCode: string | null = null;
 let cachedScript: vm.Script | null = null;
+let cachedHash: string | null = null;
+let cachedHashTime = 0;
+const HASH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 async function getWasmInstance() {
   if (wasmInstance) return wasmInstance;
@@ -114,7 +117,12 @@ export async function decryptSources(
   const customSetTimeout = (callback: any, delay: any, ...args: any[]) => {
     // Intercept/block obfuscated loops with very short delays or anti-debugger checks
     const codeStr = callback?.toString() || "";
-    if (delay < 50 && (codeStr.includes("debugger") || codeStr.includes("callee") || codeStr.includes("action"))) {
+    if (
+      delay < 50 &&
+      (codeStr.includes("debugger") ||
+        codeStr.includes("callee") ||
+        codeStr.includes("action"))
+    ) {
       return setTimeout(() => {}, delay);
     }
     const t = setTimeout(callback, delay, ...args);
@@ -124,7 +132,12 @@ export async function decryptSources(
   const customSetInterval = (callback: any, delay: any, ...args: any[]) => {
     // Intercept/block obfuscated loops with very short delays or anti-debugger checks
     const codeStr = callback?.toString() || "";
-    if (delay < 50 && (codeStr.includes("debugger") || codeStr.includes("callee") || codeStr.includes("action"))) {
+    if (
+      delay < 50 &&
+      (codeStr.includes("debugger") ||
+        codeStr.includes("callee") ||
+        codeStr.includes("action"))
+    ) {
       return setInterval(() => {}, delay);
     }
     const i = setInterval(callback, delay, ...args);
@@ -132,7 +145,9 @@ export async function decryptSources(
     return i;
   };
 
-  try {
+  let hash = cachedHash;
+  const now = Date.now();
+  if (!hash || now - cachedHashTime > HASH_CACHE_TTL) {
     const script = await getVmScript(instance);
 
     const fakeWindow = {
@@ -162,11 +177,15 @@ export async function decryptSources(
       attempts++;
     }
 
-    const hash = String(fakeWindow.hash);
+    hash = String(fakeWindow.hash);
     if (!hash || hash === "undefined") {
       throw new Error("Failed to get verification hash");
     }
+    cachedHash = hash;
+    cachedHashTime = now;
+  }
 
+  try {
     const hashPtr = writeString(hash);
     if (!exp.verify(hashPtr)) {
       throw new Error("WASM verify signature failed");
@@ -429,19 +448,30 @@ export async function fetchVideasySources(
 
     // 2. Process MP4 sources
     if (mp4Sources.length > 0) {
-      mp4Sources.forEach((src: any) => {
+      const sortedMp4 = [...mp4Sources].sort((a: any, b: any) => {
+        const parseHeight = (q: any) => {
+          const match = String(q || "").match(/(\d+)/);
+          return match ? parseInt(match[1]!, 10) : 0;
+        };
+        return parseHeight(b.quality) - parseHeight(a.quality);
+      });
+
+      const urlsWithHash = sortedMp4.map((src: any) => {
         const qualitySuffix =
           src.quality && src.quality !== "Auto" && src.quality !== "Original"
             ? ` - ${src.quality}`
             : "";
         const mirrorName = `Videasy (${res.sourceName}${qualitySuffix})`;
-        activeMirrors[mirrorName] = {
-          url: src.url,
-          type: "mp4",
-          audio: res.audio,
-          flag: res.flag,
-        };
+        return `${src.url}#${mirrorName}#mp4#${res.audio || ""}`;
       });
+
+      const groupMirrorName = `Videasy (${res.sourceName})`;
+      activeMirrors[groupMirrorName] = {
+        url: urlsWithHash.join("|"),
+        type: "mp4",
+        audio: res.audio,
+        flag: res.flag,
+      };
     }
   }
 
