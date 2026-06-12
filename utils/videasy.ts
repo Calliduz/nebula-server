@@ -185,6 +185,8 @@ export async function decryptSourcesSerialized(
   tmdbId: string,
 ): Promise<any> {
   const result = decryptionQueue.then(async () => {
+    // Yield to the event loop to let database heartbeats & HTTP I/O process
+    await new Promise((resolve) => setImmediate(resolve));
     return await decryptSources(ciphertextHex, tmdbId);
   });
   decryptionQueue = result.then(() => {}).catch(() => {});
