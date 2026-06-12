@@ -463,8 +463,9 @@ mongoose.connection.on("error", (err) => {
 const connectDB = async (retryCount = 5) => {
   try {
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 15000, // Avoid false drops on event loop lag or network spikes
+      heartbeatFrequencyMS: 30000,     // Reduce monitoring ping frequency to save CPU and connections
+      connectTimeoutMS: 15000,
       socketTimeoutMS: 45000, // Close sockets after 45s of inactivity (client-side)
       family: 4, // Force IPv4 to avoid slow dual-stack lookups on Oracle
       // Connection pool tuning: default of 5 is too small for concurrent
