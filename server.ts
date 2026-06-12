@@ -2542,6 +2542,30 @@ app.get("/api/proxy/stream", async (req, res) => {
     return res.redirect(302, targetUrl);
   }
 
+  // Direct MP4 / video file redirect to segment proxy to prevent buffering the whole file in memory
+  const lowercaseUrl = targetUrl.toLowerCase();
+  const isDirectMedia =
+    lowercaseUrl.includes(".mp4") ||
+    lowercaseUrl.includes("/mp4/") ||
+    lowercaseUrl.includes("/mp4?") ||
+    lowercaseUrl.endsWith("/mp4") ||
+    lowercaseUrl.includes(".m4v") ||
+    lowercaseUrl.includes(".webm") ||
+    lowercaseUrl.includes(".mkv") ||
+    lowercaseUrl.includes(".mov");
+
+  if (isDirectMedia) {
+    console.log("[PROXY/stream] Direct media URL detected. Redirecting to segment proxy.");
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+    const proxyParam = req.query.nebula_proxy
+      ? `&nebula_proxy=${encodeURIComponent(req.query.nebula_proxy as string)}`
+      : "";
+    const redirectUrl = `${currentHost}/api/proxy/segment?url=${encodeURIComponent(targetUrl)}${proxyParam}`;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.redirect(302, redirectUrl);
+  }
+
   // Extract proxy from two possible locations:
   // 1. Baked into the target CDN URL as ?nebula_proxy=... (master playlist, set by /api/stream)
   // 2. As a direct query param of this endpoint (?nebula_proxy=...) (variant sub-playlists, set by withProxy())
@@ -2999,18 +3023,26 @@ app.get("/api/proxy/segment", async (req, res) => {
           : `http://${segProxy}`
         : undefined;
 
+    const controller = new AbortController();
+    const abortHandler = () => {
+      controller.abort();
+    };
+    req.on("close", abortHandler);
+
     try {
       const axiosResponse = await axios.get(targetUrl, {
         headers,
         responseType: "stream",
         timeout: 45000, // Increased to avoid cancelled segments on slow connections
-        signal: (req as any).signal,
+        signal: controller.signal,
         proxy: false, // disable axios auto-proxy; we set it via httpsAgent if needed
         httpsAgent: proxyUrl
           ? await getProxyAgent(proxyUrl)
           : getSharedHardenedAgent(), // reuse singleton to avoid per-request TLS context allocation
         maxRedirects: 5,
       });
+
+      req.off("close", abortHandler);
 
       const status = axiosResponse.status;
 
@@ -3074,6 +3106,8 @@ app.get("/api/proxy/segment", async (req, res) => {
         dataStream.destroy();
       });
     } catch (e: any) {
+      req.off("close", abortHandler);
+
       if (req.destroyed || (req as any).signal?.aborted || axios.isCancel(e)) {
         return;
       }
