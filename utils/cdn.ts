@@ -71,7 +71,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("videasy.to")
     ) {
       referer = "https://player.videasy.to/";
-      origin = "https://player.videasy.to";
+      origin = isManifest ? "https://player.videasy.to" : "null";
+      headers["sec-fetch-dest"] = "empty";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
     } else if (
       /stor+m\.site/.test(lower) ||
       lower.includes("vdrk.site") ||
