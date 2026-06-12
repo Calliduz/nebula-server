@@ -2742,6 +2742,7 @@ const IMAGE_PROXY_ALLOWLIST = [
   "assets.kisskh.co",
   "kisskh.do",
   "dramacooll.fun",
+  "picsum.photos",
 ];
 
 app.get("/api/image", async (req, res) => {
