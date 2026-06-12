@@ -3825,7 +3825,6 @@ app.get("/api/vidrock", async (req, res) => {
     }
 
     const token = generateVidrockToken(tmdbId, type, season, episode);
-
     const url = `https://vidrock.ru/api/${type}/${token}`;
     const headers = {
       accept: "*/*",
@@ -3844,53 +3843,75 @@ app.get("/api/vidrock", async (req, res) => {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     };
 
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      return res.status(response.status).json({ error: "Upstream error" });
+    let fetchFinished = false;
+    let fetchResult: any = null;
+
+    const runScan = async () => {
+      try {
+        const response = await fetch(url, { headers, signal: AbortSignal.timeout(45000) });
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        const data = await response.json();
+
+        const activeSources = Object.entries(data)
+          .filter(([_, v]: any) => v && v.url)
+          .map(([name, v]: any) => ({
+            source: name,
+            url: v.url,
+            type: v.type || "hls",
+          }));
+
+        const firstActiveSource = activeSources[0];
+        if (firstActiveSource) {
+          const streamUrl = firstActiveSource.url;
+          const sourceName = firstActiveSource.source;
+          const cacheExpires = new Date();
+          cacheExpires.setHours(cacheExpires.getHours() + 4);
+
+          await StreamCache.findOneAndUpdate(
+            { tmdbId: `${tmdbId}-vidrock`, type, season, episode },
+            {
+              streamUrl,
+              source: `VidRock (${sourceName})`,
+              qualityTag: "HD",
+              resolution: "1080p",
+              mirrors: activeSources,
+              streamExpiresAt: cacheExpires,
+              expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+            },
+            { upsert: true },
+          );
+
+          await DeadPool.deleteMany({
+            tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`] },
+            type,
+            season,
+            episode,
+          }).catch(() => null);
+        }
+
+        fetchResult = data;
+        fetchFinished = true;
+        return data;
+      } catch (err: any) {
+        console.warn(`[VIDROCK] Background fetch failed for ${tmdbId}: ${err.message}`);
+        fetchFinished = true;
+        return null;
+      }
+    };
+
+    const scanPromise = runScan();
+    const raceTimeout = new Promise<void>((resolve) => {
+      setTimeout(resolve, 5000);
+    });
+
+    await Promise.race([scanPromise, raceTimeout]);
+
+    if (fetchFinished && fetchResult) {
+      res.json(fetchResult);
+    } else {
+      console.log(`[VIDROCK] Scrape took longer than 5s for ${tmdbId}. Returning empty, remaining scans running in bg...`);
+      res.json({});
     }
-    const data = await response.json();
-
-    // Parse active mirrors to cache them if present
-    const activeSources = Object.entries(data)
-      .filter(([_, v]: any) => v && v.url)
-      .map(([name, v]: any) => ({
-        source: name,
-        url: v.url,
-        type: v.type || "hls",
-      }));
-
-    const firstActiveSource = activeSources[0];
-    if (firstActiveSource) {
-      const streamUrl = firstActiveSource.url;
-      const sourceName = firstActiveSource.source;
-      const cacheExpires = new Date();
-      cacheExpires.setHours(cacheExpires.getHours() + 4);
-
-      await StreamCache.findOneAndUpdate(
-        { tmdbId: `${tmdbId}-vidrock`, type, season, episode },
-        {
-          streamUrl,
-          source: `VidRock (${sourceName})`,
-          qualityTag: "HD",
-          resolution: "1080p",
-          mirrors: activeSources,
-          streamExpiresAt: cacheExpires,
-          expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        },
-        { upsert: true },
-      );
-
-      await DeadPool.deleteMany({
-        tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-vidrock`] },
-        type,
-        season,
-        episode,
-      }).catch((err) => {
-        console.warn(`[DEADPOOL] Failed to delete entry for ${tmdbId}:`, err);
-      });
-    }
-
-    res.json(data);
   } catch (error) {
     console.error("[VIDROCK] fetch failed", error);
     res.status(500).json({ error: "Failed to fetch from VidRock" });
@@ -4036,46 +4057,15 @@ app.get("/api/videasy", async (req, res) => {
       episode,
     );
 
-    // Parse active mirrors to cache them if present
-    const activeSources = Object.entries(activeMirrors)
-      .filter(([_, v]: any) => v && v.url)
-      .map(([name, v]: any) => ({
-        source: name,
-        url: v.url,
-        type: v.type || "hls",
-        audio: v.audio || "",
-        flag: v.flag || "us",
-      }));
-
-    const firstActiveSource = activeSources[0];
-    if (firstActiveSource) {
-      const streamUrl = firstActiveSource.url;
-      const sourceName = firstActiveSource.source;
-      const cacheExpires = new Date();
-      cacheExpires.setHours(cacheExpires.getHours() + 4);
-
-      await StreamCache.findOneAndUpdate(
-        { tmdbId: `${tmdbId}-videasy`, type, season, episode },
-        {
-          streamUrl,
-          source: `Videasy (${sourceName})`,
-          qualityTag: "HD",
-          resolution: "1080p",
-          mirrors: activeSources,
-          streamExpiresAt: cacheExpires,
-          expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        },
-        { upsert: true },
-      );
-
+    // Cache is updated incrementally per provider inside fetchVideasySources.
+    // Clean up DeadPool if any mirrors were found during the 5s race
+    if (Object.keys(activeMirrors).length > 0) {
       await DeadPool.deleteMany({
         tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-videasy`] },
         type,
         season,
         episode,
-      }).catch((err) => {
-        console.warn(`[DEADPOOL] Failed to delete entry for ${tmdbId}:`, err);
-      });
+      }).catch(() => null);
     }
 
     const protocol = req.headers["x-forwarded-proto"] || req.protocol;

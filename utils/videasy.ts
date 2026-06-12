@@ -4,6 +4,7 @@ import { webcrypto } from "crypto";
 // @ts-ignore
 import CryptoJS from "crypto-js";
 import vm from "vm";
+import { StreamCache, DeadPool } from "../models/Cache.js";
 
 const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 
@@ -319,7 +320,7 @@ async function fetchProviderStreams(
       Referer: "https://player.videasy.to/",
       Origin: "https://player.videasy.to",
     },
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(45000), // Extended to 45s for slow background fetches
   });
 
   if (!res.ok) {
@@ -348,46 +349,100 @@ async function fetchProviderStreams(
   };
 }
 
-export async function fetchVideasySources(
+async function saveProviderMirrorsToCache(
+  tmdbId: string,
+  type: "movie" | "tv",
+  season: number,
+  episode: number,
+  providerName: string,
+  mirrorsToSave: any[],
+  subtitlesToSave: any[],
+) {
+  const cacheKey = `${tmdbId}-videasy`;
+
+  try {
+    // 1. Atomically remove any old mirrors/subs for this provider
+    await StreamCache.updateOne(
+      { tmdbId: cacheKey, type, season, episode },
+      {
+        $pull: {
+          mirrors: { source: { $regex: new RegExp("^Videasy \\(" + providerName, "i") } },
+          subtitles: { source: providerName }
+        }
+      }
+    );
+
+    // 2. Append new mirrors/subs
+    const cacheExpires = new Date();
+    cacheExpires.setHours(cacheExpires.getHours() + 4);
+    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+    const updateQuery: any = {
+      $push: {
+        mirrors: { $each: mirrorsToSave },
+        subtitles: { $each: subtitlesToSave }
+      },
+      $set: {
+        expiresAt
+      }
+    };
+
+    // 3. Set the default streamUrl if not already set
+    const existing = await StreamCache.findOne({ tmdbId: cacheKey, type, season, episode });
+    if (!existing || !existing.streamUrl) {
+      if (mirrorsToSave.length > 0) {
+        updateQuery.$set.streamUrl = mirrorsToSave[0].url;
+        updateQuery.$set.source = mirrorsToSave[0].source;
+        updateQuery.$set.streamExpiresAt = cacheExpires;
+      }
+    }
+
+    await StreamCache.updateOne(
+      { tmdbId: cacheKey, type, season, episode },
+      updateQuery,
+      { upsert: true }
+    );
+
+    // 4. Delete from DeadPool if we found mirrors
+    if (mirrorsToSave.length > 0) {
+      await DeadPool.deleteMany({
+        tmdbId: { $in: [tmdbId.toString(), cacheKey] },
+        type,
+        season,
+        episode,
+      }).catch(() => null);
+    }
+  } catch (err: any) {
+    console.error(`[VIDEASY] Cache save failed for ${providerName}:`, err.message);
+  }
+}
+
+async function scanProvider(
+  prov: ProviderDef,
   title: string,
   mediaType: "movie" | "tv",
   year: string,
   tmdbId: string,
-  season: number = 1,
-  episode: number = 1,
-): Promise<Record<string, any>> {
-  console.log(
-    `[VIDEASY] Starting parallel scan for ${mediaType} ${tmdbId} S${season}E${episode}...`,
-  );
+  season: number,
+  episode: number,
+): Promise<Record<string, any> | null> {
+  try {
+    const res = await fetchProviderStreams(
+      prov,
+      title,
+      mediaType,
+      year,
+      tmdbId,
+      season,
+      episode,
+    );
 
-  const promises = providers.map(async (prov) => {
-    try {
-      return await fetchProviderStreams(
-        prov,
-        title,
-        mediaType,
-        year,
-        tmdbId,
-        season,
-        episode,
-      );
-    } catch (err: any) {
-      console.warn(`[VIDEASY] Provider ${prov.name} failed: ${err.message}`);
-      return null;
-    }
-  });
-
-  const results = await Promise.all(promises);
-  const activeMirrors: Record<string, any> = {};
-
-  for (const res of results) {
-    if (!res || !res.sources || res.sources.length === 0) continue;
+    if (!res || !res.sources || res.sources.length === 0) return null;
 
     // Filter valid sources (must have url)
     const validSources = res.sources.filter((src: any) => src && src.url);
-    if (validSources.length === 0) continue;
+    if (validSources.length === 0) return null;
 
-    // Separate HLS and non-HLS (MP4) sources
     const hlsSources = validSources.filter((src: any) =>
       src.url.includes("m3u8"),
     );
@@ -395,21 +450,20 @@ export async function fetchVideasySources(
       (src: any) => !src.url.includes("m3u8"),
     );
 
+    const providerMirrors: Record<string, any> = {};
+
     // 1. Process HLS sources
     if (hlsSources.length > 0) {
       if (hlsSources.length === 1) {
-        // Only one HLS quality, no need for master playlist
         const src = hlsSources[0];
         const mirrorName = `Videasy (${res.sourceName})`;
-        activeMirrors[mirrorName] = {
+        providerMirrors[mirrorName] = {
           url: src.url,
           type: "hls",
           audio: res.audio,
           flag: res.flag,
         };
       } else {
-        // Multiple HLS qualities -> group them into a single master playlist
-        // Sort descending by quality/height
         const sortedHls = [...hlsSources].sort((a: any, b: any) => {
           const parseHeight = (q: any) => {
             const match = String(q || "").match(/(\d+)/);
@@ -430,14 +484,14 @@ export async function fetchVideasySources(
             else if (qStr.includes("480")) height = 480;
             else if (qStr.includes("360")) height = 360;
             else if (qStr.includes("240")) height = 240;
-            else height = 480; // fallback default quality
+            else height = 480;
           }
           urls.push(encodeURIComponent(src.url));
           qualities.push(height);
         });
 
         const mirrorName = `Videasy (${res.sourceName})`;
-        activeMirrors[mirrorName] = {
+        providerMirrors[mirrorName] = {
           url: `/api/videasy/master.m3u8?urls=${urls.join(",")}&qualities=${qualities.join(",")}`,
           type: "hls",
           audio: res.audio,
@@ -466,14 +520,88 @@ export async function fetchVideasySources(
       });
 
       const groupMirrorName = `Videasy (${res.sourceName})`;
-      activeMirrors[groupMirrorName] = {
+      providerMirrors[groupMirrorName] = {
         url: urlsWithHash.join("|"),
         type: "mp4",
         audio: res.audio,
         flag: res.flag,
       };
     }
+
+    const mirrorsToSave = Object.entries(providerMirrors)
+      .filter(([_, v]: any) => v && v.url)
+      .map(([name, v]: any) => ({
+        source: name,
+        url: v.url,
+        type: v.type || "hls",
+        audio: v.audio || "",
+        flag: v.flag || "us",
+      }));
+
+    const subtitlesToSave = res.subtitles || [];
+
+    await saveProviderMirrorsToCache(
+      tmdbId,
+      mediaType,
+      season,
+      episode,
+      prov.name,
+      mirrorsToSave,
+      subtitlesToSave,
+    );
+
+    return providerMirrors;
+  } catch (err: any) {
+    console.warn(`[VIDEASY] Scraper for ${prov.name} failed: ${err.message}`);
+    return null;
   }
+}
+
+export async function fetchVideasySources(
+  title: string,
+  mediaType: "movie" | "tv",
+  year: string,
+  tmdbId: string,
+  season: number = 1,
+  episode: number = 1,
+): Promise<Record<string, any>> {
+  console.log(
+    `[VIDEASY] Starting background-scanned parallel search for ${mediaType} ${tmdbId} S${season}E${episode}...`,
+  );
+
+  const activeMirrors: Record<string, any> = {};
+
+  // Map each provider to a promise that writes directly to MongoDB cache
+  // and merges its results into activeMirrors in real-time as it completes.
+  const scanPromises = providers.map(async (prov) => {
+    const res = await scanProvider(
+      prov,
+      title,
+      mediaType,
+      year,
+      tmdbId,
+      season,
+      episode,
+    );
+    if (res) {
+      Object.assign(activeMirrors, res);
+    }
+    return res;
+  });
+
+  // Race: wait up to 5 seconds for fast providers to populate activeMirrors
+  const raceTimeout = new Promise<void>((resolve) => {
+    setTimeout(resolve, 5000);
+  });
+
+  const allFinished = Promise.all(scanPromises);
+
+  // Block the HTTP response for at most 5 seconds, or until all finish (whichever is faster)
+  await Promise.race([allFinished, raceTimeout]);
+
+  console.log(
+    `[VIDEASY] Completed initial 5s race for ${tmdbId} S${season}E${episode}. Returning ${Object.keys(activeMirrors).length} mirror(s). Remaining scans running in bg...`,
+  );
 
   return activeMirrors;
 }
