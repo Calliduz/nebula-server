@@ -57,7 +57,7 @@ async function getCompiledServeCode(instance: WebAssembly.Instance) {
   if (!serveCode) {
     throw new Error("Failed to read serve code from WASM");
   }
-  serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, "_0x36(");
+  serveCode = serveCode.replace(/(_0x[a-f0-9]+)\(\),(_0x[a-f0-9]+\()/g, "$2");
   cachedServeCode = serveCode;
   return cachedServeCode;
 }
