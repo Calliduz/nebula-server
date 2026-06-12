@@ -133,3 +133,17 @@ export async function fetchWithGotScraping(
     throw err;
   }
 }
+
+export async function shutdownCycleTLS() {
+  if (cycleTLSInstance) {
+    console.log("[BYPASS] Shutting down CycleTLS...");
+    try {
+      await cycleTLSInstance.exit();
+      cycleTLSInstance = null;
+      console.log("[BYPASS] CycleTLS shutdown successful.");
+    } catch (err: any) {
+      console.error("[BYPASS] CycleTLS shutdown error:", err.message);
+    }
+  }
+}
+

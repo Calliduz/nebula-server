@@ -16,7 +16,8 @@ import {
   DeadPool,
   TmdbCache,
 } from "./models/Cache.js";
-import { fetchWithCycleTLS, fetchWithGotScraping } from "./utils/bypass.js";
+import { fetchWithCycleTLS, fetchWithGotScraping, shutdownCycleTLS } from "./utils/bypass.js";
+
 import { getSubtitles } from "./utils/subtitles.js";
 import { cdnHeaders } from "./utils/cdn.js";
 import {
@@ -3967,16 +3968,36 @@ const server = app.listen(PORT, () => {
 
 // ── Graceful Shutdown ────────────────────────────────────────────────────────
 // systemd / pm2 sends SIGTERM before stopping the process on Oracle Ubuntu.
-// We stop accepting new connections but let in-flight HLS pipes drain.
-process.on("SIGTERM", () => {
-  console.log("[SHUTDOWN] SIGTERM received — draining connections...");
+// We stop accepting new connections, disconnect from DB, stop CycleTLS, and exit.
+async function handleGracefulShutdown(signal: string) {
+  console.log(`[SHUTDOWN] ${signal} received — starting clean shutdown...`);
+  
+  // 1. Stop CycleTLS Go helper binary
+  await shutdownCycleTLS();
+
+  // 2. Disconnect Mongoose/MongoDB pool cleanly
+  if (mongoose.connection.readyState !== 0) {
+    console.log("[SHUTDOWN] Closing database connection...");
+    try {
+      await mongoose.connection.close();
+      console.log("[SHUTDOWN] Database connection closed.");
+    } catch (err: any) {
+      console.error("[SHUTDOWN] Error closing database:", err.message);
+    }
+  }
+
+  // 3. Close Express server and drain connections
   server.close(() => {
-    console.log("[SHUTDOWN] All connections closed. Exiting.");
+    console.log("[SHUTDOWN] All connections closed. Exiting cleanly.");
     process.exit(0);
   });
-  // Force-exit after 10s if connections don't drain
+
+  // Force-exit after 10s if connections or sockets hang
   setTimeout(() => {
     console.error("[SHUTDOWN] Force exit after 10s drain timeout.");
     process.exit(1);
   }, 10_000);
-});
+}
+
+process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));

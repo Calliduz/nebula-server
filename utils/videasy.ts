@@ -3,12 +3,13 @@ import path from "path";
 import { webcrypto } from "crypto";
 // @ts-ignore
 import CryptoJS from "crypto-js";
+import vm from "vm";
 
 const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 
 // Cache for compiling/instantiating WASM
 let wasmInstance: WebAssembly.Instance | null = null;
-let cachedServeFn: Function | null = null;
+let cachedServeCode: string | null = null;
 
 async function getWasmInstance() {
   if (wasmInstance) return wasmInstance;
@@ -28,8 +29,8 @@ async function getWasmInstance() {
   return wasmInstance;
 }
 
-async function getCompiledServeFn(instance: WebAssembly.Instance) {
-  if (cachedServeFn) return cachedServeFn;
+async function getCompiledServeCode(instance: WebAssembly.Instance) {
+  if (cachedServeCode) return cachedServeCode;
 
   const exp = instance.exports as any;
   const memory = exp.memory;
@@ -56,13 +57,10 @@ async function getCompiledServeFn(instance: WebAssembly.Instance) {
     throw new Error("Failed to read serve code from WASM");
   }
   serveCode = serveCode.replace(/_0x24\(\),_0x36\(/g, "_0x36(");
-
-  // KEEP ORIGINAL SIGNATURE (3 parameters) to prevent arguments.length anti-tamper failures
-  cachedServeFn = new Function("window", "crypto", "TextEncoder", serveCode);
-  return cachedServeFn;
+  cachedServeCode = serveCode;
+  return cachedServeCode;
 }
 
-// Helper to decrypt ciphertext returned by Videasy API
 export async function decryptSources(
   ciphertextHex: string,
   tmdbId: string,
@@ -111,27 +109,35 @@ export async function decryptSources(
     return i;
   };
 
-  const originalSetTimeout = global.setTimeout;
-  const originalSetInterval = global.setInterval;
-
   try {
-    const serveFn = await getCompiledServeFn(instance);
+    const serveCode = await getCompiledServeCode(instance);
 
     const fakeWindow = {
       location: { hostname: "cineby.sc", href: "https://cineby.sc/" },
       hash: undefined as any,
     };
 
-    // Override globals temporarily during synchronous execution to capture background timers
-    global.setTimeout = customSetTimeout as any;
-    global.setInterval = customSetInterval as any;
+    const sandbox = {
+      window: fakeWindow,
+      crypto: webcrypto,
+      TextEncoder,
+      setTimeout: customSetTimeout,
+      setInterval: customSetInterval,
+      clearTimeout,
+      clearInterval,
+    };
 
-    try {
-      serveFn(fakeWindow, webcrypto, TextEncoder);
-    } finally {
-      global.setTimeout = originalSetTimeout;
-      global.setInterval = originalSetInterval;
-    }
+    vm.createContext(sandbox);
+
+    const codeToRun = `
+      (function(window, crypto, TextEncoder) {
+        ${serveCode}
+      })(window, crypto, TextEncoder);
+    `;
+
+    // Execute serveFn synchronously in the isolated VM sandbox context.
+    // Any timers scheduled here or in downstream async callbacks will use the sandbox overrides.
+    vm.runInContext(codeToRun, sandbox);
 
     await new Promise((r) => setTimeout(r, 100));
     const hash = String(fakeWindow.hash);
