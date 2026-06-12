@@ -10,6 +10,7 @@ const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 // Cache for compiling/instantiating WASM
 let wasmInstance: WebAssembly.Instance | null = null;
 let cachedServeCode: string | null = null;
+let cachedScript: vm.Script | null = null;
 
 async function getWasmInstance() {
   if (wasmInstance) return wasmInstance;
@@ -61,6 +62,18 @@ async function getCompiledServeCode(instance: WebAssembly.Instance) {
   return cachedServeCode;
 }
 
+async function getVmScript(instance: WebAssembly.Instance) {
+  if (cachedScript) return cachedScript;
+  const serveCode = await getCompiledServeCode(instance);
+  const codeToRun = `
+    (function(window, crypto, TextEncoder) {
+      ${serveCode}
+    })(window, crypto, TextEncoder);
+  `;
+  cachedScript = new vm.Script(codeToRun);
+  return cachedScript;
+}
+
 export async function decryptSources(
   ciphertextHex: string,
   tmdbId: string,
@@ -99,18 +112,28 @@ export async function decryptSources(
   const activeIntervals: NodeJS.Timeout[] = [];
 
   const customSetTimeout = (callback: any, delay: any, ...args: any[]) => {
+    // Intercept/block obfuscated loops with very short delays or anti-debugger checks
+    const codeStr = callback?.toString() || "";
+    if (delay < 50 && (codeStr.includes("debugger") || codeStr.includes("callee") || codeStr.includes("action"))) {
+      return setTimeout(() => {}, delay);
+    }
     const t = setTimeout(callback, delay, ...args);
     activeTimers.push(t);
     return t;
   };
   const customSetInterval = (callback: any, delay: any, ...args: any[]) => {
+    // Intercept/block obfuscated loops with very short delays or anti-debugger checks
+    const codeStr = callback?.toString() || "";
+    if (delay < 50 && (codeStr.includes("debugger") || codeStr.includes("callee") || codeStr.includes("action"))) {
+      return setInterval(() => {}, delay);
+    }
     const i = setInterval(callback, delay, ...args);
     activeIntervals.push(i);
     return i;
   };
 
   try {
-    const serveCode = await getCompiledServeCode(instance);
+    const script = await getVmScript(instance);
 
     const fakeWindow = {
       location: { hostname: "cineby.sc", href: "https://cineby.sc/" },
@@ -129,17 +152,16 @@ export async function decryptSources(
 
     vm.createContext(sandbox);
 
-    const codeToRun = `
-      (function(window, crypto, TextEncoder) {
-        ${serveCode}
-      })(window, crypto, TextEncoder);
-    `;
+    // Execute compiled script in isolated context
+    script.runInContext(sandbox);
 
-    // Execute serveFn synchronously in the isolated VM sandbox context.
-    // Any timers scheduled here or in downstream async callbacks will use the sandbox overrides.
-    vm.runInContext(codeToRun, sandbox);
+    // Poll dynamically for the hash to reduce wait time and avoid background timers running longer
+    let attempts = 0;
+    while (fakeWindow.hash === undefined && attempts < 100) {
+      await new Promise((r) => setImmediate(r));
+      attempts++;
+    }
 
-    await new Promise((r) => setTimeout(r, 100));
     const hash = String(fakeWindow.hash);
     if (!hash || hash === "undefined") {
       throw new Error("Failed to get verification hash");
