@@ -13,12 +13,7 @@ import jschardet from "jschardet";
 import iconv from "iconv-lite";
 import { StreamCache, SubtitleCache } from "../models/Cache.js";
 import { getSubtitles } from "../utils/subtitles.js";
-import {
-  decryptKissKHSubtitle,
-  isKissKHSubtitleUrl,
-} from "../utils/kisskhDecrypt.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "../utils/bypass.js";
-import { DramacoolScraper } from "../utils/dramacool.js";
 import { fetchVidVaultDownloads } from "../utils/vidvault.js";
 
 // fetchVidLinkRaw is re-exported from server.ts — we call it via a lazy import
@@ -39,9 +34,6 @@ const UA =
 // ── SSRF allowlist ────────────────────────────────────────────────────────────
 // Expanded to include Videasy CDN domains (subtitle files served from their CDN)
 export const SUBTITLE_ALLOWLIST = [
-  "kisskh.do",
-  "kisskh.co",
-  "kisskh.me",
   "vidlink.pro",
   "megafiles.store",
   "storm.vodvidl.site",
@@ -128,160 +120,114 @@ export function createSubtitleRouter(
         `[SUBS] Aggregating tracks for ${tmdbId} S${season}E${episode}...`,
       );
 
-      const isDrama =
-        tmdbId.toString().startsWith("k") ||
-        (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"));
-
       const results = await Promise.allSettled([
-        // A — KissKH / Dramacool subtitles
-        isDrama
-          ? (async () => {
-              const dramaId = tmdbId.toString().startsWith("k")
-                ? tmdbId.toString().replace("k", "")
-                : tmdbId.toString();
-              const details = await DramacoolScraper.getDramaDetail(dramaId);
-              const ep = details?.episodes?.find(
-                (e: any) => e.number === episode,
-              );
-              if (ep) {
-                const mirrors = await DramacoolScraper.getStream(
-                  dramaId,
-                  ep.url,
-                );
-                const subMap = new Map<string, any>();
-                mirrors.forEach((m) => {
-                  m.subtitles?.forEach((s: any) => {
-                    if (s?.url && !subMap.has(s.url)) subMap.set(s.url, s);
-                  });
-                });
-                return Array.from(subMap.values());
-              }
-              return [];
-            })()
-          : Promise.resolve([]),
-
-        // B — OpenSubtitles (via Stremio API)
+        // A — OpenSubtitles (via Stremio API)
         getSubtitles(tmdbId, kind, season, episode, title),
 
         // C — VidVault subtitles
-        isDrama
-          ? Promise.resolve([])
-          : (async () => {
-              try {
-                const downloads = await fetchVidVaultDownloads(
-                  kind,
-                  tmdbId,
-                  season,
-                  episode,
-                );
-                const first = downloads.find(
-                  (d) => d.subtitles && d.subtitles.length > 0,
-                );
-                if (first) {
-                  return first.subtitles.map((s) => ({
-                    id:
-                      kind === "tv"
-                        ? `vidvault-${s.lan}-${season}-${episode}`
-                        : `vidvault-${s.lan}`,
-                    url: s.url,
-                    lang: s.lan,
-                    languageName: s.lanName,
-                    source: "VidVault",
-                  }));
-                }
-              } catch (err: any) {
-                console.warn(
-                  `[SUBS] VidVault extraction failed: ${err.message}`,
-                );
-              }
-              return [];
-            })(),
+        (async () => {
+          try {
+            const downloads = await fetchVidVaultDownloads(
+              kind,
+              tmdbId,
+              season,
+              episode,
+            );
+            const first = downloads.find(
+              (d) => d.subtitles && d.subtitles.length > 0,
+            );
+            if (first) {
+              return first.subtitles.map((s) => ({
+                id:
+                  kind === "tv"
+                    ? `vidvault-${s.lan}-${season}-${episode}`
+                    : `vidvault-${s.lan}`,
+                url: s.url,
+                lang: s.lan,
+                languageName: s.lanName,
+                source: "VidVault",
+              }));
+            }
+          } catch (err: any) {
+            console.warn(`[SUBS] VidVault extraction failed: ${err.message}`);
+          }
+          return [];
+        })(),
 
         // D — Videasy subtitles from StreamCache
-        isDrama
-          ? Promise.resolve([])
-          : (async () => {
-              try {
-                const videasyCache = await StreamCache.findOne({
-                  tmdbId: `${tmdbId}-videasy`,
-                  type: kind,
-                  season,
-                  episode,
-                });
-                if (!videasyCache?.mirrors?.length) return [];
-                const subMap = new Map<string, any>();
-                videasyCache.mirrors.forEach((m: any) => {
-                  m.subtitles?.forEach((s: any) => {
-                    if (s?.url && !subMap.has(s.url)) {
-                      subMap.set(s.url, {
-                        id: `videasy-${s.lang || s.language || "unk"}-${subMap.size}`,
-                        url: s.url,
-                        lang: s.lang || s.language || "unk",
-                        languageName:
-                          s.label || s.languageName || s.lang || "Unknown",
-                        source: "Videasy",
-                      });
-                    }
+        (async () => {
+          try {
+            const videasyCache = await StreamCache.findOne({
+              tmdbId: `${tmdbId}-videasy`,
+              type: kind,
+              season,
+              episode,
+            });
+            if (!videasyCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            videasyCache.mirrors.forEach((m: any) => {
+              m.subtitles?.forEach((s: any) => {
+                if (s?.url && !subMap.has(s.url)) {
+                  subMap.set(s.url, {
+                    id: `videasy-${s.lang || s.language || "unk"}-${subMap.size}`,
+                    url: s.url,
+                    lang: s.lang || s.language || "unk",
+                    languageName:
+                      s.label || s.languageName || s.lang || "Unknown",
+                    source: "Videasy",
                   });
-                });
-                return Array.from(subMap.values());
-              } catch (err: any) {
-                console.warn(
-                  `[SUBS] Videasy cache extraction failed: ${err.message}`,
-                );
-                return [];
-              }
-            })(),
+                }
+              });
+            });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Videasy cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
 
         // E — VidLink subtitles from StreamCache
-        isDrama
-          ? Promise.resolve([])
-          : (async () => {
-              try {
-                const vidlinkCache = await StreamCache.findOne({
-                  tmdbId: tmdbId.toString(),
-                  type: kind,
-                  season,
-                  episode,
-                });
-                if (!vidlinkCache?.mirrors?.length) return [];
-                const subMap = new Map<string, any>();
-                vidlinkCache.mirrors
-                  .filter((m: any) => m.source === "VidLink")
-                  .forEach((m: any) => {
-                    m.subtitles?.forEach((s: any) => {
-                      if (s?.url && !subMap.has(s.url)) {
-                        subMap.set(s.url, {
-                          id: `vidlink-${s.lang || "unk"}-${subMap.size}`,
-                          url: s.url,
-                          lang: s.lang || "unk",
-                          languageName:
-                            s.languageName || s.label || s.lang || "Unknown",
-                          source: "VidLink",
-                        });
-                      }
+        (async () => {
+          try {
+            const vidlinkCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!vidlinkCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            vidlinkCache.mirrors
+              .filter((m: any) => m.source === "VidLink")
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `vidlink-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: "VidLink",
                     });
-                  });
-                return Array.from(subMap.values());
-              } catch (err: any) {
-                console.warn(
-                  `[SUBS] VidLink cache extraction failed: ${err.message}`,
-                );
-                return [];
-              }
-            })(),
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] VidLink cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
       ]);
 
-      const [
-        dramaResult,
-        openSubsResult,
-        vidVaultResult,
-        videasyResult,
-        vidLinkResult,
-      ] = results;
+      const [openSubsResult, vidVaultResult, videasyResult, vidLinkResult] =
+        results;
 
-      const dramaTrack =
-        dramaResult.status === "fulfilled" ? dramaResult.value : [];
       const openSubsTrack =
         openSubsResult.status === "fulfilled" ? openSubsResult.value : [];
       const vidVaultTrack =
@@ -292,7 +238,7 @@ export function createSubtitleRouter(
         vidLinkResult.status === "fulfilled" ? vidLinkResult.value : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} OpenSubs:${openSubsTrack.length} Drama:${dramaTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -312,7 +258,6 @@ export function createSubtitleRouter(
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
         ...dedup(openSubsTrack),
-        ...dedup(dramaTrack),
       ];
 
       // Final sort: English first, then by source priority within each language tier
@@ -379,115 +324,79 @@ export function createSubtitleRouter(
       let rawBuffer: Buffer;
       let finalUrl = url;
 
-      if (isKissKHSubtitleUrl(url)) {
-        // KissKH — use GotScraping, fallback to CycleTLS
-        try {
-          const bypass = await fetchWithGotScraping(url, {
-            Referer: "https://kisskh.do",
-            Origin: "https://kisskh.do",
-          });
+      let referer = process.env.FRONTEND_URL || "https://nebulawatch.tech/";
+      let origin: string | undefined;
 
-          if (bypass.statusCode >= 400) {
-            console.warn(
-              `[SUBS] GotScraping failed (${bypass.statusCode}). Trying CycleTLS...`,
-            );
-            const cycle = await fetchWithCycleTLS(url, {
-              Referer: "https://kisskh.do/",
-              Origin: "https://kisskh.do",
-            });
+      if (
+        url.includes("vidlink") ||
+        url.includes("megafiles") ||
+        url.includes("storm.vodvidl.site")
+      ) {
+        referer = "https://vidlink.pro/";
+        origin = "https://vidlink.pro";
+      } else if (
+        url.includes("vdrk.site") ||
+        url.includes("vidrock.ru") ||
+        /stor+m\.site/.test(url) ||
+        url.includes("workers.dev")
+      ) {
+        referer = "https://vidrock.ru/";
+        origin = "https://vidrock.ru";
+      } else if (url.includes("videasy") || url.includes("goldweather.net")) {
+        referer = "https://vidlink.pro/";
+        origin = "https://vidlink.pro";
+      }
 
-            if (cycle.statusCode >= 400) {
-              console.error(`[SUBS] All bypasses failed for ${url}`);
-              return res
-                .status(cycle.statusCode)
-                .send(`Bypass failed: ${cycle.statusCode}`);
-            }
-            rawBuffer = cycle.body;
-            finalUrl = cycle.finalUrl;
-          } else {
-            rawBuffer = bypass.body;
-            finalUrl = bypass.finalUrl;
-          }
-        } catch (err: any) {
-          console.error(`[SUBS] Proxy error: ${err.message}`);
-          return res.status(500).send("Proxy error");
-        }
-      } else {
-        // All other sources (VidLink, VidRock, OpenSubtitles, Videasy…)
-        let referer = process.env.FRONTEND_URL || "https://nebulawatch.tech/";
-        let origin: string | undefined;
+      const headers: Record<string, string> = {
+        "User-Agent": UA,
+        Referer: referer,
+      };
+      if (origin) headers.Origin = origin;
 
-        if (
-          url.includes("vidlink") ||
-          url.includes("megafiles") ||
-          url.includes("storm.vodvidl.site")
-        ) {
-          referer = "https://vidlink.pro/";
-          origin = "https://vidlink.pro";
-        } else if (
-          url.includes("vdrk.site") ||
-          url.includes("vidrock.ru") ||
-          /stor+m\.site/.test(url) ||
-          url.includes("workers.dev")
-        ) {
-          referer = "https://vidrock.ru/";
-          origin = "https://vidrock.ru";
-        } else if (url.includes("videasy") || url.includes("goldweather.net")) {
-          referer = "https://vidlink.pro/";
-          origin = "https://vidlink.pro";
-        }
-
-        const headers: Record<string, string> = {
-          "User-Agent": UA,
-          Referer: referer,
+      let bypass: any;
+      if (url.includes("storm.vodvidl.site")) {
+        const raw = await fetchVidLinkRaw(url, headers);
+        bypass = {
+          statusCode: raw.statusCode,
+          headers: raw.headers,
+          body: raw.body,
+          finalUrl: raw.finalUrl,
         };
-        if (origin) headers.Origin = origin;
+      } else {
+        bypass = await fetchWithGotScraping(url, headers);
+      }
 
-        let bypass: any;
-        if (url.includes("storm.vodvidl.site")) {
-          const raw = await fetchVidLinkRaw(url, headers);
-          bypass = {
-            statusCode: raw.statusCode,
-            headers: raw.headers,
-            body: raw.body,
-            finalUrl: raw.finalUrl,
-          };
-        } else {
-          bypass = await fetchWithGotScraping(url, headers);
-        }
-
-        // CycleTLS fallback for Cloudflare-protected domains
-        if (
-          bypass.statusCode >= 400 &&
-          (url.includes("vidlink") || url.includes("megafiles"))
-        ) {
-          console.warn(
-            `[SUBS] GotScraping failed (${bypass.statusCode}). Trying CycleTLS JA3 Spoofer...`,
-          );
-          try {
-            const cycle = await fetchWithCycleTLS(url, headers);
-            if (cycle.statusCode < 400) {
-              bypass = cycle;
-            }
-          } catch (cycleErr: any) {
-            console.error(`[SUBS] CycleTLS failed: ${cycleErr.message}`);
+      // CycleTLS fallback for Cloudflare-protected domains
+      if (
+        bypass.statusCode >= 400 &&
+        (url.includes("vidlink") || url.includes("megafiles"))
+      ) {
+        console.warn(
+          `[SUBS] GotScraping failed (${bypass.statusCode}). Trying CycleTLS JA3 Spoofer...`,
+        );
+        try {
+          const cycle = await fetchWithCycleTLS(url, headers);
+          if (cycle.statusCode < 400) {
+            bypass = cycle;
           }
+        } catch (cycleErr: any) {
+          console.error(`[SUBS] CycleTLS failed: ${cycleErr.message}`);
         }
+      }
 
-        if (bypass.statusCode >= 400) {
-          console.warn(
-            `[SUBS] All bypasses failed for ${url} (${bypass.statusCode}). Falling back to Axios...`,
-          );
-          const response = await axios.get(url, {
-            timeout: 45000,
-            headers,
-            responseType: "arraybuffer",
-          });
-          rawBuffer = Buffer.from(response.data);
-        } else {
-          rawBuffer = bypass.body;
-          finalUrl = bypass.finalUrl || url;
-        }
+      if (bypass.statusCode >= 400) {
+        console.warn(
+          `[SUBS] All bypasses failed for ${url} (${bypass.statusCode}). Falling back to Axios...`,
+        );
+        const response = await axios.get(url, {
+          timeout: 45000,
+          headers,
+          responseType: "arraybuffer",
+        });
+        rawBuffer = Buffer.from(response.data);
+      } else {
+        rawBuffer = bypass.body;
+        finalUrl = bypass.finalUrl || url;
       }
 
       // ── Step 1: Decode to UTF-8 ────────────────────────────────────────────
@@ -510,18 +419,6 @@ export function createSubtitleRouter(
       // ── Step 2: Strip BOM & normalize line endings ─────────────────────────
       content = content.replace(/^\uFEFF/, "");
       content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-      // ── Step 3: KissKH Decryption ──────────────────────────────────────────
-      if (isKissKHSubtitleUrl(finalUrl)) {
-        console.log(`[SUBS/proxy] KissKH subtitle detected — decrypting...`);
-        try {
-          content = decryptKissKHSubtitle(content, finalUrl);
-        } catch (decErr: any) {
-          console.error(
-            `[SUBS/proxy] KissKH decryption failed: ${decErr.message}`,
-          );
-        }
-      }
 
       // ── Step 4: SRT → VTT conversion ──────────────────────────────────────
       const trimmed = content.trim();

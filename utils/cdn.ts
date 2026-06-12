@@ -97,17 +97,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
     }
-
-    // Auto-detect KissKH CDNs
-    if (
-      lower.includes("kisskh") ||
-      lower.includes("cdnvideo") ||
-      /stream\d+\.store/.test(lower) ||
-      lower.includes("stream.store")
-    ) {
-      referer = "https://kisskh.do";
-      origin = "https://kisskh.do";
-    }
   }
 
   headers["referer"] = referer;

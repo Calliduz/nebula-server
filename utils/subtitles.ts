@@ -12,34 +12,6 @@ export async function fetchImdbId(
 
   let finalTmdbId = tmdbId.toString();
 
-  // If it's a KissKH ID, we need to find the REAL TMDB ID first via title search
-  if (finalTmdbId.startsWith("k") && title) {
-    try {
-      const isV4 = TMDB_API_KEY.length > 40;
-      const searchUrl = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(title)}&include_adult=false&language=en-US&page=1`;
-      const searchRes = await axios.get(searchUrl, {
-        headers: isV4 ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {},
-        params: isV4 ? {} : { api_key: TMDB_API_KEY },
-      });
-
-      if (searchRes.data.results?.[0]?.id) {
-        finalTmdbId = searchRes.data.results[0].id.toString();
-        console.log(
-          `[SUBS] Resolved KissKH ID to TMDB ID: ${finalTmdbId} for "${title}"`,
-        );
-      } else {
-        return null;
-      }
-    } catch (e: any) {
-      console.warn(
-        `[SUBS] Failed to resolve KissKH ID to TMDB ID: ${e.message}`,
-      );
-      return null;
-    }
-  } else if (finalTmdbId.startsWith("k")) {
-    return null; // Can't resolve without title
-  }
-
   // 1. Check local cache first
   const cached = await MetadataCache.findOne({ tmdbId: finalTmdbId });
   if (cached?.imdbId) return cached.imdbId;

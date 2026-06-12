@@ -37,10 +37,7 @@ import {
 } from "./utils/vidvault.js";
 import { createSubtitleRouter } from "./routes/subtitles.js";
 import { cdnHeaders } from "./utils/cdn.js";
-import {
-  decryptKissKHSubtitle,
-  isKissKHSubtitleUrl,
-} from "./utils/kisskhDecrypt.js";
+
 import jschardet from "jschardet";
 import iconv from "iconv-lite";
 import {
@@ -56,7 +53,6 @@ import {
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
-import { DramacoolScraper } from "./utils/dramacool.js";
 import { VidLinkScraper } from "./utils/vidlink.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
@@ -1259,47 +1255,6 @@ app.get("/api/stream", async (req, res) => {
         let streamUrl: string | null = null;
         let proxyUsed: string | undefined = undefined;
 
-        // ── Phase A: Handle Drama Section (Dramacool) ─────────────────────
-        // ONLY fire for explicit drama IDs (k-prefixed slugs from Dramacool).
-        // Normal TMDB TV IDs are numeric strings (e.g. "94605") and must go straight
-        // to Phase B (VidLink) — the old condition fired Phase A on every TV request.
-        if (tmdbId.startsWith("k")) {
-          console.log(
-            `[STREAM] Phase A: Drama ID detected (k-prefix). Checking Dramacool...`,
-          );
-          try {
-            const searchResults = await DramacoolScraper.search(
-              title,
-              undefined,
-              signal,
-            );
-            const match = searchResults[0]; // Take first result
-
-            if (match) {
-              const details = await DramacoolScraper.getDramaDetail(
-                match.id,
-                signal,
-              );
-              const ep = details?.episodes?.find(
-                (e: any) => e.number === episode,
-              );
-              if (ep) {
-                const dramaMirrors = await DramacoolScraper.getStream(
-                  match.id,
-                  ep.url,
-                );
-                if (dramaMirrors && dramaMirrors.length > 0) {
-                  console.log(`[STREAM] Dramacool HIT ✔`);
-                  mirrors.push(...dramaMirrors);
-                }
-              }
-            }
-          } catch (e: any) {
-            if (e.name === "AbortError") throw e;
-            console.error(`[STREAM] Dramacool Phase A failed:`, e.message);
-          }
-        }
-
         // ── Phase B: Direct TMDB Path (VidLink) ──────────────────────────
         if (mirrors.length === 0) {
           console.log(
@@ -1564,40 +1519,6 @@ app.get("/api/stream", async (req, res) => {
 // Proxies TMDB so the API key never lives in the frontend bundle.
 app.get("/api/tv-details/:tmdbId", async (req, res) => {
   const { tmdbId } = req.params;
-
-  // Handle Drama IDs (slugs or legacy KissKH IDs)
-  if (
-    tmdbId.startsWith("k") ||
-    (isNaN(parseInt(tmdbId)) && !tmdbId.startsWith("tt"))
-  ) {
-    const dramaId = tmdbId.startsWith("k") ? tmdbId.replace("k", "") : tmdbId;
-    console.log(`[DRAMA] Fetching Dramacool details for: ${dramaId}`);
-    try {
-      const details = await DramacoolScraper.getDramaDetail(dramaId);
-      if (!details) return res.status(404).json({ error: "Drama not found" });
-
-      // Normalize to TMDB-like structure for the frontend drawer
-      return res.json({
-        id: tmdbId,
-        name: details.title,
-        number_of_seasons: 1,
-        seasons: [
-          {
-            season_number: 1,
-            episode_count: details.episodes?.length || 0,
-            name: "Season 1",
-          },
-        ],
-        episodes: (details.episodes || []).map((ep: any) => ({
-          episode_number: ep.number,
-          name: ep.title || `Episode ${ep.number}`,
-          id: ep.id, // Full URL
-        })),
-      });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  }
 
   if (!TMDB_API_KEY)
     return res.status(500).json({ error: "TMDB_API_KEY not configured" });
@@ -2638,99 +2559,6 @@ app.get("/api/metadata", async (req, res) => {
   }
 });
 
-// Endpoint: Drama Discovery (Synced with Dramacool)
-app.get("/api/drama/list", async (req, res) => {
-  const page = parseInt(req.query.page as string) || 1;
-  const countryId = req.query.country as string;
-
-  // Map frontend country IDs to Dramacool slugs
-  const countryMap: Record<string, string> = {
-    "1": "korean",
-    "2": "chinese",
-    "4": "japanese-a",
-    "7": "thailand",
-    "8": "philippines",
-    "5": "taiwanese",
-    "6": "hong-kong",
-    "3": "other-asia",
-  };
-
-  const countrySlug = countryId ? countryMap[countryId] : undefined;
-  const cacheKey = `drama-list-${page}-${countryId || "all"}`;
-
-  try {
-    const cached = await DiscoveryCache.findOne({ key: cacheKey });
-    if (cached) {
-      console.log(`[DRAMA] Cache HIT for list ${cacheKey}`);
-      return res.json({ results: cached.results });
-    }
-
-    console.log(
-      `[DRAMA] Cache MISS for list ${cacheKey}. Fetching Dramacool...`,
-    );
-    const results = await DramacoolScraper.getExploreList(page, countrySlug);
-
-    await DiscoveryCache.findOneAndUpdate(
-      { key: cacheKey },
-      {
-        results,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 6), // 6 hours
-      },
-      { upsert: true },
-    ).catch(() => null);
-
-    return res.json({ results });
-  } catch (err: any) {
-    console.error(`[DRAMA LIST ERROR] ${err.message}`);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.get("/api/drama/detail/:id", async (req, res) => {
-  const { id } = req.params;
-  const dramaId = id.startsWith("k") ? id.replace("k", "") : id;
-
-  try {
-    const cached = await DramaDetailCache.findOne({ dramaId });
-    if (cached) {
-      console.log(`[DRAMA] Cache HIT for detail ${id}`);
-      return res.json(cached.detail);
-    }
-
-    console.log(`[DRAMA] Cache MISS for detail ${id}. Fetching...`);
-    const details = await DramacoolScraper.getDramaDetail(dramaId);
-    if (!details) return res.status(404).json({ error: "Drama not found" });
-
-    // Normalize episodes
-    const normalized = {
-      ...details,
-      episodes: (details.episodes || [])
-        .map((ep: any) => ({
-          episode_number: ep.number,
-          name: ep.title || `Episode ${ep.number}`,
-          overview: "",
-          still_path: details.thumbnail,
-          air_date: "",
-          id: ep.id,
-        }))
-        .sort((a: any, b: any) => a.episode_number - b.episode_number),
-    };
-
-    await DramaDetailCache.findOneAndUpdate(
-      { dramaId },
-      {
-        detail: normalized,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
-      },
-      { upsert: true },
-    ).catch(() => null);
-
-    return res.json(normalized);
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
-  }
-});
-
 // Endpoint: Image Proxy (Bypasses TMDB Blocks/CORS)
 // Allowlist of domains the image proxy may fetch from.
 // Prevents SSRF: attackers cannot use this to reach internal network endpoints.
@@ -2739,9 +2567,6 @@ const IMAGE_PROXY_ALLOWLIST = [
   "media.themoviedb.org",
   "assets.fanart.tv",
   "webservice.fanart.tv",
-  "assets.kisskh.co",
-  "kisskh.do",
-  "dramacooll.fun",
   "picsum.photos",
 ];
 
