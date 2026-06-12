@@ -2535,6 +2535,13 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
+  // Redirect local master.m3u8 requests directly to avoid proxying localhost over public proxy tunnels
+  if (targetUrl.includes("/api/videasy/master.m3u8")) {
+    console.log("[PROXY/stream] Local master playlist detected. Redirecting directly.");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.redirect(302, targetUrl);
+  }
+
   // Extract proxy from two possible locations:
   // 1. Baked into the target CDN URL as ?nebula_proxy=... (master playlist, set by /api/stream)
   // 2. As a direct query param of this endpoint (?nebula_proxy=...) (variant sub-playlists, set by withProxy())
@@ -2682,6 +2689,11 @@ app.get("/api/proxy/stream", async (req, res) => {
       if (uri.startsWith("http")) return uri;
       if (uri.startsWith("//")) return `https:${uri}`;
       if (uri.startsWith("/")) return origin + uri;
+      if (uri.startsWith("?")) {
+        const qIdx = actualTargetUrl.indexOf("?");
+        const base = qIdx >= 0 ? actualTargetUrl.substring(0, qIdx) : actualTargetUrl;
+        return base + uri;
+      }
       return baseDir + uri;
     };
 
@@ -2701,11 +2713,11 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     let rewrittenCount = 0;
 
-    // 1. Rewrite URI= attributes in tags
+    // 1. Rewrite URI= attributes in tags (case-insensitive, optional spaces, single/double quotes)
     let proxified = manifest.replace(
-      /URI=(?:"([^"]+)"|([^",\s][^,\s]*))/g,
-      (match, quoted, unquoted) => {
-        const uri = (quoted || unquoted).trim();
+      /URI\s*=\s*(?:"([^"]+)"|'([^']+)'|([^",'\s][^,\s]*))/gi,
+      (match, doubleQuoted, singleQuoted, unquoted) => {
+        const uri = (doubleQuoted || singleQuoted || unquoted || "").trim();
         if (!uri) return match;
 
         const abs = fastResolve(uri);
@@ -2715,7 +2727,9 @@ app.get("/api/proxy/stream", async (req, res) => {
 
         rewrittenCount++;
         const proxiedUrl = withProxy(proxyPath, encodeURIComponent(abs));
-        return quoted ? `URI="${proxiedUrl}"` : `URI=${proxiedUrl}`;
+        if (doubleQuoted) return `URI="${proxiedUrl}"`;
+        if (singleQuoted) return `URI='${proxiedUrl}'`;
+        return `URI=${proxiedUrl}`;
       },
     );
 
@@ -2946,7 +2960,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         }
       });
 
-      upstream.setTimeout(30000, () => {
+      upstream.setTimeout(45000, () => {
         upstream.destroy();
         if (req.destroyed || (req as any).signal?.aborted) return;
         if (retryCount < 3) {
@@ -2989,7 +3003,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       const axiosResponse = await axios.get(targetUrl, {
         headers,
         responseType: "stream",
-        timeout: 20000,
+        timeout: 45000, // Increased to avoid cancelled segments on slow connections
         signal: (req as any).signal,
         proxy: false, // disable axios auto-proxy; we set it via httpsAgent if needed
         httpsAgent: proxyUrl
@@ -3839,6 +3853,65 @@ app.get("/api/vidrock", async (req, res) => {
   }
 });
 
+// Endpoint: Dynamic HLS Master Playlist generator for grouping different qualities of the same server
+app.get("/api/videasy/master.m3u8", (req, res) => {
+  const urlsParam = req.query.urls as string;
+  const qualitiesParam = req.query.qualities as string;
+
+  if (!urlsParam || !qualitiesParam) {
+    return res.status(400).send("Missing urls or qualities");
+  }
+
+  try {
+    const urls = urlsParam.split(",").map(url => decodeURIComponent(url));
+    const qualities = qualitiesParam.split(",");
+
+    let m3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n";
+
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      const q = qualities[i];
+      if (!url || !q) continue;
+
+      let bandwidth = 1000000;
+      let resolution = "";
+      const height = parseInt(q, 10);
+
+      if (height === 1080) {
+        bandwidth = 2800000;
+        resolution = "1920x1080";
+      } else if (height === 720) {
+        bandwidth = 1400000;
+        resolution = "1280x720";
+      } else if (height === 480) {
+        bandwidth = 800000;
+        resolution = "854x480";
+      } else if (height === 360) {
+        bandwidth = 500000;
+        resolution = "640x360";
+      } else if (height === 240) {
+        bandwidth = 300000;
+        resolution = "426x240";
+      } else {
+        resolution = `unknownx${height}`;
+      }
+
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+      const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+      const proxiedUrl = `${currentHost}/api/proxy/stream?url=${encodeURIComponent(url)}`;
+
+      m3u8 += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth}${resolution ? `,RESOLUTION=${resolution}` : ""},NAME="${height}p"\n`;
+      m3u8 += `${proxiedUrl}\n`;
+    }
+
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.send(m3u8);
+  } catch (err: any) {
+    res.status(500).send("Error generating master playlist");
+  }
+});
+
 app.get("/api/videasy", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const type = req.query.type as "movie" | "tv";
@@ -3887,10 +3960,17 @@ app.get("/api/videasy", async (req, res) => {
         console.log(
           `[VIDEASY] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`,
         );
+        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+
         const responseData: Record<string, any> = {};
         cachedRecord.mirrors.forEach((m: any) => {
+          let url = m.url;
+          if (url.startsWith("/")) {
+            url = `${currentHost}${url}`;
+          }
           responseData[m.source] = {
-            url: m.url,
+            url: url,
             type: m.type || "hls",
             audio: m.audio || "",
             flag: m.flag || "us",
@@ -3952,7 +4032,20 @@ app.get("/api/videasy", async (req, res) => {
       });
     }
 
-    res.json(activeMirrors);
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    const currentHost = process.env.API_URL || `${protocol}://${req.get("host")}`;
+    const responseData: Record<string, any> = {};
+    Object.entries(activeMirrors).forEach(([key, val]: any) => {
+      let url = val.url;
+      if (url.startsWith("/")) {
+        url = `${currentHost}${url}`;
+      }
+      responseData[key] = {
+        ...val,
+        url,
+      };
+    });
+    res.json(responseData);
   } catch (error) {
     console.error("[VIDEASY] fetch failed", error);
     res.status(500).json({ error: "Failed to fetch from Videasy" });

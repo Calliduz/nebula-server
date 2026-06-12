@@ -278,7 +278,7 @@ async function fetchProviderStreams(
       Referer: "https://player.videasy.to/",
       Origin: "https://player.videasy.to",
     },
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
@@ -342,23 +342,85 @@ export async function fetchVideasySources(
   for (const res of results) {
     if (!res || !res.sources || res.sources.length === 0) continue;
 
-    res.sources.forEach((src) => {
-      if (!src.url) return;
+    // Filter valid sources (must have url)
+    const validSources = res.sources.filter((src: any) => src && src.url);
+    if (validSources.length === 0) continue;
 
-      // If there are multiple qualities, name them appropriately
-      const qualitySuffix =
-        src.quality && src.quality !== "Auto" && src.quality !== "Original"
-          ? ` - ${src.quality}`
-          : "";
+    // Separate HLS and non-HLS (MP4) sources
+    const hlsSources = validSources.filter((src: any) =>
+      src.url.includes("m3u8"),
+    );
+    const mp4Sources = validSources.filter(
+      (src: any) => !src.url.includes("m3u8"),
+    );
 
-      const mirrorName = `Videasy (${res.sourceName}${qualitySuffix})`;
-      activeMirrors[mirrorName] = {
-        url: src.url,
-        type: src.url.includes("m3u8") ? "hls" : "mp4",
-        audio: res.audio,
-        flag: res.flag,
-      };
-    });
+    // 1. Process HLS sources
+    if (hlsSources.length > 0) {
+      if (hlsSources.length === 1) {
+        // Only one HLS quality, no need for master playlist
+        const src = hlsSources[0];
+        const mirrorName = `Videasy (${res.sourceName})`;
+        activeMirrors[mirrorName] = {
+          url: src.url,
+          type: "hls",
+          audio: res.audio,
+          flag: res.flag,
+        };
+      } else {
+        // Multiple HLS qualities -> group them into a single master playlist
+        // Sort descending by quality/height
+        const sortedHls = [...hlsSources].sort((a: any, b: any) => {
+          const parseHeight = (q: any) => {
+            const match = String(q || "").match(/(\d+)/);
+            return match ? parseInt(match[1]!, 10) : 0;
+          };
+          return parseHeight(b.quality) - parseHeight(a.quality);
+        });
+
+        const urls: string[] = [];
+        const qualities: number[] = [];
+
+        sortedHls.forEach((src: any) => {
+          const qStr = String(src.quality || "").toLowerCase();
+          let height = parseInt(qStr.replace(/\D/g, ""), 10);
+          if (isNaN(height)) {
+            if (qStr.includes("1080")) height = 1080;
+            else if (qStr.includes("720")) height = 720;
+            else if (qStr.includes("480")) height = 480;
+            else if (qStr.includes("360")) height = 360;
+            else if (qStr.includes("240")) height = 240;
+            else height = 480; // fallback default quality
+          }
+          urls.push(encodeURIComponent(src.url));
+          qualities.push(height);
+        });
+
+        const mirrorName = `Videasy (${res.sourceName})`;
+        activeMirrors[mirrorName] = {
+          url: `/api/videasy/master.m3u8?urls=${urls.join(",")}&qualities=${qualities.join(",")}`,
+          type: "hls",
+          audio: res.audio,
+          flag: res.flag,
+        };
+      }
+    }
+
+    // 2. Process MP4 sources
+    if (mp4Sources.length > 0) {
+      mp4Sources.forEach((src: any) => {
+        const qualitySuffix =
+          src.quality && src.quality !== "Auto" && src.quality !== "Original"
+            ? ` - ${src.quality}`
+            : "";
+        const mirrorName = `Videasy (${res.sourceName}${qualitySuffix})`;
+        activeMirrors[mirrorName] = {
+          url: src.url,
+          type: "mp4",
+          audio: res.audio,
+          flag: res.flag,
+        };
+      });
+    }
   }
 
   return activeMirrors;
