@@ -366,10 +366,12 @@ async function saveProviderMirrorsToCache(
       { tmdbId: cacheKey, type, season, episode },
       {
         $pull: {
-          mirrors: { source: { $regex: new RegExp("^Videasy \\(" + providerName, "i") } },
-          subtitles: { source: providerName }
-        }
-      }
+          mirrors: {
+            source: { $regex: new RegExp("^Videasy \\(" + providerName, "i") },
+          },
+          subtitles: { source: providerName },
+        },
+      },
     );
 
     // 2. Append new mirrors/subs
@@ -380,15 +382,20 @@ async function saveProviderMirrorsToCache(
     const updateQuery: any = {
       $push: {
         mirrors: { $each: mirrorsToSave },
-        subtitles: { $each: subtitlesToSave }
+        subtitles: { $each: subtitlesToSave },
       },
       $set: {
-        expiresAt
-      }
+        expiresAt,
+      },
     };
 
     // 3. Set the default streamUrl if not already set
-    const existing = await StreamCache.findOne({ tmdbId: cacheKey, type, season, episode });
+    const existing = await StreamCache.findOne({
+      tmdbId: cacheKey,
+      type,
+      season,
+      episode,
+    });
     if (!existing || !existing.streamUrl) {
       if (mirrorsToSave.length > 0) {
         updateQuery.$set.streamUrl = mirrorsToSave[0].url;
@@ -400,7 +407,7 @@ async function saveProviderMirrorsToCache(
     await StreamCache.updateOne(
       { tmdbId: cacheKey, type, season, episode },
       updateQuery,
-      { upsert: true }
+      { upsert: true },
     );
 
     // 4. Delete from DeadPool if we found mirrors
@@ -413,7 +420,10 @@ async function saveProviderMirrorsToCache(
       }).catch(() => null);
     }
   } catch (err: any) {
-    console.error(`[VIDEASY] Cache save failed for ${providerName}:`, err.message);
+    console.error(
+      `[VIDEASY] Cache save failed for ${providerName}:`,
+      err.message,
+    );
   }
 }
 
