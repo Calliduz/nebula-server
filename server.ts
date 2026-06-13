@@ -2036,6 +2036,23 @@ app.get("/api/proxy/segment", async (req, res) => {
     }
   }
 
+  // Redirect playlist URLs to stream proxy to bypass ORB blocks on JSON responses
+  const lowercaseUrl = targetUrl.toLowerCase();
+  if (lowercaseUrl.includes("playlist") || lowercaseUrl.includes(".m3u8")) {
+    console.log(
+      `[PROXY/segment] Playlist URL detected in segment proxy. Redirecting to stream proxy: ${targetUrl.substring(0, 80)}...`,
+    );
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    const currentHost =
+      process.env.API_URL || `${protocol}://${req.get("host")}`;
+    const proxyParam = req.query.nebula_proxy
+      ? `&nebula_proxy=${encodeURIComponent(req.query.nebula_proxy as string)}`
+      : "";
+    const redirectUrl = `${currentHost}/api/proxy/stream?url=${encodeURIComponent(targetUrl)}${proxyParam}`;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    return res.redirect(302, redirectUrl);
+  }
+
   // Read the proxy param if the manifest rewriter passed one
   const rawProxy = req.query.nebula_proxy as string | undefined;
   let segProxy: string | undefined;
@@ -2265,6 +2282,24 @@ app.get("/api/proxy/segment", async (req, res) => {
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.status(status).end();
         return;
+      }
+
+      // Guard: Redirect JSON responses (playlists) to stream proxy
+      const contentType = axiosResponse.headers["content-type"] || "";
+      if (contentType.toLowerCase().includes("json")) {
+        (axiosResponse.data as any).destroy();
+        console.log(
+          `[PROXY/segment] JSON response detected from CDN. Redirecting to stream proxy: ${targetUrl.substring(0, 80)}...`,
+        );
+        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const currentHost =
+          process.env.API_URL || `${protocol}://${req.get("host")}`;
+        const proxyParam = segProxy
+          ? `&nebula_proxy=${encodeURIComponent(segProxy)}`
+          : "";
+        const redirectUrl = `${currentHost}/api/proxy/stream?url=${encodeURIComponent(targetUrl)}${proxyParam}`;
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        return res.redirect(302, redirectUrl);
       }
 
       // Forward headers then pipe — no buffering
