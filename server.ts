@@ -2433,9 +2433,10 @@ app.get("/api/stream/availability", async (req, res) => {
     const results = tmdbIds.map((id) => {
       const showCached = cachedStreams.filter(
         (s) =>
-          String(s.tmdbId) === String(id) ||
-          String(s.tmdbId) === `${id}-vidrock` ||
-          String(s.tmdbId) === `${id}-videasy`,
+          (String(s.tmdbId) === String(id) ||
+            String(s.tmdbId) === `${id}-vidrock` ||
+            String(s.tmdbId) === `${id}-videasy`) &&
+          (s.streamUrl || (s.mirrors && s.mirrors.length > 0)),
       );
       const showDead = deadPool.filter(
         (d) =>

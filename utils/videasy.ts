@@ -404,11 +404,13 @@ async function saveProviderMirrorsToCache(
       }
     }
 
-    await StreamCache.updateOne(
-      { tmdbId: cacheKey, type, season, episode },
-      updateQuery,
-      { upsert: true },
-    );
+    if (mirrorsToSave.length > 0 || subtitlesToSave.length > 0) {
+      await StreamCache.updateOne(
+        { tmdbId: cacheKey, type, season, episode },
+        updateQuery,
+        { upsert: true },
+      );
+    }
 
     // 4. Delete from DeadPool if we found mirrors
     if (mirrorsToSave.length > 0) {
