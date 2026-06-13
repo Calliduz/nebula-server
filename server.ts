@@ -3193,6 +3193,167 @@ app.get("/api/videasy", async (req, res) => {
   }
 });
 
+// ── /api/vidlink — Standalone VidLink scan (mirrors /api/vidrock pattern) ──
+app.get("/api/vidlink", async (req, res) => {
+  const tmdbId = req.query.tmdbId as string;
+  const type = req.query.type as "movie" | "tv";
+  const seasonStr = req.query.season as string;
+  const episodeStr = req.query.episode as string;
+
+  if (!tmdbId || !type) {
+    return res.status(400).json({ error: "Missing tmdbId or type" });
+  }
+
+  if (type === "tv" && (!seasonStr || !episodeStr)) {
+    return res
+      .status(400)
+      .json({ error: "Missing season or episode for TV show" });
+  }
+
+  const season = type === "tv" ? parseInt(seasonStr, 10) : 1;
+  const episode = type === "tv" ? parseInt(episodeStr, 10) : 1;
+
+  if (isNaN(season) || isNaN(episode)) {
+    return res
+      .status(400)
+      .json({ error: "Invalid season or episode format (must be integer)" });
+  }
+
+  try {
+    // 1. Cache check — reuse the main StreamCache entry (source "VidLink")
+    const cachedRecord = await StreamCache.findOne({
+      tmdbId: tmdbId.toString(),
+      type,
+      season,
+      episode,
+    }).catch(() => null);
+
+    if (
+      cachedRecord &&
+      cachedRecord.mirrors &&
+      cachedRecord.mirrors.length > 0
+    ) {
+      const vidlinkMirrors = cachedRecord.mirrors.filter(
+        (m: any) => m.source === "VidLink",
+      );
+      if (
+        vidlinkMirrors.length > 0 &&
+        (!cachedRecord.streamExpiresAt ||
+          new Date() < cachedRecord.streamExpiresAt)
+      ) {
+        console.log(
+          `[VIDLINK] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`,
+        );
+        const responseData: Record<string, any> = {};
+        vidlinkMirrors.forEach((m: any, i: number) => {
+          const key = m.quality
+            ? `VidLink (${m.quality})`
+            : i === 0
+              ? "VidLink"
+              : `VidLink_${i}`;
+          responseData[key] = {
+            url: m.url,
+            type: m.type || "hls",
+            quality: m.quality || "Auto",
+          };
+        });
+        return res.json(responseData);
+      }
+    }
+
+    // 2. Live scrape — race against 10s timeout
+    let fetchFinished = false;
+    let fetchResult: any = null;
+
+    const runScan = async () => {
+      try {
+        const mirrors = await VidLinkScraper.getStream(
+          tmdbId,
+          type,
+          season,
+          episode,
+        );
+        fetchFinished = true;
+        if (!mirrors || mirrors.length === 0) return null;
+
+        // Build response object
+        const responseData: Record<string, any> = {};
+        mirrors.forEach((m, i) => {
+          const key = m.quality
+            ? `VidLink (${m.quality})`
+            : i === 0
+              ? "VidLink"
+              : `VidLink_${i}`;
+          responseData[key] = {
+            url: m.url,
+            type: m.type || "hls",
+            quality: m.quality || "Auto",
+          };
+        });
+
+        // Save to cache under main tmdbId exactly like /api/stream does
+        const firstMirror = mirrors[0];
+        if (firstMirror) {
+          const streamUrl = firstMirror.url;
+          const sourceName = firstMirror.source || "VidLink";
+          const resolution = firstMirror.quality || "1080p";
+          const qualityTag = resolution.includes("2160") ? "4K" : "HD";
+
+          const cacheExpires = new Date();
+          cacheExpires.setHours(cacheExpires.getHours() + 4);
+
+          await StreamCache.findOneAndUpdate(
+            { tmdbId: tmdbId.toString(), type, season, episode },
+            {
+              streamUrl,
+              source: sourceName,
+              qualityTag,
+              resolution,
+              mirrors,
+              streamExpiresAt: cacheExpires,
+              expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+            },
+            { upsert: true },
+          );
+
+          await DeadPool.deleteMany({
+            tmdbId: { $in: [tmdbId.toString()] },
+            type,
+            season,
+            episode,
+          }).catch(() => null);
+        }
+
+        fetchResult = responseData;
+        return responseData;
+      } catch (err: any) {
+        console.warn(`[VIDLINK] Scan failed for ${tmdbId}: ${err.message}`);
+        fetchFinished = true;
+        return null;
+      }
+    };
+
+    const scanPromise = runScan();
+    const raceTimeout = new Promise<void>((resolve) =>
+      setTimeout(resolve, 10000),
+    );
+
+    await Promise.race([scanPromise, raceTimeout]);
+
+    if (fetchFinished && fetchResult) {
+      res.json(fetchResult);
+    } else {
+      console.log(
+        `[VIDLINK] Scan took longer than 10s for ${tmdbId}. Returning empty.`,
+      );
+      res.json({});
+    }
+  } catch (error) {
+    console.error("[VIDLINK] fetch failed", error);
+    res.status(500).json({ error: "Failed to fetch from VidLink" });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, () => {
   console.log(`Nebula Backend Array active on http://localhost:${PORT}`);
