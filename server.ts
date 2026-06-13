@@ -3370,7 +3370,7 @@ app.get("/api/vidlink", async (req, res) => {
 
     const scanPromise = runScan();
     const raceTimeout = new Promise<void>((resolve) =>
-      setTimeout(resolve, 10000),
+      setTimeout(resolve, 5000),
     );
 
     await Promise.race([scanPromise, raceTimeout]);
@@ -3379,7 +3379,7 @@ app.get("/api/vidlink", async (req, res) => {
       res.json(fetchResult);
     } else {
       console.log(
-        `[VIDLINK] Scan took longer than 10s for ${tmdbId}. Returning empty.`,
+        `[VIDLINK] Scan took longer than 5s for ${tmdbId}. Returning empty, remaining scan running in bg...`,
       );
       res.json({});
     }
