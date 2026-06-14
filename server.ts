@@ -1870,6 +1870,24 @@ app.get("/api/proxy/stream", async (req, res) => {
       return res.status(502).send("Invalid manifest content");
     }
 
+    const trimmedManifest = manifest.trim();
+    if (
+      trimmedManifest === "#EXTM3U" ||
+      trimmedManifest.length < 20 ||
+      (!trimmedManifest.includes("#EXT-X-STREAM-INF") &&
+        !trimmedManifest.includes("#EXTINF") &&
+        !trimmedManifest.includes(".m3u8") &&
+        !trimmedManifest.includes(".ts") &&
+        !trimmedManifest.includes(".mp4") &&
+        !trimmedManifest.startsWith("["))
+    ) {
+      console.warn(
+        `[PROXY/stream] Rejected empty or invalid HLS manifest (length: ${trimmedManifest.length}).`,
+      );
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.status(404).send("Empty manifest from CDN");
+    }
+
     // Handle JSON playlist (e.g. Atlas / vdrk.site MP4 resolution list)
     if (manifest.trim().startsWith("[")) {
       try {
@@ -2991,7 +3009,7 @@ app.get("/api/vidrock", async (req, res) => {
         const activeSources = Object.entries(data)
           .filter(([_, v]: any) => v && v.url)
           .map(([name, v]: any) => ({
-            source: name,
+            source: name.startsWith("VidRock") ? name : `VidRock (${name})`,
             url: v.url,
             type: v.type || "hls",
           }));
@@ -3000,14 +3018,13 @@ app.get("/api/vidrock", async (req, res) => {
         if (firstActiveSource) {
           const streamUrl = firstActiveSource.url;
           const sourceName = firstActiveSource.source;
-          const cacheExpires = new Date();
-          cacheExpires.setHours(cacheExpires.getHours() + 4);
+          const cacheExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes cache
 
           await StreamCache.findOneAndUpdate(
             { tmdbId: `${tmdbId}-vidrock`, type, season, episode },
             {
               streamUrl,
-              source: `VidRock (${sourceName})`,
+              source: sourceName,
               qualityTag: "HD",
               resolution: "1080p",
               mirrors: activeSources,
@@ -3025,9 +3042,17 @@ app.get("/api/vidrock", async (req, res) => {
           }).catch(() => null);
         }
 
-        fetchResult = data;
+        const responseData: Record<string, any> = {};
+        activeSources.forEach((m) => {
+          responseData[m.source] = {
+            url: m.url,
+            type: m.type,
+          };
+        });
+
+        fetchResult = responseData;
         fetchFinished = true;
-        return data;
+        return responseData;
       } catch (err: any) {
         console.warn(
           `[VIDROCK] Background fetch failed for ${tmdbId}: ${err.message}`,

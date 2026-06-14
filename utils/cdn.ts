@@ -81,6 +81,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vidrock.ru") ||
       lower.includes("vidrock.net") ||
       lower.includes("hydrostorm") ||
+      lower.includes("hellstorm.lol") ||
+      lower.includes("hellstorm") ||
+      lower.includes("hakunaymatata.com") ||
+      lower.includes("hakunaymatata") ||
       lower.includes("workers.dev") ||
       lower.includes("tiktokcdn") ||
       lower.includes("byteoversea") ||
