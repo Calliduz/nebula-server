@@ -1,6 +1,6 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { type MirrorStream } from "./scraper.js";
+import { type MirrorStream } from "../utils/scraper.js";
 
 const DRAMACOOL_BASE = "https://dramacooll.fun";
 

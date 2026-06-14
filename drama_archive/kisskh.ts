@@ -1,8 +1,8 @@
-import { hybridFetch } from "./fetcher.js";
-import { type MirrorStream } from "./scraper.js";
+import { hybridFetch } from "../utils/fetcher.js";
+import { type MirrorStream } from "../utils/scraper.js";
 // @ts-ignore
 import generateKissKHToken from "./kisskhToken.js";
-import { VidLinkScraper } from "./vidlink.js";
+import { VidLinkScraper } from "../utils/vidlink.js";
 import axios from "axios";
 
 const KISSKH_BASE = "https://kisskh.do";
@@ -247,18 +247,22 @@ export class KissKHScraper {
 
     try {
       const [res1, res2] = await Promise.all([
-        hybridFetch(url1, { json: true, referer: KISSKH_BASE }).catch((err) => {
-          console.error(
-            `[KissKH] ✘ Discovery Page ${page * 2 - 1} failed: ${err.message}`,
-          );
-          return null;
-        }),
-        hybridFetch(url2, { json: true, referer: KISSKH_BASE }).catch((err) => {
-          console.error(
-            `[KissKH] ✘ Discovery Page ${page * 2} failed: ${err.message}`,
-          );
-          return null;
-        }),
+        hybridFetch(url1, { json: true, referer: KISSKH_BASE }).catch(
+          (err: any) => {
+            console.error(
+              `[KissKH] ✘ Discovery Page ${page * 2 - 1} failed: ${err.message}`,
+            );
+            return null;
+          },
+        ),
+        hybridFetch(url2, { json: true, referer: KISSKH_BASE }).catch(
+          (err: any) => {
+            console.error(
+              `[KissKH] ✘ Discovery Page ${page * 2} failed: ${err.message}`,
+            );
+            return null;
+          },
+        ),
       ]);
 
       const results = [...(res1?.data || []), ...(res2?.data || [])];
