@@ -68,6 +68,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("keymi417exx.com") ||
       lower.includes("goldweather.net") ||
       lower.includes("cfw557.workers.dev") ||
+      lower.includes("cfw69.workers.dev") ||
       lower.includes("videasy.to") ||
       /i-cdn-\d+/.test(lower) ||
       /[a-z]{5}\d{3}[a-z]{3}\./.test(lower)

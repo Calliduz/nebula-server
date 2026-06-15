@@ -619,6 +619,7 @@ app.get("/api/download/stream-file", async (req, res) => {
   // Route hakunaymatata.com CDN requests through Cloudflare worker to bypass datacenter IP blocks
   if (
     targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
     targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
@@ -1742,6 +1743,7 @@ app.get("/api/proxy/stream", async (req, res) => {
 
   if (
     targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
     targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
@@ -2077,6 +2079,7 @@ app.get("/api/proxy/segment", async (req, res) => {
 
   if (
     targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
     targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
