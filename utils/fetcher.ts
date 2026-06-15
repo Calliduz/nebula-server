@@ -142,7 +142,7 @@ export async function hybridFetch(url: string, options: any = {}) {
         status !== 530 &&
         status !== 406
       ) {
-        console.error(`${logPrefix} ✘ Axios failed with ${status}: ${url}`);
+        console.error(`${logPrefix} ✘ Axios failed with ${status}: ${url.split("?")[0]}`);
         throw error;
       }
 

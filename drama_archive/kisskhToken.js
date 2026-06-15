@@ -246,13 +246,11 @@ const generateKissKHToken = (function () {
       "",
     ];
     const rawStr = meta.join("|");
-    console.log("META:", rawStr);
     meta.splice(1, 0, _0x70dbf4(rawStr));
     const raw = _0x29e11d(meta.join("|"));
     const [_words, _len] = _0x1b25b9(raw);
     _0xaf4f42(_words);
     const result = _0x1c779c(_words, _len).toUpperCase();
-    console.log("TOKEN RESULT:", result);
     return result;
   };
 })();

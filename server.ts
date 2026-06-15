@@ -189,6 +189,17 @@ setTimeout(async () => {
   } catch {}
 }, 5000);
 
+function sanitizeUrl(url: string | undefined): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.origin + parsed.pathname;
+  } catch {
+    return url.split("?")[0];
+  }
+}
+
+
 /**
  * Fetches a VidLink/Storm URL using raw Node.js https.request.
  * IMPORTANT: This bypasses WHATWG URL normalization (used by got/fetch/axios).
@@ -657,7 +668,7 @@ app.get("/api/download/stream-file", async (req, res) => {
     response.data.pipe(res);
   } catch (error: any) {
     console.error(
-      `[STREAM PROXY ERROR] Failed to stream ${targetUrl}: ${error.message}`,
+      `[STREAM PROXY ERROR] Failed to stream ${sanitizeUrl(targetUrl)}: ${error.message}`,
     );
     if (!res.headersSent) {
       res.status(500).json({ error: "Failed to download file" });
@@ -1803,7 +1814,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     } catch {}
   }
 
-  console.log(`[PROXY/stream] Incoming Original URL: ${req.originalUrl}`);
+  console.log(`[PROXY/stream] Incoming Request for: ${sanitizeUrl(targetUrl)}`);
 
   // Fall back to baked-in param inside the target URL (master playlist)
   if (!streamProxy) {
@@ -1824,7 +1835,7 @@ app.get("/api/proxy/stream", async (req, res) => {
   const cached = getProxyCache(cacheKey);
   if (cached) {
     console.log(
-      `[PROXY/stream] ⚡ Cache Hit: ${targetUrl.substring(0, 60)}...`,
+      `[PROXY/stream] ⚡ Cache Hit: ${sanitizeUrl(targetUrl)}`,
     );
     res.setHeader(
       "Content-Type",
@@ -1836,7 +1847,7 @@ app.get("/api/proxy/stream", async (req, res) => {
 
   const startTime = Date.now();
   console.log(
-    `[PROXY/stream] ▶ ${targetUrl.substring(0, 80)} | proxy=${streamProxy ? "YES" : "NONE"}`,
+    `[PROXY/stream] ▶ ${sanitizeUrl(targetUrl)} | proxy=${streamProxy ? "YES" : "NONE"}`,
   );
 
   const passHeaders: any = {};
@@ -1873,7 +1884,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     const duration = Date.now() - startTime;
     if (status >= 400) {
       console.error(
-        `[PROXY/stream] ✘ ${status} (${duration}ms) | url=${targetUrl.substring(0, 60)}...`,
+        `[PROXY/stream] ✘ ${status} (${duration}ms) | url=${sanitizeUrl(targetUrl)}`,
       );
       res.setHeader("Access-Control-Allow-Origin", "*");
       return res.status(status).send(upstream.body || "Upstream error");
@@ -1881,7 +1892,7 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     if (!upstream.body || upstream.body.length === 0) {
       console.error(
-        `[PROXY/stream] ✘ Empty body from CDN (${duration}ms) | url=${targetUrl.substring(0, 60)}...`,
+        `[PROXY/stream] ✘ Empty body from CDN (${duration}ms) | url=${sanitizeUrl(targetUrl)}`,
       );
       res.setHeader("Access-Control-Allow-Origin", "*");
       return res.status(502).send("Empty response from CDN");
@@ -1928,7 +1939,7 @@ app.get("/api/proxy/stream", async (req, res) => {
             const proxiedUrl = `${currentHost}/api/proxy/segment?url=${encodeURIComponent(bestTrack.url)}`;
 
             console.log(
-              `[PROXY/stream] JSON playlist detected. Redirecting to best MP4: ${bestTrack.resolution}p -> ${bestTrack.url.substring(0, 80)}...`,
+              `[PROXY/stream] JSON playlist detected. Redirecting to best MP4: ${bestTrack.resolution}p -> ${sanitizeUrl(bestTrack.url)}`,
             );
             res.setHeader("Access-Control-Allow-Origin", "*");
             return res.redirect(302, proxiedUrl);
@@ -1975,7 +1986,7 @@ app.get("/api/proxy/stream", async (req, res) => {
     };
 
     console.log(
-      `[PROXY] Rewriting manifest: ${actualTargetUrl.substring(0, 60)}...`,
+      `[PROXY] Rewriting manifest: ${sanitizeUrl(actualTargetUrl)}`,
     );
 
     let rewrittenCount = 0;
@@ -2024,7 +2035,7 @@ app.get("/api/proxy/stream", async (req, res) => {
       );
     } else {
       console.log(
-        `[PROXY] Manifest preview (rewritten): ${proxified.substring(0, 300).replace(/\n/g, " ")}...`,
+        `[PROXY] Manifest rewrote successfully with ${rewrittenCount} URLs.`,
       );
     }
 
@@ -2042,9 +2053,8 @@ app.get("/api/proxy/stream", async (req, res) => {
   } catch (e: any) {
     const status = e?.response?.statusCode ?? "no-response";
     const body = String(e?.response?.body ?? "").substring(0, 200);
-    const url = targetUrl.substring(0, 100);
     console.error(
-      `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | error=${e.code} | message=${e.message} | url=${url}`,
+      `[PROXY/stream] ✘ ${status} | proxy=${streamProxy ? "YES" : "NONE"} | error=${e.code} | message=${e.message} | url=${sanitizeUrl(targetUrl)}`,
     );
     if (body) console.error(`[PROXY/stream] CDN response: ${body}`);
 
@@ -2094,7 +2104,7 @@ app.get("/api/proxy/segment", async (req, res) => {
   const lowercaseUrl = targetUrl.toLowerCase();
   if (lowercaseUrl.includes("playlist") || lowercaseUrl.includes(".m3u8")) {
     console.log(
-      `[PROXY/segment] Playlist URL detected in segment proxy. Redirecting to stream proxy: ${targetUrl.substring(0, 80)}...`,
+      `[PROXY/segment] Playlist URL detected in segment proxy. Redirecting to stream proxy: ${sanitizeUrl(targetUrl)}`,
     );
     const protocol = req.headers["x-forwarded-proto"] || req.protocol;
     const currentHost =
@@ -2171,7 +2181,7 @@ app.get("/api/proxy/segment", async (req, res) => {
             return startRequest(retryCount + 1);
           }
           console.error(
-            `[PROXY/segment] ✘ VidLink ${status} | url=${baseOnly.substring(0, 60)}...`,
+            `[PROXY/segment] ✘ VidLink ${status} | url=${sanitizeUrl(baseOnly)}`,
           );
           res.setHeader("Access-Control-Allow-Origin", "*");
           res.status(status).end();
@@ -2331,7 +2341,7 @@ app.get("/api/proxy/segment", async (req, res) => {
           return;
         }
         console.error(
-          `[PROXY/segment] ✘ ${status} | proxy=${useProxy ? "YES" : "NO"} | url=${targetUrl.substring(0, 60)}...`,
+          `[PROXY/segment] ✘ ${status} | proxy=${useProxy ? "YES" : "NO"} | url=${sanitizeUrl(targetUrl)}`,
         );
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.status(status).end();
@@ -2343,7 +2353,7 @@ app.get("/api/proxy/segment", async (req, res) => {
       if (contentType.toLowerCase().includes("json")) {
         (axiosResponse.data as any).destroy();
         console.log(
-          `[PROXY/segment] JSON response detected from CDN. Redirecting to stream proxy: ${targetUrl.substring(0, 80)}...`,
+          `[PROXY/segment] JSON response detected from CDN. Redirecting to stream proxy: ${sanitizeUrl(targetUrl)}`,
         );
         const protocol = req.headers["x-forwarded-proto"] || req.protocol;
         const currentHost =
@@ -2430,7 +2440,7 @@ app.get("/api/proxy/segment", async (req, res) => {
         return streamSegment(true);
       }
       console.error(
-        `[PROXY/segment] ✘ ${status || "no-status"} | proxy=${useProxy ? "YES" : "NO"} | error=${e.code} | message=${e.message} | url=${targetUrl.substring(0, 60)}...`,
+        `[PROXY/segment] ✘ ${status || "no-status"} | proxy=${useProxy ? "YES" : "NO"} | error=${e.code} | message=${e.message} | url=${sanitizeUrl(targetUrl)}`,
       );
       if (!res.headersSent) {
         res.setHeader("Access-Control-Allow-Origin", "*");

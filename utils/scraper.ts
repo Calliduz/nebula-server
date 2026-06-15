@@ -598,7 +598,7 @@ export async function scrapeVsembed(
 
   console.log(`[SCRAPER] L4     ✔  ${validStreams.length} stream(s) resolved`);
   validStreams.forEach((s, i) =>
-    console.log(`         [${i + 1}] ${s.substring(0, 90)}`),
+    console.log(`         [${i + 1}] ${s.split("?")[0]}`),
   );
 
   return {
