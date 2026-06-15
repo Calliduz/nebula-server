@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "crypto";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
@@ -65,6 +66,11 @@ import { CookieJar } from "tough-cookie";
 
 // Load Environment Variables
 dotenv.config();
+
+const SIGNING_SECRET = process.env.SIGNING_SECRET;
+if (!SIGNING_SECRET) {
+  throw new Error("CRITICAL STARTUP FAILURE: SIGNING_SECRET environment variable is required.");
+}
 
 // ── Process Crash Guards ───────────────────────────────────────────────────
 // Must be registered before any async code runs. Prevents silent process death
@@ -400,6 +406,107 @@ const limiter = rateLimit({
 
 // Apply the rate limiter to all requests
 app.use(limiter);
+
+// 4. Request Signing Verification Middleware
+export function verifyRequestSignature(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (req.method === "OPTIONS") return next();
+
+  const timestamp = req.headers["x-nebula-timestamp"] as string;
+  const signature = req.headers["x-nebula-signature"] as string;
+  const client = (req.headers["x-nebula-client"] as string) || "web-client";
+
+  if (!timestamp || !signature) {
+    console.warn(`[SIGNATURE] Rejecting request to ${req.originalUrl}: Missing headers (timestamp: ${timestamp}, signature: ${signature})`);
+    return res.status(403).json({ error: "Access denied. Signature headers missing." });
+  }
+
+  // Check replay window (60s limit)
+  const timeDiff = Math.abs(Date.now() - Number(timestamp));
+  if (isNaN(timeDiff) || timeDiff > 60000) {
+    console.warn(`[SIGNATURE] Rejecting request to ${req.originalUrl}: Expired/Invalid timestamp (diff: ${timeDiff}ms)`);
+    return res.status(403).json({ error: "Access denied. Timestamp expired or invalid." });
+  }
+
+  const currentPath = req.originalUrl.split("?")[0];
+  const candidatePaths = Array.from(new Set([
+    currentPath,
+    "/api/proxy/stream",
+    "/api/proxy/segment",
+    "/api/videasy",
+    "/api/vidrock",
+    "/api/stream",
+    "/api/vidlink"
+  ]));
+
+  let isVerified = false;
+
+  for (const path of candidatePaths) {
+    const message = `${req.method}:${path}:${timestamp}:${client}`;
+    const expected = crypto
+      .createHmac("sha256", SIGNING_SECRET as string)
+      .update(message)
+      .digest("hex");
+
+    if (signature.length === expected.length) {
+      try {
+        if (crypto.timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"))) {
+          isVerified = true;
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  if (!isVerified) {
+    console.warn(`[SIGNATURE] Rejecting request to ${req.originalUrl}: Signature mismatch against all candidates`);
+    return res.status(403).json({ error: "Access denied. Invalid signature." });
+  }
+
+  next();
+}
+
+// Helper to determine if a request should bypass streaming rate limit
+export function shouldSkipRateLimit(req: express.Request): boolean {
+  const origin = req.get("origin") || req.get("referer");
+  return !!(origin && allowedOrigins.some((o) => origin.startsWith(o)));
+}
+
+// Rate limiter specifically for protected/signed streaming routes
+export const signedRoutesLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per window
+  message: { error: "Too many stream request attempts, please try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: shouldSkipRateLimit,
+});
+
+// Mount security middleware (rate limit + signature check) to protected routes
+app.use(
+  [
+    "/api/stream",
+    "/api/proxy/stream",
+    "/api/proxy/segment",
+    "/api/vidrock",
+    "/api/videasy",
+    "/api/vidlink",
+  ],
+  (req, res, next) => {
+    const path = req.originalUrl.split("?")[0];
+    // Exclude metadata/analytics sub-paths
+    if (
+      path === "/api/stream/stop" ||
+      path === "/api/stream/availability" ||
+      path === "/api/stream/playback-success"
+    ) {
+      return next();
+    }
+
+    signedRoutesLimiter(req, res, () => {
+      verifyRequestSignature(req, res, next);
+    });
+  }
+);
 
 // express.json() is applied per-route (only POST/mutation routes need body parsing).
 // Applying it globally wastes CPU on every GET proxy/segment request that never has a body.
@@ -3224,14 +3331,23 @@ app.get("/api/videasy", async (req, res) => {
     const force = req.query.force === "1" || req.query.nocache === "1";
 
     // 1. Cache Check for Videasy
-    const cachedRecord = force
-      ? null
-      : await StreamCache.findOne({
-          tmdbId: `${tmdbId}-videasy`,
-          type,
-          season,
-          episode,
-        }).catch(() => null);
+    let cachedRecord = null;
+    if (!force) {
+      cachedRecord = await StreamCache.findOne({
+        tmdbId: `${tmdbId}-videasy`,
+        type,
+        season,
+        episode,
+      }).catch(() => null);
+    } else {
+      console.log(`[VIDEASY] Force/No-Cache requested. Deleting existing cache record.`);
+      await StreamCache.deleteOne({
+        tmdbId: `${tmdbId}-videasy`,
+        type,
+        season,
+        episode,
+      }).catch(() => null);
+    }
 
     if (
       cachedRecord &&
@@ -3263,6 +3379,14 @@ app.get("/api/videasy", async (req, res) => {
           };
         });
         return res.json(responseData);
+      } else {
+        console.log(`[VIDEASY] Cache expired for ${tmdbId} S${season}E${episode}. Deleting expired record.`);
+        await StreamCache.deleteOne({
+          tmdbId: `${tmdbId}-videasy`,
+          type,
+          season,
+          episode,
+        }).catch(() => null);
       }
     }
 
