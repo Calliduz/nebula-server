@@ -85,6 +85,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("hydrostorm") ||
       lower.includes("hellstorm.lol") ||
       lower.includes("hellstorm") ||
+      lower.includes("1x2.space") ||
       lower.includes("hakunaymatata.com") ||
       lower.includes("hakunaymatata") ||
       lower.includes("workers.dev") ||

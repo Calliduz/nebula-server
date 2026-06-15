@@ -621,7 +621,12 @@ app.get("/api/download/stream-file", async (req, res) => {
     targetUrl.includes("hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
-    targetUrl = `https://dl.gemlelispe.workers.dev/${encodeURIComponent(targetUrl)}`;
+    targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
+  } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
+    targetUrl = targetUrl.replace(
+      "dl.gemlelispe.workers.dev",
+      "dreadnought.47qzoobg8k.workers.dev",
+    );
   }
 
   try {
@@ -1176,13 +1181,17 @@ app.get("/api/stream", async (req, res) => {
   res.setHeader("Surrogate-Control", "no-store");
 
   try {
+    const force = req.query.force === "1" || req.query.nocache === "1";
+
     // 1. Cache Check
-    const cachedRecord = await StreamCache.findOne({
-      tmdbId,
-      type: kind,
-      season,
-      episode,
-    }).catch(() => null);
+    const cachedRecord = force
+      ? null
+      : await StreamCache.findOne({
+          tmdbId,
+          type: kind,
+          season,
+          episode,
+        }).catch(() => null);
 
     if (cachedRecord) {
       if (
@@ -1731,6 +1740,18 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
+  if (
+    targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("workers.dev")
+  ) {
+    targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
+  } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
+    targetUrl = targetUrl.replace(
+      "dl.gemlelispe.workers.dev",
+      "dreadnought.47qzoobg8k.workers.dev",
+    );
+  }
+
   // Redirect local master.m3u8 requests directly to avoid proxying localhost over public proxy tunnels
   if (targetUrl.includes("/api/videasy/master.m3u8")) {
     console.log(
@@ -2052,6 +2073,18 @@ app.get("/api/proxy/segment", async (req, res) => {
     } catch {
       return res.status(400).send("Invalid url encoding");
     }
+  }
+
+  if (
+    targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("workers.dev")
+  ) {
+    targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
+  } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
+    targetUrl = targetUrl.replace(
+      "dl.gemlelispe.workers.dev",
+      "dreadnought.47qzoobg8k.workers.dev",
+    );
   }
 
   // Redirect playlist URLs to stream proxy to bypass ORB blocks on JSON responses
@@ -2944,13 +2977,17 @@ app.get("/api/vidrock", async (req, res) => {
   }
 
   try {
+    const force = req.query.force === "1" || req.query.nocache === "1";
+
     // 1. Cache Check for VidRock
-    const cachedRecord = await StreamCache.findOne({
-      tmdbId: `${tmdbId}-vidrock`,
-      type,
-      season,
-      episode,
-    }).catch(() => null);
+    const cachedRecord = force
+      ? null
+      : await StreamCache.findOne({
+          tmdbId: `${tmdbId}-vidrock`,
+          type,
+          season,
+          episode,
+        }).catch(() => null);
 
     if (
       cachedRecord &&
@@ -3171,13 +3208,17 @@ app.get("/api/videasy", async (req, res) => {
   }
 
   try {
+    const force = req.query.force === "1" || req.query.nocache === "1";
+
     // 1. Cache Check for Videasy
-    const cachedRecord = await StreamCache.findOne({
-      tmdbId: `${tmdbId}-videasy`,
-      type,
-      season,
-      episode,
-    }).catch(() => null);
+    const cachedRecord = force
+      ? null
+      : await StreamCache.findOne({
+          tmdbId: `${tmdbId}-videasy`,
+          type,
+          season,
+          episode,
+        }).catch(() => null);
 
     if (
       cachedRecord &&
@@ -3281,13 +3322,17 @@ app.get("/api/vidlink", async (req, res) => {
   }
 
   try {
+    const force = req.query.force === "1" || req.query.nocache === "1";
+
     // 1. Cache check — reuse the main StreamCache entry (source "VidLink")
-    const cachedRecord = await StreamCache.findOne({
-      tmdbId: tmdbId.toString(),
-      type,
-      season,
-      episode,
-    }).catch(() => null);
+    const cachedRecord = force
+      ? null
+      : await StreamCache.findOne({
+          tmdbId: tmdbId.toString(),
+          type,
+          season,
+          episode,
+        }).catch(() => null);
 
     if (
       cachedRecord &&
