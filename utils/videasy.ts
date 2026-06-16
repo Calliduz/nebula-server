@@ -312,13 +312,27 @@ async function fetchProviderStreams(
     urlWithParams.searchParams.append(key, val);
   });
 
-  const res = await fetch(urlWithParams.toString(), {
+  let targetUrl = urlWithParams.toString();
+  // Route through custom proxy/worker if configured in .env (to bypass Oracle Cloud IP blocks)
+  if (process.env.VIDEASY_PROXY_URL) {
+    targetUrl = `${process.env.VIDEASY_PROXY_URL.replace(/\/$/, "")}/?url=${encodeURIComponent(targetUrl)}`;
+  }
+
+  const res = await fetch(targetUrl, {
     method: "GET",
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-      Referer: "https://player.videasy.to/",
-      Origin: "https://player.videasy.to",
+      "accept": "*/*",
+      "accept-language": "en-US,en;q=0.5",
+      "origin": "https://player.videasy.to",
+      "referer": "https://player.videasy.to/",
+      "sec-ch-ua": '"Brave";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-site",
+      "sec-gpc": "1",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
     },
     signal: AbortSignal.timeout(45000), // Extended to 45s for slow background fetches
   });
@@ -585,7 +599,15 @@ export async function fetchVideasySources(
 
   // Map each provider to a promise that writes directly to MongoDB cache
   // and merges its results into activeMirrors in real-time as it completes.
-  const scanPromises = providers.map(async (prov) => {
+  const scanPromises = providers.map(async (prov, index) => {
+    // Stagger requests: delay start of subsequent scans to prevent parallel spikes
+    await new Promise((resolve) => setTimeout(resolve, index * 150));
+
+    // Stop querying if we have already found enough mirrors (e.g. 3)
+    if (Object.keys(activeMirrors).length >= 3) {
+      return null;
+    }
+
     const res = await scanProvider(
       prov,
       title,
