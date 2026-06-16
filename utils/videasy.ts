@@ -591,6 +591,11 @@ export async function fetchVideasySources(
   season: number = 1,
   episode: number = 1,
 ): Promise<Record<string, any>> {
+  if (process.env.DISABLE_VIDEASY === "true") {
+    console.log(`[VIDEASY] Scraper is temporarily disabled via env config.`);
+    return {};
+  }
+
   console.log(
     `[VIDEASY] Starting background-scanned parallel search for ${mediaType} ${tmdbId} S${season}E${episode}...`,
   );
