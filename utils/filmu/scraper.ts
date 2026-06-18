@@ -413,6 +413,123 @@ export class FilmuScraper {
           mirrors.push(...r.value);
         }
       });
+
+      // Group and consolidate same-server different-quality HLS streams for FilmU
+      const parseMirrorSource = (name: string) => {
+        const match = name.match(/^(.*?)\s*-\s*(\d+(?:p)?|Auto|Original)\s*\)?$/i);
+        if (match) {
+          let base = (match[1] || "").trim();
+          if (name.includes("(") && !base.endsWith(")")) {
+            base = base + ")";
+          }
+          return { base, quality: (match[2] || "").trim() };
+        }
+        return { base: name, quality: "Auto" };
+      };
+
+      const hlsGroups: Record<
+        string,
+        {
+          base: string;
+          streams: { url: string; quality: string; headers?: any }[];
+          subtitles?: SubtitleStream[];
+          audio?: string;
+          flag?: string;
+        }
+      > = {};
+
+      const nonHlsMirrors: MirrorStream[] = [];
+
+      mirrors.forEach((m) => {
+        if (m.type !== "hls") {
+          nonHlsMirrors.push(m);
+          return;
+        }
+
+        const { base, quality } = parseMirrorSource(m.source || "");
+        let cleanQual = quality;
+        if (quality === "Auto" && m.quality) {
+          cleanQual = m.quality;
+        }
+
+        let group = hlsGroups[base];
+        if (!group) {
+          group = {
+            base,
+            streams: [],
+            subtitles: m.subtitles,
+            audio: (m as any).audio,
+            flag: (m as any).flag,
+          };
+          hlsGroups[base] = group;
+        }
+        group.streams.push({
+          url: m.url,
+          quality: cleanQual,
+          headers: m.headers,
+        });
+      });
+
+      const consolidatedMirrors: MirrorStream[] = [...nonHlsMirrors];
+
+      for (const [base, group] of Object.entries(hlsGroups)) {
+        if (group.streams.length === 1) {
+          const s = group.streams[0];
+          if (s) {
+            consolidatedMirrors.push({
+              url: s.url,
+              source: base,
+              quality: s.quality,
+              type: "hls",
+              headers: s.headers,
+              subtitles: group.subtitles,
+              audio: group.audio,
+              flag: group.flag,
+            } as any);
+          }
+        } else {
+          // Sort streams by quality height descending
+          group.streams.sort((a, b) => {
+            const heightA = parseInt(a.quality.replace(/\D/g, ""), 10) || 0;
+            const heightB = parseInt(b.quality.replace(/\D/g, ""), 10) || 0;
+            return heightB - heightA;
+          });
+
+          const urls: string[] = [];
+          const qualities: number[] = [];
+
+          group.streams.forEach((s) => {
+            let height = parseInt(s.quality.replace(/\D/g, ""), 10);
+            if (isNaN(height) || !height) {
+              height = 1080;
+            }
+            // Bake headers into the url parameters so they persist through proxy
+            let finalUrl = s.url;
+            if (s.headers) {
+              try {
+                const urlObj = new URL(finalUrl);
+                urlObj.searchParams.set("headers", JSON.stringify(s.headers));
+                finalUrl = urlObj.href;
+              } catch {}
+            }
+            urls.push(encodeURIComponent(finalUrl));
+            qualities.push(height);
+          });
+
+          consolidatedMirrors.push({
+            url: `/api/videasy/master.m3u8?urls=${urls.join(",")}&qualities=${qualities.join(",")}`,
+            source: base,
+            quality: "Auto",
+            type: "hls",
+            subtitles: group.subtitles,
+            audio: group.audio,
+            flag: group.flag,
+          } as any);
+        }
+      }
+
+      mirrors.length = 0;
+      mirrors.push(...consolidatedMirrors);
     } catch (e: any) {
       console.error(`[FilmU Scraper] Unified scraping failed:`, e.message);
     }
