@@ -74,7 +74,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     } else if (lower.includes("1shows.app")) {
       referer = "https://embed.filmu.in/";
       origin = "https://embed.filmu.in";
-    } else if (lower.includes("dzink418hun.com")) {
+    } else if (
+      lower.includes("dzink418hun.com") &&
+      lower.includes("/stream2/")
+    ) {
       referer = "https://embed.filmu.in/";
       origin = isManifest ? "https://embed.filmu.in" : "null";
     } else if (
