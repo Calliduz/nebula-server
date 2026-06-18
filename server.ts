@@ -405,12 +405,16 @@ export function shouldSkipRateLimit(req: express.Request): boolean {
     if (origin === o) return true;
     if (origin.startsWith(o)) {
       const nextChar = origin.charAt(o.length);
-      return nextChar === "/" || nextChar === "?" || nextChar === "#" || nextChar === "";
+      return (
+        nextChar === "/" ||
+        nextChar === "?" ||
+        nextChar === "#" ||
+        nextChar === ""
+      );
     }
     return false;
   });
 }
-
 
 // 3. Rate Limiting: Prevent Brute-force and Scraping of your own API
 const limiter = rateLimit({
@@ -1927,7 +1931,12 @@ app.get("/api/proxy/stream", async (req, res) => {
       targetUrl.includes("vidlink.pro");
     let upstream: any;
     if (isVidLink) {
-      upstream = await fetchVidLinkRaw(targetUrl, passHeaders, 0, controller.signal);
+      upstream = await fetchVidLinkRaw(
+        targetUrl,
+        passHeaders,
+        0,
+        controller.signal,
+      );
     } else {
       const streamHeaders = { ...cdnHeaders(targetUrl, true), ...passHeaders };
       // Try GotScraping first (High-Speed & Reliable)

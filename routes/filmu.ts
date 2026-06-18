@@ -82,7 +82,8 @@ export function createFilmuRouter(): Router {
         cachedRecord.mirrors.length > 0
       ) {
         const filmuMirrors = (cachedRecord.mirrors as any[]).filter(
-          (m: any) => typeof m.source === "string" && m.source.startsWith("FilmU"),
+          (m: any) =>
+            typeof m.source === "string" && m.source.startsWith("FilmU"),
         );
 
         if (

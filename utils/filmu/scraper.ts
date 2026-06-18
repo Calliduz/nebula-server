@@ -416,7 +416,9 @@ export class FilmuScraper {
 
       // Group and consolidate same-server different-quality HLS streams for FilmU
       const parseMirrorSource = (name: string) => {
-        const match = name.match(/^(.*?)\s*-\s*(\d+(?:p)?|Auto|Original)\s*\)?$/i);
+        const match = name.match(
+          /^(.*?)\s*-\s*(\d+(?:p)?|Auto|Original)\s*\)?$/i,
+        );
         if (match) {
           let base = (match[1] || "").trim();
           if (name.includes("(") && !base.endsWith(")")) {
