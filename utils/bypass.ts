@@ -84,6 +84,7 @@ export async function fetchWithGotScraping(
   proxy?: string,
   method: string = "get",
   body?: any,
+  signal?: AbortSignal,
 ) {
   const origin = new URL(url).origin;
   const options: any = {
@@ -106,6 +107,7 @@ export async function fetchWithGotScraping(
     retry: { limit: 0 },
     timeout: { request: 45000 },
     http2: true,
+    signal,
   };
 
   if (body)
@@ -122,6 +124,9 @@ export async function fetchWithGotScraping(
       finalUrl: response.url,
     };
   } catch (err: any) {
+    if (err.name === "AbortError") {
+      throw err;
+    }
     if (err.response) {
       return {
         statusCode: err.response.statusCode,

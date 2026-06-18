@@ -246,6 +246,7 @@ function fetchVidLinkRaw(
   rawUrl: string,
   customHeaders: any = {},
   redirectCount = 0,
+  signal?: AbortSignal,
 ): Promise<{
   statusCode: number;
   headers: any;
@@ -253,6 +254,10 @@ function fetchVidLinkRaw(
   finalUrl: string;
 }> {
   if (redirectCount > 5) return Promise.reject(new Error("Too many redirects"));
+
+  if (signal?.aborted) {
+    return Promise.reject(new Error("fetchVidLinkRaw: Request aborted"));
+  }
 
   return new Promise((resolve, reject) => {
     const qIdx = rawUrl.indexOf("?");
@@ -300,7 +305,7 @@ function fetchVidLinkRaw(
             ? location
             : new URL(location, rawUrl).href;
           return resolve(
-            fetchVidLinkRaw(nextUrl, customHeaders, redirectCount + 1),
+            fetchVidLinkRaw(nextUrl, customHeaders, redirectCount + 1, signal),
           );
         }
       }
@@ -316,6 +321,17 @@ function fetchVidLinkRaw(
         }),
       );
     });
+
+    if (signal) {
+      const onAbort = () => {
+        req.destroy();
+        reject(new Error("fetchVidLinkRaw: Request aborted"));
+      };
+      signal.addEventListener("abort", onAbort);
+      req.on("close", () => {
+        signal.removeEventListener("abort", onAbort);
+      });
+    }
 
     req.setTimeout(30000, () => {
       req.destroy();
@@ -1896,13 +1912,22 @@ app.get("/api/proxy/stream", async (req, res) => {
   const passHeaders: any = {};
   if (req.headers.range) passHeaders.range = req.headers.range;
 
+  const controller = new AbortController();
+  const onReqClose = () => {
+    console.log(
+      `[PROXY/stream] Client disconnected. Aborted upstream fetch: ${sanitizeUrl(targetUrl)}`,
+    );
+    controller.abort();
+  };
+  req.on("close", onReqClose);
+
   try {
     const isVidLink =
       targetUrl.includes("storm.vodvidl.site") ||
       targetUrl.includes("vidlink.pro");
     let upstream: any;
     if (isVidLink) {
-      upstream = await fetchVidLinkRaw(targetUrl, passHeaders);
+      upstream = await fetchVidLinkRaw(targetUrl, passHeaders, 0, controller.signal);
     } else {
       const streamHeaders = { ...cdnHeaders(targetUrl, true), ...passHeaders };
       // Try GotScraping first (High-Speed & Reliable)
@@ -1910,6 +1935,9 @@ app.get("/api/proxy/stream", async (req, res) => {
         targetUrl,
         streamHeaders,
         streamProxy,
+        "get",
+        undefined,
+        controller.signal,
       );
 
       if (upstream.statusCode >= 400 && upstream.statusCode !== 404) {
@@ -2092,6 +2120,10 @@ app.get("/api/proxy/stream", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     return res.send(proxified);
   } catch (e: any) {
+    if (e.name === "AbortError" || e.message?.includes("aborted")) {
+      console.log(`[PROXY/stream] Request aborted: ${sanitizeUrl(targetUrl)}`);
+      return;
+    }
     const status = e?.response?.statusCode ?? "no-response";
     const body = String(e?.response?.body ?? "").substring(0, 200);
     console.error(
@@ -2101,6 +2133,8 @@ app.get("/api/proxy/stream", async (req, res) => {
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(502).send("Proxy upstream error");
+  } finally {
+    req.off("close", onReqClose);
   }
 });
 

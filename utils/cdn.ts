@@ -62,6 +62,22 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
 
     // Final overrides for specific providers that are extremely sensitive to outer Referer
     if (
+      lower.includes("megaplay.buzz") ||
+      lower.includes("anime2.filmu.in") ||
+      lower.includes("hianime.filmu.in") ||
+      lower.includes("rive.filmu.in") ||
+      lower.includes("streamzone1.site") ||
+      lower.includes("mewstream.buzz")
+    ) {
+      referer = "https://megaplay.buzz/";
+      origin = "https://megaplay.buzz";
+    } else if (lower.includes("1shows.app")) {
+      referer = "https://embed.filmu.in/";
+      origin = "https://embed.filmu.in";
+    } else if (lower.includes("dzink418hun.com")) {
+      referer = "https://embed.filmu.in/";
+      origin = isManifest ? "https://embed.filmu.in" : "null";
+    } else if (
       lower.includes("ironwallnet.net") ||
       lower.includes("digitalsun.app") ||
       lower.includes("itsdeskmate.com") ||
@@ -104,16 +120,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
-    } else if (
-      lower.includes("megaplay.buzz") ||
-      lower.includes("anime2.filmu.in") ||
-      lower.includes("hianime.filmu.in") ||
-      lower.includes("rive.filmu.in") ||
-      lower.includes("streamzone1.site") ||
-      lower.includes("mewstream.buzz")
-    ) {
-      referer = "https://megaplay.buzz/";
-      origin = "https://megaplay.buzz";
     }
   }
 

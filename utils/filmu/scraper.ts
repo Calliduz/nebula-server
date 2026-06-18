@@ -157,7 +157,7 @@ export class FilmuScraper {
 
               return sources.map((s: any) => ({
                 url: s.workerProxyUrl || s.url,
-                source: "FilmU-Vortex",
+                source: s.name ? `FilmU-Vortex (${s.name})` : "FilmU-Vortex",
                 quality: s.quality || "1080p",
                 type: s.type === "m3u8" ? "hls" : "mp4",
                 headers: s.headers || {},
@@ -209,7 +209,7 @@ export class FilmuScraper {
                 : "";
               return {
                 url: playUrl,
-                source: "FilmU-Zenith",
+                source: s.name ? `FilmU-Zenith (${s.name})` : "FilmU-Zenith",
                 quality: s.quality || "Auto",
                 type: "hls",
                 subtitles,
