@@ -321,10 +321,10 @@ async function fetchProviderStreams(
   const res = await fetch(targetUrl, {
     method: "GET",
     headers: {
-      "accept": "*/*",
+      accept: "*/*",
       "accept-language": "en-US,en;q=0.5",
-      "origin": "https://player.videasy.to",
-      "referer": "https://player.videasy.to/",
+      origin: "https://player.videasy.to",
+      referer: "https://player.videasy.to/",
       "sec-ch-ua": '"Brave";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
       "sec-ch-ua-mobile": "?0",
       "sec-ch-ua-platform": '"Windows"',
@@ -332,7 +332,8 @@ async function fetchProviderStreams(
       "sec-fetch-mode": "cors",
       "sec-fetch-site": "same-site",
       "sec-gpc": "1",
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
     },
     signal: AbortSignal.timeout(45000), // Extended to 45s for slow background fetches
   });
