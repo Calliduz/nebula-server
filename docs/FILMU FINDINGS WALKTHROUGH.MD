@@ -110,5 +110,5 @@ Zenith proxies requests to `box.filmu.in` through the embed proxy.
 
 Validation was performed via Node.js scripts directly in the `/scratch` directory:
 
-1.  **Direct API Requests:** [test_filmu_api.ts](file:///c:/Users/chuchi/Desktop/Repositories/nebula/nebula-server/scratch/test_filmu_api.ts) was executed to fetch the data.
+1.  **Direct API Requests:** [test_filmu_api.ts](./scratch/test_filmu_api.ts) was executed to fetch the data.
 2.  **Playability Assertions:** For each successful stream output, a partial content fetch was performed to confirm the playlist structure (`#EXTM3U` and `#EXT-X-STREAM-INF`) loads properly without returning 403 or 502 errors.

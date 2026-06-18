@@ -104,6 +104,16 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
+    } else if (
+      lower.includes("megaplay.buzz") ||
+      lower.includes("anime2.filmu.in") ||
+      lower.includes("hianime.filmu.in") ||
+      lower.includes("rive.filmu.in") ||
+      lower.includes("streamzone1.site") ||
+      lower.includes("mewstream.buzz")
+    ) {
+      referer = "https://megaplay.buzz/";
+      origin = "https://megaplay.buzz";
     }
   }
 

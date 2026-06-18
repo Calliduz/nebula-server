@@ -36,6 +36,7 @@ import {
   type VidVaultDownload,
 } from "./utils/vidvault.js";
 import { createSubtitleRouter } from "./routes/subtitles.js";
+import { createFilmuRouter } from "./routes/filmu.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
 import jschardet from "jschardet";
@@ -54,6 +55,7 @@ import {
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 import { VidLinkScraper } from "./utils/vidlink.js";
+import { FilmuScraper } from "./utils/filmu/index.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   HttpCookieAgent,
@@ -125,69 +127,71 @@ let cacheHits = 0;
 let cacheMisses = 0;
 
 // Pruning logic to prevent memory leaks in proxyCache
-setInterval(
-  () => {
-    const now = Date.now();
-    let pruned = 0;
-    for (const [key, val] of proxyCache.entries()) {
-      if (val.expires < now) {
-        proxyCache.delete(key);
-        pruned++;
+if (process.env.VITEST !== "true") {
+  setInterval(
+    () => {
+      const now = Date.now();
+      let pruned = 0;
+      for (const [key, val] of proxyCache.entries()) {
+        if (val.expires < now) {
+          proxyCache.delete(key);
+          pruned++;
+        }
       }
-    }
-    if (pruned > 0)
+      if (pruned > 0)
+        console.log(
+          `[CACHE] Pruned ${pruned} expired entries from proxyCache. Size: ${proxyCache.size}`,
+        );
+    },
+    5 * 60 * 1000,
+  ); // Every 5 minutes
+
+  // Memory Monitor & DB Heartbeat
+  setInterval(
+    async () => {
+      const used = process.memoryUsage();
+      const hitRate =
+        cacheHits + cacheMisses > 0
+          ? ((cacheHits / (cacheHits + cacheMisses)) * 100).toFixed(1)
+          : 0;
+
+      // DB Heartbeat to prevent Atlas idle timeout (Atlas drops idle TCP after 30 mins)
+      let dbStatus = "OFFLINE";
+      if (mongoose.connection.readyState === 1) {
+        try {
+          await mongoose.connection.db?.admin().ping();
+          dbStatus = "ONLINE";
+        } catch (e) {
+          dbStatus = "PING_FAIL";
+        }
+      } else if (mongoose.connection.readyState === 2) {
+        dbStatus = "CONNECTING";
+      }
+
       console.log(
-        `[CACHE] Pruned ${pruned} expired entries from proxyCache. Size: ${proxyCache.size}`,
+        `[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | DB: ${dbStatus} | Cache: ${proxyCache.size}/${MAX_CACHE_ENTRIES} | HitRate: ${hitRate}%`,
       );
-  },
-  5 * 60 * 1000,
-); // Every 5 minutes
-
-// Memory Monitor & DB Heartbeat
-setInterval(
-  async () => {
-    const used = process.memoryUsage();
-    const hitRate =
-      cacheHits + cacheMisses > 0
-        ? ((cacheHits / (cacheHits + cacheMisses)) * 100).toFixed(1)
-        : 0;
-
-    // DB Heartbeat to prevent Atlas idle timeout (Atlas drops idle TCP after 30 mins)
-    let dbStatus = "OFFLINE";
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await mongoose.connection.db?.admin().ping();
-        dbStatus = "ONLINE";
-      } catch (e) {
-        dbStatus = "PING_FAIL";
+      // Reset counters periodically to see current performance
+      if (cacheHits + cacheMisses > 1000) {
+        cacheHits = 0;
+        cacheMisses = 0;
       }
-    } else if (mongoose.connection.readyState === 2) {
-      dbStatus = "CONNECTING";
-    }
+    },
+    5 * 60 * 1000,
+  ); // Every 5 minutes
 
-    console.log(
-      `[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | DB: ${dbStatus} | Cache: ${proxyCache.size}/${MAX_CACHE_ENTRIES} | HitRate: ${hitRate}%`,
-    );
-    // Reset counters periodically to see current performance
-    if (cacheHits + cacheMisses > 1000) {
-      cacheHits = 0;
-      cacheMisses = 0;
-    }
-  },
-  5 * 60 * 1000,
-); // Every 5 minutes
-
-// Warm up got-scraping to avoid delay on first request
-setTimeout(async () => {
-  try {
-    console.log("[GOT] Warming up browser fingerprints...");
-    await gotScraping.get("https://vidlink.pro", {
-      timeout: { request: 5000 },
-      retry: { limit: 0 },
-    });
-    console.log("[GOT] Warm-up complete.");
-  } catch {}
-}, 5000);
+  // Warm up got-scraping to avoid delay on first request
+  setTimeout(async () => {
+    try {
+      console.log("[GOT] Warming up browser fingerprints...");
+      await gotScraping.get("https://vidlink.pro", {
+        timeout: { request: 5000 },
+        retry: { limit: 0 },
+      });
+      console.log("[GOT] Warm-up complete.");
+    } catch {}
+  }, 5000);
+}
 
 function sanitizeUrl(url: string | undefined): string {
   if (!url) return "";
@@ -195,10 +199,9 @@ function sanitizeUrl(url: string | undefined): string {
     const parsed = new URL(url);
     return parsed.origin + parsed.pathname;
   } catch {
-    return url.split("?")[0];
+    return url.split("?")[0] ?? "";
   }
 }
-
 
 /**
  * Fetches a VidLink/Storm URL using raw Node.js https.request.
@@ -378,6 +381,21 @@ app.use(
   }),
 );
 
+// ── Request Signing System ──────────────────────────────────────────────────
+export function shouldSkipRateLimit(req: express.Request): boolean {
+  const origin = req.get("origin") || req.get("referer");
+  if (!origin) return false;
+  return allowedOrigins.some((o) => {
+    if (origin === o) return true;
+    if (origin.startsWith(o)) {
+      const nextChar = origin.charAt(o.length);
+      return nextChar === "/" || nextChar === "?" || nextChar === "#" || nextChar === "";
+    }
+    return false;
+  });
+}
+
+
 // 3. Rate Limiting: Prevent Brute-force and Scraping of your own API
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -388,10 +406,8 @@ const limiter = rateLimit({
     error: "Too many requests from this IP, please try again in 15 minutes.",
   },
   skip: (req) => {
-    const origin = req.get("origin") || req.get("referer");
-    const isNebula = origin && allowedOrigins.some((o) => origin.startsWith(o));
     return (
-      isNebula ||
+      shouldSkipRateLimit(req) ||
       req.path.startsWith("/health") ||
       req.path.startsWith("/api/health")
     );
@@ -533,7 +549,9 @@ const connectDB = async (retryCount = 5) => {
   }
 };
 
-connectDB();
+if (process.env.VITEST !== "true") {
+  connectDB();
+}
 
 // For coalescing concurrent stream scrape requests
 interface InFlightStreamEntry {
@@ -1300,6 +1318,30 @@ app.get("/api/stream", async (req, res) => {
           }
         }
 
+        // ── Phase C: FilmU Provider Fallback ─────────────────────────────
+        if (mirrors.length === 0 && process.env.FILMU_ENABLED === "true") {
+          console.log(`[STREAM] Phase C: Checking FilmU providers...`);
+          try {
+            const filmuMirrors = await FilmuScraper.getStream({
+              tmdbId: tmdbId.toString(),
+              kind,
+              season,
+              episode,
+              title,
+              signal,
+              proxyUrl: getRandomProxy(),
+            });
+            if (filmuMirrors && filmuMirrors.length > 0) {
+              console.log(
+                `[STREAM] FilmU HIT ✔ (Found ${filmuMirrors.length} mirrors)`,
+              );
+              mirrors.push(...filmuMirrors);
+            }
+          } catch (e: any) {
+            console.error(`[STREAM] FilmU failed:`, e.message);
+          }
+        }
+
         if (mirrors.length === 0) {
           // Record in DeadPool
           try {
@@ -1650,6 +1692,9 @@ app.get("/api/tmdb-proxy", async (req, res) => {
 // Subtitle routes (aggregation + proxy) → routes/subtitles.ts
 app.use(createSubtitleRouter(fetchVidLinkRaw));
 
+// FilmU scraper route → routes/filmu.ts  (detach by removing this line + the import above)
+app.use(createFilmuRouter());
+
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {
   const tmdbId = req.query.tmdbId as string;
@@ -1834,9 +1879,7 @@ app.get("/api/proxy/stream", async (req, res) => {
   const cacheKey = targetUrl;
   const cached = getProxyCache(cacheKey);
   if (cached) {
-    console.log(
-      `[PROXY/stream] ⚡ Cache Hit: ${sanitizeUrl(targetUrl)}`,
-    );
+    console.log(`[PROXY/stream] ⚡ Cache Hit: ${sanitizeUrl(targetUrl)}`);
     res.setHeader(
       "Content-Type",
       cached.headers["content-type"] || "application/vnd.apple.mpegurl",
@@ -1985,9 +2028,7 @@ app.get("/api/proxy/stream", async (req, res) => {
       return `${currentHost}${endpoint}?url=${encodedUrl}${proxyParam}`;
     };
 
-    console.log(
-      `[PROXY] Rewriting manifest: ${sanitizeUrl(actualTargetUrl)}`,
-    );
+    console.log(`[PROXY] Rewriting manifest: ${sanitizeUrl(actualTargetUrl)}`);
 
     let rewrittenCount = 0;
 
@@ -3474,12 +3515,15 @@ app.get("/api/vidlink", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
-const server = app.listen(PORT, () => {
-  console.log(`Nebula Backend Array active on http://localhost:${PORT}`);
-  console.log(
-    `Modes: Fanart [${FANART_API_KEY === "your_fanart_api_key_here" ? "DISABLED" : "ACTIVE"}], Scraper [ACTIVE]`,
-  );
-});
+let server: any = null;
+if (process.env.VITEST !== "true") {
+  server = app.listen(PORT, () => {
+    console.log(`Nebula Backend Array active on http://localhost:${PORT}`);
+    console.log(
+      `Modes: Fanart [${FANART_API_KEY === "your_fanart_api_key_here" ? "DISABLED" : "ACTIVE"}], Scraper [ACTIVE]`,
+    );
+  });
+}
 
 // ── Graceful Shutdown ────────────────────────────────────────────────────────
 // systemd / pm2 sends SIGTERM before stopping the process on Oracle Ubuntu.
@@ -3502,10 +3546,14 @@ async function handleGracefulShutdown(signal: string) {
   }
 
   // 3. Close Express server and drain connections
-  server.close(() => {
-    console.log("[SHUTDOWN] All connections closed. Exiting cleanly.");
+  if (server) {
+    server.close(() => {
+      console.log("[SHUTDOWN] All connections closed. Exiting cleanly.");
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
+  }
 
   // Force-exit after 10s if connections or sockets hang
   setTimeout(() => {

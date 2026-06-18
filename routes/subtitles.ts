@@ -54,6 +54,13 @@ export const SUBTITLE_ALLOWLIST = [
   "api.videasy.net",
   "cdn.videasy.net",
   "sub.videasy.net",
+  // FilmU subtitle domains
+  "filmu.in",
+  "anime2.filmu.in",
+  "hianime.filmu.in",
+  "rive.filmu.in",
+  "box.filmu.in",
+  "embed.filmu.in",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -63,8 +70,9 @@ function sourcePriority(source: string): number {
   if (source === "VidRock") return 2;
   if (source === "Videasy") return 3;
   if (source === "VidLink") return 4;
-  if (source === "OpenSubtitles") return 5;
-  return 6;
+  if (source && source.startsWith("FilmU")) return 5;
+  if (source === "OpenSubtitles") return 6;
+  return 7;
 }
 
 function isEnglish(s: any): boolean {
@@ -223,10 +231,51 @@ export function createSubtitleRouter(
             return [];
           }
         })(),
+
+        // F — FilmU subtitles from StreamCache
+        (async () => {
+          try {
+            const filmuCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!filmuCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            filmuCache.mirrors
+              .filter((m: any) => m.source && m.source.startsWith("FilmU"))
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `filmu-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: m.source,
+                    });
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] FilmU cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
       ]);
 
-      const [openSubsResult, vidVaultResult, videasyResult, vidLinkResult] =
-        results;
+      const [
+        openSubsResult,
+        vidVaultResult,
+        videasyResult,
+        vidLinkResult,
+        filmuResult,
+      ] = results;
 
       const openSubsTrack =
         openSubsResult.status === "fulfilled" ? openSubsResult.value : [];
@@ -236,9 +285,13 @@ export function createSubtitleRouter(
         videasyResult.status === "fulfilled" ? videasyResult.value : [];
       const vidLinkTrack =
         vidLinkResult.status === "fulfilled" ? vidLinkResult.value : [];
+      const filmuTrack =
+        filmuResult && filmuResult.status === "fulfilled"
+          ? filmuResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -253,8 +306,10 @@ export function createSubtitleRouter(
       // Merge in priority order (English VidLink/Videasy before non-English)
       const allTracksOrdered = [
         ...dedup(vidVaultTrack),
+        ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
+        ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
         ...dedup(openSubsTrack),
