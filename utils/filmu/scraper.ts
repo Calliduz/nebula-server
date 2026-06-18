@@ -432,9 +432,9 @@ export class FilmuScraper {
         {
           base: string;
           streams: { url: string; quality: string; headers?: any }[];
-          subtitles?: SubtitleStream[];
-          audio?: string;
-          flag?: string;
+          subtitles?: SubtitleStream[] | undefined;
+          audio?: string | undefined;
+          flag?: string | undefined;
         }
       > = {};
 
@@ -452,18 +452,16 @@ export class FilmuScraper {
           cleanQual = m.quality;
         }
 
-        let group = hlsGroups[base];
-        if (!group) {
-          group = {
+        if (!hlsGroups[base]) {
+          hlsGroups[base] = {
             base,
-            streams: [],
+            streams: [] as { url: string; quality: string; headers?: any }[],
             subtitles: m.subtitles,
             audio: (m as any).audio,
             flag: (m as any).flag,
           };
-          hlsGroups[base] = group;
         }
-        group.streams.push({
+        hlsGroups[base]!.streams.push({
           url: m.url,
           quality: cleanQual,
           headers: m.headers,
