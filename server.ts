@@ -687,16 +687,27 @@ app.get("/api/download/stream-file", async (req, res) => {
     );
     res.setHeader("Content-Type", "application/octet-stream");
 
+    const lowerUrl = targetUrl.toLowerCase();
+    const headers: any = {
+      "User-Agent": VIDVAULT_UA,
+      Referer: "https://vidvault.ru/",
+      Origin: "https://vidvault.ru",
+      Accept: "*/*",
+    };
+
+    if (
+      lowerUrl.includes("hakunaymatata.com") ||
+      lowerUrl.includes("hakunaymatata")
+    ) {
+      headers.Referer = "https://vidrock.ru/";
+      headers.Origin = "https://vidrock.ru";
+    }
+
     const response = await axios({
       method: "get",
       url: targetUrl,
       responseType: "stream",
-      headers: {
-        "User-Agent": VIDVAULT_UA,
-        Referer: "https://vidvault.ru/",
-        Origin: "https://vidvault.ru",
-        Accept: "*/*",
-      },
+      headers,
     });
 
     if (response.headers["content-length"]) {
