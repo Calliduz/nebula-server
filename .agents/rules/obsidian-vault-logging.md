@@ -11,10 +11,10 @@ These rules apply across every project and workspace, not just one. The vault is
 The vault stops being a journal and becomes a brain when notes split into three types that link to each other instead of one flat log:
 
 - **DevLog** (time axis) — what happened, and when. One entry per session/feature/fix.
-- **Component notes** (entity axis) — what a file/module *is* and what it relates to. Updated only when the thing itself changes, not every time it's touched.
+- **Component notes** (entity axis) — what a file/module _is_ and what it relates to. Updated only when the thing itself changes, not every time it's touched.
 - **Architecture notes** (system axis) — how components fit together. Updated rarely, only on real structural decisions.
 
-DevLog entries link *into* component notes via `[[WikiLinks]]`. Component notes link to each other (depends-on / used-by) and up to architecture notes. Obsidian's native **"Linked mentions"** backlink panel does the rest automatically — never manually duplicate "what references this" inside a note.
+DevLog entries link _into_ component notes via `[[WikiLinks]]`. Component notes link to each other (depends-on / used-by) and up to architecture notes. Obsidian's native **"Linked mentions"** backlink panel does the rest automatically — never manually duplicate "what references this" inside a note.
 
 ---
 
@@ -77,7 +77,7 @@ This is what makes the vault interconnected instead of a pile of phantom links.
 
 **Lazy creation:** The first time a qualifying file is mentioned in a DevLog entry or referenced in code, create a stub note for it if one doesn't exist yet. Flesh it out over time.
 
-**Update policy:** Only update a component note's `Depends On` / `Used By` / `API Surface` sections when that relationship *actually changes*. Do **not** maintain a changelog inside the component note — that's what the DevLog + automatic backlinks are for.
+**Update policy:** Only update a component note's `Depends On` / `Used By` / `API Surface` sections when that relationship _actually changes_. Do **not** maintain a changelog inside the component note — that's what the DevLog + automatic backlinks are for.
 
 ### Template — `<ProjectName> - <ComponentName>.md`
 
@@ -85,7 +85,7 @@ This is what makes the vault interconnected instead of a pile of phantom links.
 ---
 type: component
 project: <ProjectName>
-repo: <repo-name>              # omit this line entirely for single-repo projects
+repo: <repo-name> # omit this line entirely for single-repo projects
 path: <relative/path/to/file>
 status: stable
 tags: [<project-tag>, component]
@@ -94,22 +94,27 @@ tags: [<project-tag>, component]
 # <ProjectName> - <ComponentName>
 
 ## Purpose
+
 What this thing does and why it exists.
 
 ## Depends On
+
 - [[<ProjectName> - OtherComponent]]
 
 ## Used By
+
 - [[<ProjectName> - AnotherComponent]]
 
 ## API Surface
+
 - Relevant endpoints, props, or exported functions
 
 ## Notes
+
 Anything non-obvious — link to an Architecture note if a decision explains it.
 ```
 
-*(No "Recent Changes" section needed — open this note in Obsidian and check "Linked mentions" at the bottom to see every DevLog entry that touched it, automatically.)*
+_(No "Recent Changes" section needed — open this note in Obsidian and check "Linked mentions" at the bottom to see every DevLog entry that touched it, automatically.)_
 
 ---
 
@@ -128,7 +133,7 @@ Name the file `<YYYY-MM-DD> - <short-title>.md`. Every file or component mention
 date: <YYYY-MM-DD>
 type: devlog
 project: <ProjectName>
-repo: <repo-name>              # omit for single-repo projects
+repo: <repo-name> # omit for single-repo projects
 tags: [devlog, <project-tag>]
 components: ["<ProjectName> - ComponentA", "<ProjectName> - ComponentB"]
 ---
@@ -138,6 +143,7 @@ components: ["<ProjectName> - ComponentA", "<ProjectName> - ComponentB"]
 **Summary:** One or two sentences.
 
 **Files changed:**
+
 - <repo-name>: `path/to/file.js` → [[<ProjectName> - ComponentA]]
 
 **Dependencies added:** `package@^version` (if any)
@@ -174,6 +180,7 @@ If a request conflicts with something already documented in the vault (an Archit
 Triggered by Rule 0, step 5. Two different starting states need two different responses. Neither should happen silently — both touch a large amount of existing material at once, so both get proposed to the user before anything is created or moved, same exception class as Rule 0's project-name confirmation.
 
 ### Case A — Existing notes, wrong structure
+
 The project already has notes in the vault, but they predate this system: no `Components/` folder, an unstructured or single-file log, no project-name prefixing.
 
 1. Inventory what's there — list existing notes and classify each as Architecture-like, Log-like, Component-like, or Uncategorized.
@@ -182,6 +189,7 @@ The project already has notes in the vault, but they predate this system: no `Co
 4. Once `Architecture/`, `Components/`, and `Logs/` exist and are populated, the migration is done — don't re-propose it in future sessions for this project.
 
 ### Case B — Existing codebase, no notes at all
+
 The workspace has real, already-built code, but `Projects/<ProjectName>/` doesn't exist in the vault yet.
 
 1. Don't rely on lazy/incremental creation alone here — that leaves most of an already-built system undocumented indefinitely, since notes would only appear for files touched going forward.

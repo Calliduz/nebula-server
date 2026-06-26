@@ -37,6 +37,7 @@ import {
 } from "./utils/vidvault.js";
 import { createSubtitleRouter } from "./routes/subtitles.js";
 import { createFilmuRouter } from "./routes/filmu.js";
+import { createVidnestRouter } from "./routes/vidnest.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
 import jschardet from "jschardet";
@@ -56,6 +57,7 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 import { VidLinkScraper } from "./utils/vidlink.js";
 import { FilmuScraper } from "./utils/filmu/index.js";
+import { VidnestScraper } from "./utils/vidnest.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   HttpCookieAgent,
@@ -1373,6 +1375,29 @@ app.get("/api/stream", async (req, res) => {
           }
         }
 
+        // ── Phase D: Vidnest Provider Fallback ───────────────────────────
+        if (mirrors.length === 0 && process.env.VIDNEST_ENABLED === "true") {
+          console.log(`[STREAM] Phase D: Checking Vidnest providers...`);
+          try {
+            const vidnestMirrors = await VidnestScraper.getStream({
+              tmdbId: tmdbId.toString(),
+              kind,
+              season,
+              episode,
+              signal,
+              proxyUrl: getRandomProxy(),
+            });
+            if (vidnestMirrors && vidnestMirrors.length > 0) {
+              console.log(
+                `[STREAM] Vidnest HIT ✔ (Found ${vidnestMirrors.length} mirrors)`,
+              );
+              mirrors.push(...vidnestMirrors);
+            }
+          } catch (e: any) {
+            console.error(`[STREAM] Vidnest failed:`, e.message);
+          }
+        }
+
         if (mirrors.length === 0) {
           // Record in DeadPool
           try {
@@ -1725,6 +1750,9 @@ app.use(createSubtitleRouter(fetchVidLinkRaw));
 
 // FilmU scraper route → routes/filmu.ts  (detach by removing this line + the import above)
 app.use(createFilmuRouter());
+
+// Vidnest scraper route → routes/vidnest.ts (detach by removing this line + the import above)
+app.use(createVidnestRouter());
 
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {
