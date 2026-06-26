@@ -635,6 +635,8 @@ async function scanProvider(
   }
 }
 
+export const activeScans = new Set<string>();
+
 export async function fetchVideasySources(
   title: string,
   mediaType: "movie" | "tv",
@@ -647,6 +649,16 @@ export async function fetchVideasySources(
     console.log(`[VIDEASY] Scraper is temporarily disabled via env config.`);
     return {};
   }
+
+  const scanKey = `videasy-${tmdbId}-${mediaType}-${season}-${episode}`;
+  if (activeScans.has(scanKey)) {
+    console.log(
+      `[VIDEASY] Scan already in progress for ${tmdbId} S${season}E${episode}.`,
+    );
+    return {};
+  }
+
+  activeScans.add(scanKey);
 
   console.log(
     `[VIDEASY] Starting background-scanned parallel search for ${mediaType} ${tmdbId} S${season}E${episode}...`,
@@ -686,6 +698,46 @@ export async function fetchVideasySources(
   });
 
   const allFinished = Promise.all(scanPromises);
+
+  allFinished.finally(async () => {
+    activeScans.delete(scanKey);
+    try {
+      const cacheKey = `${tmdbId}-videasy`;
+      const existing = await StreamCache.findOne({
+        tmdbId: cacheKey,
+        type: mediaType,
+        season,
+        episode,
+      }).catch(() => null);
+
+      if (!existing) {
+        const cacheExpires = new Date();
+        cacheExpires.setHours(cacheExpires.getHours() + 24);
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+        await StreamCache.updateOne(
+          { tmdbId: cacheKey, type: mediaType, season, episode },
+          {
+            $set: {
+              mirrors: [],
+              subtitles: [],
+              streamExpiresAt: cacheExpires,
+              expiresAt,
+            },
+          },
+          { upsert: true },
+        );
+        console.log(
+          `[VIDEASY] Saved empty cache record (24h expiry) for ${tmdbId} S${season}E${episode}`,
+        );
+      }
+    } catch (err: any) {
+      console.error(
+        `[VIDEASY] Background cleanup / empty cache save failed:`,
+        err.message,
+      );
+    }
+  });
 
   // Block the HTTP response for at most 5 seconds, or until all finish (whichever is faster)
   await Promise.race([allFinished, raceTimeout]);

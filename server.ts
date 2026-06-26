@@ -3085,7 +3085,7 @@ async function getFanartMetadata(
 // @ts-ignore
 import { generateToken as generateVidrockToken } from "./utils/vidrock_token.js";
 // @ts-ignore
-import { fetchVideasySources } from "./utils/videasy.js";
+import { fetchVideasySources, activeScans } from "./utils/videasy.js";
 
 app.get("/api/vidrock", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
@@ -3345,6 +3345,9 @@ app.get("/api/videasy", async (req, res) => {
 
   try {
     const force = req.query.force === "1" || req.query.nocache === "1";
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    const currentHost =
+      process.env.API_URL || `${protocol}://${req.get("host")}`;
 
     // 1. Cache Check for Videasy
     const cachedRecord = force
@@ -3356,11 +3359,7 @@ app.get("/api/videasy", async (req, res) => {
           episode,
         }).catch(() => null);
 
-    if (
-      cachedRecord &&
-      cachedRecord.mirrors &&
-      cachedRecord.mirrors.length > 0
-    ) {
+    if (cachedRecord) {
       if (
         !cachedRecord.streamExpiresAt ||
         new Date() < cachedRecord.streamExpiresAt
@@ -3368,36 +3367,70 @@ app.get("/api/videasy", async (req, res) => {
         console.log(
           `[VIDEASY] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`,
         );
-        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-        const currentHost =
-          process.env.API_URL || `${protocol}://${req.get("host")}`;
 
         const responseData: Record<string, any> = {};
-        cachedRecord.mirrors.forEach((m: any) => {
+        if (cachedRecord.mirrors && Array.isArray(cachedRecord.mirrors)) {
+          cachedRecord.mirrors.forEach((m: any) => {
+            let url = m.url;
+            if (url.startsWith("/")) {
+              url = `${currentHost}${url}`;
+            }
+            responseData[m.source] = {
+              url: url,
+              type: m.type || "hls",
+              audio: m.audio || "",
+              flag: m.flag || "us",
+            };
+          });
+        }
+        return res.json(responseData);
+      }
+    }
+
+    // 2. Fetch from Videasy providers (checking active scans concurrency lock first)
+    const scanKey = `videasy-${tmdbId}-${type}-${season}-${episode}`;
+    let activeMirrors: Record<string, any> = {};
+
+    if (activeScans && activeScans.has(scanKey)) {
+      console.log(
+        `[VIDEASY] Concurrency Lock: Scan already in progress for ${tmdbId} S${season}E${episode}. Returning currently cached mirrors.`,
+      );
+      // Fetch currently cached record from database
+      const currentCache = await StreamCache.findOne({
+        tmdbId: `${tmdbId}-videasy`,
+        type,
+        season,
+        episode,
+      }).catch(() => null);
+
+      if (
+        currentCache &&
+        currentCache.mirrors &&
+        Array.isArray(currentCache.mirrors)
+      ) {
+        currentCache.mirrors.forEach((m: any) => {
           let url = m.url;
           if (url.startsWith("/")) {
             url = `${currentHost}${url}`;
           }
-          responseData[m.source] = {
-            url: url,
+          activeMirrors[m.source] = {
+            url,
             type: m.type || "hls",
             audio: m.audio || "",
             flag: m.flag || "us",
           };
         });
-        return res.json(responseData);
       }
+    } else {
+      activeMirrors = await fetchVideasySources(
+        title,
+        type,
+        releaseYear,
+        tmdbId,
+        season,
+        episode,
+      );
     }
-
-    // 2. Fetch from Videasy providers
-    const activeMirrors = await fetchVideasySources(
-      title,
-      type,
-      releaseYear,
-      tmdbId,
-      season,
-      episode,
-    );
 
     // Cache is updated incrementally per provider inside fetchVideasySources.
     // Clean up DeadPool if any mirrors were found during the 5s race
@@ -3410,9 +3443,6 @@ app.get("/api/videasy", async (req, res) => {
       }).catch(() => null);
     }
 
-    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-    const currentHost =
-      process.env.API_URL || `${protocol}://${req.get("host")}`;
     const responseData: Record<string, any> = {};
     Object.entries(activeMirrors).forEach(([key, val]: any) => {
       let url = val.url;
