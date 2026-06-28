@@ -67,7 +67,7 @@ export interface MirrorStream {
   source: string;
   quality?: string;
   headers?: Record<string, string> | undefined;
-  type?: "hls" | "mp4" | "torrent";
+  type?: "hls" | "mp4" | "torrent" | "embed";
   subtitles?: SubtitleStream[];
 }
 

@@ -38,6 +38,7 @@ import {
 import { createSubtitleRouter } from "./routes/subtitles.js";
 import { createFilmuRouter } from "./routes/filmu.js";
 import { createVidnestRouter } from "./routes/vidnest.js";
+import { createVidsrcRouter } from "./routes/vidsrc.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
 import jschardet from "jschardet";
@@ -58,6 +59,7 @@ const UA =
 import { VidLinkScraper } from "./utils/vidlink.js";
 import { FilmuScraper } from "./utils/filmu/index.js";
 import { VidnestScraper } from "./utils/vidnest.js";
+import { VidsrcScraper } from "./utils/vidsrc.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   HttpCookieAgent,
@@ -1398,6 +1400,29 @@ app.get("/api/stream", async (req, res) => {
           }
         }
 
+        // ── Phase E: Vidsrc Provider Fallback ────────────────────────────
+        if (mirrors.length === 0) {
+          console.log(`[STREAM] Phase E: Checking Vidsrc providers...`);
+          try {
+            const vidsrcMirrors = await VidsrcScraper.getStream({
+              tmdbId: tmdbId.toString(),
+              kind,
+              season,
+              episode,
+              signal,
+              proxyUrl: getRandomProxy(),
+            });
+            if (vidsrcMirrors && vidsrcMirrors.length > 0) {
+              console.log(
+                `[STREAM] Vidsrc HIT ✔ (Found ${vidsrcMirrors.length} mirrors)`,
+              );
+              mirrors.push(...vidsrcMirrors);
+            }
+          } catch (e: any) {
+            console.error(`[STREAM] Vidsrc failed:`, e.message);
+          }
+        }
+
         if (mirrors.length === 0) {
           // Record in DeadPool
           try {
@@ -1753,6 +1778,9 @@ app.use(createFilmuRouter());
 
 // Vidnest scraper route → routes/vidnest.ts (detach by removing this line + the import above)
 app.use(createVidnestRouter());
+
+// Vidsrc scraper route → routes/vidsrc.ts (detach by removing this line + the import above)
+app.use(createVidsrcRouter());
 
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {
