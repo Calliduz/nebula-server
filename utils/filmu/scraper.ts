@@ -174,57 +174,6 @@ export class FilmuScraper {
         );
       }
 
-      // ── Task B: Zenith Vaplayer ──
-      tasks.push(
-        (async () => {
-          try {
-            const res = await getZenithStreams(
-              "Vaplayer",
-              numericTmdbId,
-              title,
-              year,
-              kind,
-              season,
-              episode,
-              proxyUrl,
-              signal,
-            );
-            const sources = res?.sources || [];
-            const subtitles = Array.isArray(res?.subtitles)
-              ? res.subtitles.map((s: any) => ({
-                  url: s.url,
-                  lang: s.lang || "en",
-                  languageName: s.label || getLanguageName(s.lang || "en"),
-                  source: "FilmU-Zenith",
-                }))
-              : [];
-
-            return sources.map((s: any) => {
-              // Rewrite proxy host to bypass connection gateway 403
-              const playUrl = s.url
-                ? s.url.replace(
-                    "https://wormhole.filmu.in/proxy/",
-                    "https://box.filmu.in/proxy/",
-                  )
-                : "";
-              return {
-                url: playUrl,
-                source: s.name ? `FilmU-Zenith (${s.name})` : "FilmU-Zenith",
-                quality: s.quality || "Auto",
-                type: "hls",
-                subtitles,
-              };
-            });
-          } catch (err: any) {
-            console.warn(
-              `[FilmU Scraper] Zenith extraction failed:`,
-              err.message,
-            );
-            return [];
-          }
-        })(),
-      );
-
       // ── Task C: Aura VidRock ──
       tasks.push(
         (async () => {

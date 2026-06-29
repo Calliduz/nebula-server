@@ -124,6 +124,15 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
+    } else if (
+      lower.includes("onlinecoursecreator.site") ||
+      lower.includes("startupfundinglab.site") ||
+      lower.includes("digitalassetlaunchpad.site") ||
+      lower.includes("dataanalyticsacademy.site") ||
+      /\.site\/[a-z0-9]{9}\/(pl|playlist|content)/i.test(lower)
+    ) {
+      referer = "https://nextgencloudfabric.com/";
+      origin = "https://nextgencloudfabric.com";
     }
   }
 
