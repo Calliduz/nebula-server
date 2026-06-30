@@ -287,7 +287,11 @@ export function createSubtitleRouter(
             if (!vidnestCache?.mirrors?.length) return [];
             const subMap = new Map<string, any>();
             vidnestCache.mirrors
-              .filter((m: any) => typeof m.source === "string" && m.source.startsWith("Vidnest"))
+              .filter(
+                (m: any) =>
+                  typeof m.source === "string" &&
+                  m.source.startsWith("Vidnest"),
+              )
               .forEach((m: any) => {
                 m.subtitles?.forEach((s: any) => {
                   if (s?.url && !subMap.has(s.url)) {
@@ -323,7 +327,11 @@ export function createSubtitleRouter(
             if (!vaplayerCache?.mirrors?.length) return [];
             const subMap = new Map<string, any>();
             vaplayerCache.mirrors
-              .filter((m: any) => typeof m.source === "string" && m.source.startsWith("Vaplayer"))
+              .filter(
+                (m: any) =>
+                  typeof m.source === "string" &&
+                  m.source.startsWith("Vaplayer"),
+              )
               .forEach((m: any) => {
                 m.subtitles?.forEach((s: any) => {
                   if (s?.url && !subMap.has(s.url)) {

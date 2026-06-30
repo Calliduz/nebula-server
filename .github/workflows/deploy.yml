@@ -3,7 +3,7 @@ name: Deploy Nebula Server
 on:
   push:
     branches:
-      - master  # Trigger deploy on push to the master branch
+      - master # Trigger deploy on push to the master branch
 
 jobs:
   deploy:
@@ -19,45 +19,45 @@ jobs:
           port: 22
           script: |
             echo "Starting deployment..."
-            
+
             # 1. Dynamically locate the nebula-server directory in home directory
             TARGET_DIR=$(find $HOME -maxdepth 3 -type d -name "nebula-server" -print -quit 2>/dev/null)
-            
+
             if [ -z "$TARGET_DIR" ]; then
               echo "Error: Could not find nebula-server directory in $HOME"
               exit 1
             fi
-            
+
             echo "Found project directory at: $TARGET_DIR"
             cd "$TARGET_DIR"
-            
+
             # 2. Pull the latest code
             echo "Pulling latest code from git..."
             git pull origin master
-            
+
             # 3. Load Node.js environment variables (NVM support)
             echo "Loading Node environment..."
             export NVM_DIR="$HOME/.nvm"
             if [ -s "$NVM_DIR/nvm.sh" ]; then
               \. "$NVM_DIR/nvm.sh"
             fi
-            
+
             # Verify node & npm are available
             if ! command -v npm &> /dev/null; then
               echo "Error: npm is not installed or not in PATH"
               exit 1
             fi
-            
+
             echo "Using Node version: $(node -v)"
             echo "Using npm version: $(npm -v)"
-            
+
             # 4. Install dependencies and build
             echo "Installing dependencies..."
             npm ci --production=false # Ensure devDependencies (like typescript/esbuild) are installed to build
-            
+
             echo "Building application..."
             npm run build
-            
+
             # 5. Reload PM2
             echo "Reloading PM2 process..."
             if pm2 list | grep -q "nebula-server"; then
