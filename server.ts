@@ -1724,8 +1724,29 @@ app.get("/api/tmdb-proxy", async (req, res) => {
 
     const data = response.data;
 
-    // Default caching: 6 hours (matches frontend TTL concepts)
-    const ttl = 1000 * 60 * 60 * 6;
+    // Endpoint-aware TTL mapping (default 6h)
+    let ttl = 1000 * 60 * 60 * 6;
+    if (endpoint.startsWith("/trending/")) {
+      ttl = 1000 * 60 * 60 * 2; // 2 hours
+    } else if (endpoint === "/movie/popular" || endpoint === "/tv/popular") {
+      ttl = 1000 * 60 * 60 * 4; // 4 hours
+    } else if (endpoint.startsWith("/discover/")) {
+      ttl = 1000 * 60 * 60 * 6; // 6 hours
+    } else if (
+      endpoint.endsWith("/recommendations") ||
+      endpoint.endsWith("/similar")
+    ) {
+      ttl = 1000 * 60 * 60 * 4; // 4 hours
+    } else {
+      const parts = endpoint.split("/").filter(Boolean);
+      if (
+        parts.length === 2 &&
+        (parts[0] === "movie" || parts[0] === "tv") &&
+        !isNaN(Number(parts[1]))
+      ) {
+        ttl = 1000 * 60 * 60 * 24; // 24 hours
+      }
+    }
 
     // 3. Save to Cache
     await TmdbCache.findOneAndUpdate(
@@ -1737,6 +1758,7 @@ app.get("/api/tmdb-proxy", async (req, res) => {
       { upsert: true },
     ).catch(() => null);
 
+    res.setHeader("Cache-Control", `public, max-age=${Math.floor(ttl / 1000)}`);
     return res.json(data);
   } catch (err: any) {
     console.error(`[TMDB PROXY ERROR] For ${endpoint}: ${err.message}`);
