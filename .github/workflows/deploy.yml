@@ -3,7 +3,7 @@ name: Deploy Nebula Server
 on:
   push:
     branches:
-      - main  # Trigger deploy on push to the main branch
+      - master  # Trigger deploy on push to the master branch
 
 jobs:
   deploy:
@@ -33,7 +33,7 @@ jobs:
             
             # 2. Pull the latest code
             echo "Pulling latest code from git..."
-            git pull origin main
+            git pull origin master
             
             # 3. Load Node.js environment variables (NVM support)
             echo "Loading Node environment..."
