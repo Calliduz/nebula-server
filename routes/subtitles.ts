@@ -61,6 +61,11 @@ export const SUBTITLE_ALLOWLIST = [
   "rive.filmu.in",
   "box.filmu.in",
   "embed.filmu.in",
+  // Vidnest & Vaplayer subtitle CDN domains
+  "vidnest.fun",
+  "new.vidnest.fun",
+  "vaplayer.ru",
+  "streamdata.vaplayer.ru",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -69,10 +74,12 @@ function sourcePriority(source: string): number {
   if (source === "VidVault") return 1;
   if (source === "VidRock") return 2;
   if (source === "Videasy") return 3;
-  if (source === "VidLink") return 4;
-  if (source && source.startsWith("FilmU")) return 5;
-  if (source === "OpenSubtitles") return 6;
-  return 7;
+  if (source === "Vidnest") return 4;
+  if (source === "Vaplayer") return 5;
+  if (source === "VidLink") return 6;
+  if (source && source.startsWith("FilmU")) return 7;
+  if (source === "OpenSubtitles") return 8;
+  return 9;
 }
 
 function isEnglish(s: any): boolean {
@@ -267,6 +274,78 @@ export function createSubtitleRouter(
             return [];
           }
         })(),
+
+        // G — Vidnest subtitles from StreamCache
+        (async () => {
+          try {
+            const vidnestCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!vidnestCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            vidnestCache.mirrors
+              .filter((m: any) => typeof m.source === "string" && m.source.startsWith("Vidnest"))
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `vidnest-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: "Vidnest",
+                    });
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Vidnest cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
+
+        // H — Vaplayer subtitles from StreamCache
+        (async () => {
+          try {
+            const vaplayerCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!vaplayerCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            vaplayerCache.mirrors
+              .filter((m: any) => typeof m.source === "string" && m.source.startsWith("Vaplayer"))
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `vaplayer-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: "Vaplayer",
+                    });
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Vaplayer cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
       ]);
 
       const [
@@ -275,6 +354,8 @@ export function createSubtitleRouter(
         videasyResult,
         vidLinkResult,
         filmuResult,
+        vidnestResult,
+        vaplayerResult,
       ] = results;
 
       const openSubsTrack =
@@ -289,9 +370,17 @@ export function createSubtitleRouter(
         filmuResult && filmuResult.status === "fulfilled"
           ? filmuResult.value
           : [];
+      const vidnestTrack =
+        vidnestResult && vidnestResult.status === "fulfilled"
+          ? vidnestResult.value
+          : [];
+      const vaplayerTrack =
+        vaplayerResult && vaplayerResult.status === "fulfilled"
+          ? vaplayerResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -309,9 +398,13 @@ export function createSubtitleRouter(
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
+        ...dedup(vidnestTrack.filter(isEnglish)),
+        ...dedup(vaplayerTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vidnestTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vaplayerTrack.filter((s) => !isEnglish(s))),
         ...dedup(openSubsTrack),
       ];
 
