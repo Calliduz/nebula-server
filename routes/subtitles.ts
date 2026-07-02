@@ -37,6 +37,8 @@ export const SUBTITLE_ALLOWLIST = [
   "vidlink.pro",
   "megafiles.store",
   "storm.vodvidl.site",
+  "cacdn.hakunaymatata.com",
+  "hakunaymatata.com",
   "opensubtitles.org",
   "opensubtitles.com",
   "sub.webseries.vip",
@@ -487,7 +489,8 @@ export function createSubtitleRouter(
       if (
         url.includes("vidlink") ||
         url.includes("megafiles") ||
-        url.includes("storm.vodvidl.site")
+        url.includes("storm.vodvidl.site") ||
+        url.includes("cacdn.hakunaymatata.com")
       ) {
         referer = "https://vidlink.pro/";
         origin = "https://vidlink.pro";
@@ -495,7 +498,9 @@ export function createSubtitleRouter(
         url.includes("vdrk.site") ||
         url.includes("vidrock.ru") ||
         /stor+m\.site/.test(url) ||
-        url.includes("workers.dev")
+        url.includes("workers.dev") ||
+        (url.includes("hakunaymatata.com") &&
+          !url.includes("cacdn.hakunaymatata.com"))
       ) {
         referer = "https://vidrock.ru/";
         origin = "https://vidrock.ru";

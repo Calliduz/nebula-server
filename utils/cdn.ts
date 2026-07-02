@@ -110,8 +110,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("hellstorm.lol") ||
       lower.includes("hellstorm") ||
       lower.includes("1x2.space") ||
-      lower.includes("hakunaymatata.com") ||
-      lower.includes("hakunaymatata") ||
+      (lower.includes("hakunaymatata.com") &&
+        !lower.includes("cacdn.hakunaymatata.com")) ||
+      (lower.includes("hakunaymatata") &&
+        !lower.includes("cacdn.hakunaymatata.com")) ||
       lower.includes("workers.dev") ||
       lower.includes("tiktokcdn") ||
       lower.includes("byteoversea") ||
@@ -123,7 +125,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("storm.vodvidl.site") ||
       lower.includes("vidlink.pro") ||
       lower.includes("nightbreeze") ||
-      lower.includes("thunderleaf")
+      lower.includes("thunderleaf") ||
+      lower.includes("cacdn.hakunaymatata.com")
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";

@@ -698,7 +698,10 @@ app.get("/api/download/stream-file", async (req, res) => {
       Accept: "*/*",
     };
 
-    if (
+    if (lowerUrl.includes("cacdn.hakunaymatata.com")) {
+      headers.Referer = "https://vidlink.pro/";
+      headers.Origin = "https://vidlink.pro";
+    } else if (
       lowerUrl.includes("hakunaymatata.com") ||
       lowerUrl.includes("hakunaymatata")
     ) {
