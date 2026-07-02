@@ -143,19 +143,36 @@ export class VidLinkScraper {
       }
 
       // Add other qualities/formats if available
-      if (Array.isArray(data.stream.qualities)) {
-        data.stream.qualities.forEach((q: any) => {
-          if (q.url) {
-            mirrors.push({
-              url: q.url,
-              quality: q.label || "Unknown",
-              source: "VidLink",
-              type: q.url.includes(".m3u8") ? "hls" : "mp4",
-              headers: streamHeaders,
-              subtitles: subtitles.length > 0 ? subtitles : [],
-            });
-          }
-        });
+      if (data.stream.qualities) {
+        if (Array.isArray(data.stream.qualities)) {
+          data.stream.qualities.forEach((q: any) => {
+            if (q.url) {
+              mirrors.push({
+                url: q.url,
+                quality: q.label || "Unknown",
+                source: "VidLink",
+                type: q.url.includes(".m3u8") ? "hls" : "mp4",
+                headers: streamHeaders,
+                subtitles: subtitles.length > 0 ? subtitles : [],
+              });
+            }
+          });
+        } else if (typeof data.stream.qualities === "object") {
+          Object.entries(data.stream.qualities).forEach(
+            ([label, q]: [string, any]) => {
+              if (q && q.url) {
+                mirrors.push({
+                  url: q.url,
+                  quality: label || q.label || "Unknown",
+                  source: "VidLink",
+                  type: q.type || (q.url.includes(".m3u8") ? "hls" : "mp4"),
+                  headers: streamHeaders,
+                  subtitles: subtitles.length > 0 ? subtitles : [],
+                });
+              }
+            },
+          );
+        }
       }
 
       console.log(

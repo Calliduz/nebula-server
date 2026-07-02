@@ -4,7 +4,7 @@ import { webcrypto } from "crypto";
 // @ts-ignore
 import CryptoJS from "crypto-js";
 import vm from "vm";
-import { StreamCache, DeadPool } from "../models/Cache.js";
+import { StreamCache, DeadPool, FailedProvider } from "../models/Cache.js";
 
 const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
 
@@ -575,6 +575,33 @@ async function scanProvider(
     return providerMirrors;
   } catch (err: any) {
     console.warn(`[VIDEASY] Scraper for ${prov.name} failed: ${err.message}`);
+    const statusMatch = err.message.match(/HTTP error (\d+)/i);
+    if (statusMatch) {
+      const statusCode = parseInt(statusMatch[1], 10);
+      if (statusCode === 404 || statusCode === 500) {
+        const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
+        await FailedProvider.findOneAndUpdate(
+          {
+            tmdbId: tmdbId.toString(),
+            type: mediaType,
+            season,
+            episode,
+            provider: prov.name,
+            scraperName: "videasy",
+          },
+          {
+            errorCode: statusCode,
+            expiresAt,
+          },
+          { upsert: true },
+        ).catch((dbErr) => {
+          console.error(
+            `[VIDEASY] Failed to save failed provider cache for ${prov.name}:`,
+            dbErr.message,
+          );
+        });
+      }
+    }
     return null;
   }
 }
@@ -608,6 +635,25 @@ export async function fetchVideasySources(
   console.log(
     `[VIDEASY] Starting background-scanned parallel search for ${mediaType} ${tmdbId} S${season}E${episode}...`,
   );
+
+  const failedSet = new Set<string>();
+  if (!force) {
+    try {
+      const failedProviders = await FailedProvider.find({
+        tmdbId: tmdbId.toString(),
+        type: mediaType,
+        season,
+        episode,
+        scraperName: "videasy",
+      });
+      failedProviders.forEach((p) => failedSet.add(p.provider));
+    } catch (err: any) {
+      console.error(
+        `[VIDEASY] Failed to retrieve failed providers cache:`,
+        err.message,
+      );
+    }
+  }
 
   // Clear expired/old cache for this Videasy document to start fresh
   const cacheKey = `${tmdbId}-videasy`;
@@ -647,6 +693,13 @@ export async function fetchVideasySources(
 
     // Stop querying if we have already found enough mirrors (e.g. 3)
     if (Object.keys(activeMirrors).length >= 3) {
+      return null;
+    }
+
+    if (failedSet.has(prov.name)) {
+      console.log(
+        `[VIDEASY] Skipping cached failed provider ${prov.name} for ${tmdbId} S${season}E${episode}`,
+      );
       return null;
     }
 

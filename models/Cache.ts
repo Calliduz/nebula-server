@@ -145,3 +145,25 @@ const TmdbCacheSchema = new mongoose.Schema({
 TmdbCacheSchema.index({ key: 1 }, { unique: true });
 TmdbCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const TmdbCache = mongoose.model("TmdbCache", TmdbCacheSchema);
+
+// Failed Provider Cache (for caching 404/500 scraper failures)
+const FailedProviderSchema = new mongoose.Schema({
+  tmdbId: { type: String, required: true },
+  type: { type: String, enum: ["movie", "tv"], default: "movie" },
+  season: { type: Number, default: 1 },
+  episode: { type: Number, default: 1 },
+  provider: { type: String, required: true }, // e.g. "Neon", "Sage", etc.
+  scraperName: { type: String, required: true }, // e.g. "videasy", etc.
+  errorCode: { type: Number },
+  expiresAt: { type: Date, required: true },
+});
+
+FailedProviderSchema.index(
+  { tmdbId: 1, type: 1, season: 1, episode: 1, provider: 1, scraperName: 1 },
+  { unique: true },
+);
+FailedProviderSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const FailedProvider = mongoose.model(
+  "FailedProvider",
+  FailedProviderSchema,
+);
