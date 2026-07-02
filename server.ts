@@ -3455,6 +3455,7 @@ app.get("/api/videasy", async (req, res) => {
         tmdbId,
         season,
         episode,
+        force,
       );
     }
 

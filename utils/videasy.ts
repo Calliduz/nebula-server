@@ -588,6 +588,7 @@ export async function fetchVideasySources(
   tmdbId: string,
   season: number = 1,
   episode: number = 1,
+  force: boolean = false,
 ): Promise<Record<string, any>> {
   if (process.env.DISABLE_VIDEASY === "true") {
     console.log(`[VIDEASY] Scraper is temporarily disabled via env config.`);
@@ -607,6 +608,34 @@ export async function fetchVideasySources(
   console.log(
     `[VIDEASY] Starting background-scanned parallel search for ${mediaType} ${tmdbId} S${season}E${episode}...`,
   );
+
+  // Clear expired/old cache for this Videasy document to start fresh
+  const cacheKey = `${tmdbId}-videasy`;
+  const existing = await StreamCache.findOne({
+    tmdbId: cacheKey,
+    type: mediaType,
+    season,
+    episode,
+  }).catch(() => null);
+
+  if (
+    existing &&
+    (force ||
+      !existing.streamExpiresAt ||
+      new Date() >= existing.streamExpiresAt)
+  ) {
+    await StreamCache.updateOne(
+      { tmdbId: cacheKey, type: mediaType, season, episode },
+      {
+        $set: {
+          mirrors: [],
+          subtitles: [],
+          streamUrl: null,
+          streamExpiresAt: null,
+        },
+      },
+    ).catch(() => null);
+  }
 
   const activeMirrors: Record<string, any> = {};
 
