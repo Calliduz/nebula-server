@@ -49,6 +49,7 @@ export const SUBTITLE_ALLOWLIST = [
   "storrrrrrm.site",
   "workers.dev",
   "boopigcdn.com",
+  "vidapi.cloud",
   // Videasy subtitle CDN domains
   "joe.goldweather.net",
   "api.videasy.net",

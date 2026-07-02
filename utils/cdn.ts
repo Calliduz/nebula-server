@@ -88,6 +88,9 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("goldweather.net") ||
       lower.includes("cfw557.workers.dev") ||
       lower.includes("cfw69.workers.dev") ||
+      lower.includes("louierojubi7526.workers.dev") ||
+      lower.includes("p19-webcast.tiktokcdn.com") ||
+      lower.includes("nexlunar99.site") ||
       lower.includes("videasy.to") ||
       lower.includes("shegu.org") ||
       /i-cdn-\d+/.test(lower) ||
