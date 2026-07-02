@@ -683,7 +683,7 @@ export async function fetchVideasySources(
         episode,
       }).catch(() => null);
 
-      if (!existing) {
+      if (!existing || !existing.mirrors || existing.mirrors.length === 0) {
         const cacheExpires = new Date();
         cacheExpires.setHours(cacheExpires.getHours() + 24);
         const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
