@@ -535,7 +535,7 @@ const connectDB = async (retryCount = 5) => {
       // scrape + cache + metadata lookups under burst traffic.
       maxPoolSize: 20,
       minPoolSize: 5,
-      maxIdleTimeMS: 30000, // Match Atlas idle timeout (Atlas drops TCP after 30min)
+      maxIdleTimeMS: 30 * 60 * 1000, // Match Atlas idle timeout (Atlas drops TCP after 30min)
     });
     console.log("MongoDB Uplink Established");
 
