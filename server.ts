@@ -669,8 +669,13 @@ app.get("/api/download/stream-file", async (req, res) => {
   }
 
   // Route hakunaymatata.com CDN requests through Cloudflare worker to bypass datacenter IP blocks
+  let isHakunaHost = false;
+  try {
+    isHakunaHost = new URL(targetUrl).hostname.includes("hakunaymatata.com");
+  } catch {}
+
   if (
-    targetUrl.includes("hakunaymatata.com") &&
+    isHakunaHost &&
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
@@ -1885,8 +1890,13 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
+  let isHakunaHost = false;
+  try {
+    isHakunaHost = new URL(targetUrl).hostname.includes("hakunaymatata.com");
+  } catch {}
+
   if (
-    targetUrl.includes("hakunaymatata.com") &&
+    isHakunaHost &&
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
@@ -2239,8 +2249,13 @@ app.get("/api/proxy/segment", async (req, res) => {
     }
   }
 
+  let isHakunaHost = false;
+  try {
+    isHakunaHost = new URL(targetUrl).hostname.includes("hakunaymatata.com");
+  } catch {}
+
   if (
-    targetUrl.includes("hakunaymatata.com") &&
+    isHakunaHost &&
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
@@ -2283,8 +2298,7 @@ app.get("/api/proxy/segment", async (req, res) => {
   if (req.headers.range) passHeaders.range = req.headers.range;
 
   const isVidLink =
-    targetUrl.includes("storm.vodvidl.site") ||
-    targetUrl.includes("vidlink.pro");
+    targetUrl.includes("vodvidl.site") || targetUrl.includes("vidlink.pro");
 
   // ── Path A: VidLink/Storm CDN — native https.request streaming pipe ──────
   // Must use raw Node https to preserve literal { } braces in query params.
@@ -2778,6 +2792,82 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
   } catch (error) {
     console.error("[DEADPOOL] Failed to process playback success:", error);
     return res.status(500).json({ error: "Failed to mark as live" });
+  }
+});
+
+app.post("/api/stream/report-dead", express.json(), async (req, res) => {
+  const {
+    tmdbId,
+    type,
+    season: seasonVal,
+    episode: episodeVal,
+    url,
+  } = req.body;
+
+  if (!tmdbId || !type || !url) {
+    return res.status(400).json({ error: "Missing tmdbId, type, or url" });
+  }
+
+  const season = type === "tv" ? parseInt(seasonVal, 10) : 1;
+  const episode = type === "tv" ? parseInt(episodeVal, 10) : 1;
+
+  if (isNaN(season) || isNaN(episode)) {
+    return res.status(400).json({ error: "Invalid season or episode format" });
+  }
+
+  try {
+    // Reconstruct the original target URL if it is proxied
+    let targetUrl = url;
+    try {
+      const parsedUrl = new URL(url);
+      const urlParam = parsedUrl.searchParams.get("url");
+      if (urlParam) {
+        targetUrl = urlParam;
+      }
+    } catch {}
+
+    // Prune the mirror from the mirrors array in StreamCache
+    const result = await StreamCache.findOneAndUpdate(
+      {
+        tmdbId: {
+          $in: [tmdbId.toString(), `${tmdbId}-vidrock`, `${tmdbId}-videasy`],
+        },
+        type,
+        season,
+        episode,
+      },
+      {
+        $pull: { mirrors: { url: targetUrl } },
+      },
+      { returnDocument: "after" },
+    ).catch(() => null);
+
+    if (result) {
+      console.log(
+        `[STREAM CACHE] Pruned dead/short mirror: ${targetUrl} for ${tmdbId} S${season}E${episode}`,
+      );
+
+      // If we pruned the main streamUrl, update it to the next available mirror's URL or null
+      if (result.streamUrl === targetUrl) {
+        const nextMirror = result.mirrors && result.mirrors[0];
+        await StreamCache.updateOne(
+          { _id: result._id },
+          {
+            streamUrl: nextMirror ? nextMirror.url : null,
+            source: nextMirror ? nextMirror.source : null,
+            resolution: nextMirror ? nextMirror.quality : "UNKNOWN",
+          },
+        ).catch(() => null);
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error(
+      "[STREAM CACHE] Failed to process dead mirror report:",
+      error,
+    );
+    return res.status(500).json({ error: "Failed to report dead mirror" });
   }
 });
 

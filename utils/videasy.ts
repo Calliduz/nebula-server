@@ -1,235 +1,134 @@
-import fs from "fs";
-import path from "path";
-import { webcrypto } from "crypto";
-// @ts-ignore
-import CryptoJS from "crypto-js";
-import vm from "vm";
 import { StreamCache, DeadPool, FailedProvider } from "../models/Cache.js";
 
-const WASM_PATH = path.join(process.cwd(), "utils", "bin", "videasy.wasm");
+const b = [
+  1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993,
+  2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987,
+  1925078388, 2162078206, 2614888103, 3248222580,
+];
+const f = [109, 118, 109, 49]; // "mvm1"
 
-// Cache for compiling/instantiating WASM
-let wasmInstance: WebAssembly.Instance | null = null;
-let cachedServeCode: string | null = null;
-let cachedScript: vm.Script | null = null;
-let cachedHash: string | null = null;
-let cachedHashTime = 0;
-const HASH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const I = (e: number) => ((e * (e + 1)) & 1) === 0;
 
-async function getWasmInstance() {
-  if (wasmInstance) return wasmInstance;
-
-  if (!fs.existsSync(WASM_PATH)) {
-    throw new Error(`WASM file not found at ${WASM_PATH}`);
-  }
-
-  const wasmBytes = fs.readFileSync(WASM_PATH);
-  const env = {
-    seed: () => Date.now() * Math.random(),
-    abort() {},
-  };
-
-  const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
-  wasmInstance = instance;
-  return wasmInstance;
+function w(e: number): number {
+  e >>>= 0;
+  e ^= e >>> 16;
+  e = Math.imul(e, 2246822507) >>> 0;
+  e ^= e >>> 13;
+  e = Math.imul(e, 3266489909) >>> 0;
+  return (e ^= e >>> 16) >>> 0;
 }
 
-async function getCompiledServeCode(instance: WebAssembly.Instance) {
-  if (cachedServeCode) return cachedServeCode;
-
-  const exp = instance.exports as any;
-  const memory = exp.memory;
-
-  // Read UTF-16 string from WASM memory
-  function readString(ptr: number) {
-    if (!ptr) return null;
-    const u32 = new Uint32Array(memory.buffer);
-    const u16 = new Uint16Array(memory.buffer);
-    let endOffStr = ptr + u32[(ptr - 4) >>> 2]!;
-    let t = endOffStr >>> 1;
-    let n = ptr >>> 1;
-    let s = "";
-    if (t - n > 5000000 || t - n < 0) return null;
-    for (; t - n > 1024; ) {
-      s += String.fromCharCode(...u16.subarray(n, (n += 1024)));
-    }
-    return s + String.fromCharCode(...u16.subarray(n, t));
-  }
-
-  const servePtr = exp.serve() >>> 0;
-  let serveCode = readString(servePtr);
-  if (!serveCode) {
-    throw new Error("Failed to read serve code from WASM");
-  }
-  serveCode = serveCode.replace(/(_0x[a-f0-9]+)\(\),(_0x[a-f0-9]+\()/g, "$2");
-  cachedServeCode = serveCode;
-  return cachedServeCode;
+function y(e: number, t: number): number {
+  e >>>= 0;
+  t &= 31;
+  if (t === 0) return e >>> 0;
+  return ((e << t) | (e >>> (32 - t))) >>> 0;
 }
 
-async function getVmScript(instance: WebAssembly.Instance) {
-  if (cachedScript) return cachedScript;
-  const serveCode = await getCompiledServeCode(instance);
-  const codeToRun = `
-    (function(window, crypto, TextEncoder) {
-      ${serveCode}
-    })(window, crypto, TextEncoder);
-  `;
-  cachedScript = new vm.Script(codeToRun);
-  return cachedScript;
+function base64ToBytes(e: string): Uint8Array {
+  const t = e
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .padEnd(4 * Math.ceil(e.length / 4), "=");
+  return new Uint8Array(Buffer.from(t, "base64"));
 }
 
-export async function decryptSources(
-  ciphertextHex: string,
+export function decryptSources(
+  ciphertext: string,
+  seed: string,
   tmdbId: string,
-): Promise<any> {
-  const instance = await getWasmInstance();
-  const exp = instance.exports as any;
-  const memory = exp.memory;
+): any {
+  const o = base64ToBytes(ciphertext);
 
-  // Read UTF-16 string from WASM memory
-  function readString(ptr: number) {
-    if (!ptr) return null;
-    const u32 = new Uint32Array(memory.buffer);
-    const u16 = new Uint16Array(memory.buffer);
-    let endOffStr = ptr + u32[(ptr - 4) >>> 2]!;
-    let t = endOffStr >>> 1;
-    let n = ptr >>> 1;
-    let s = "";
-    if (t - n > 5000000 || t - n < 0) return null;
-    for (; t - n > 1024; ) {
-      s += String.fromCharCode(...u16.subarray(n, (n += 1024)));
+  const state = (() => {
+    const s = Array(61);
+    const seedHash = (() => {
+      let t = 2166136261;
+      for (let i = 0; i < seed.length; i++) {
+        t = Math.imul(t ^ seed.charCodeAt(i), 16777619) >>> 0;
+      }
+      return w(t);
+    })();
+
+    let a = w(seedHash ^ w((parseInt(tmdbId, 10) >>> 0) ^ 2654435769)) >>> 0;
+
+    for (let e = 0; e < 8; e++) {
+      if (I(e)) {
+        const t = a % 61;
+        a = y((a + 2654435769) >>> 0, 7 + (7 & e));
+        s[t] = (a ^ w(a)) >>> 0;
+        a = w((a + t) >>> 0);
+      } else {
+        s[e] = b[15 & e];
+      }
     }
-    return s + String.fromCharCode(...u16.subarray(n, t));
-  }
 
-  // Write UTF-16 string to WASM memory
-  function writeString(str: string) {
-    const ptr = exp.__new(str.length << 1, 2) >>> 0;
-    const u16 = new Uint16Array(memory.buffer);
-    for (let i = 0; i < str.length; i++) {
-      u16[(ptr >>> 1) + i] = str.charCodeAt(i);
-    }
-    return ptr;
-  }
-
-  const activeTimers: NodeJS.Timeout[] = [];
-  const activeIntervals: NodeJS.Timeout[] = [];
-
-  const customSetTimeout = (callback: any, delay: any, ...args: any[]) => {
-    // Intercept/block obfuscated loops with very short delays or anti-debugger checks
-    const codeStr = callback?.toString() || "";
-    if (
-      delay < 50 &&
-      (codeStr.includes("debugger") ||
-        codeStr.includes("callee") ||
-        codeStr.includes("action"))
-    ) {
-      return setTimeout(() => {}, delay);
-    }
-    const t = setTimeout(callback, delay, ...args);
-    activeTimers.push(t);
-    return t;
-  };
-  const customSetInterval = (callback: any, delay: any, ...args: any[]) => {
-    // Intercept/block obfuscated loops with very short delays or anti-debugger checks
-    const codeStr = callback?.toString() || "";
-    if (
-      delay < 50 &&
-      (codeStr.includes("debugger") ||
-        codeStr.includes("callee") ||
-        codeStr.includes("action"))
-    ) {
-      return setInterval(() => {}, delay);
-    }
-    const i = setInterval(callback, delay, ...args);
-    activeIntervals.push(i);
-    return i;
-  };
-
-  let hash = cachedHash;
-  const now = Date.now();
-  if (!hash || now - cachedHashTime > HASH_CACHE_TTL) {
-    const script = await getVmScript(instance);
-
-    const fakeWindow = {
-      location: { hostname: "cineby.sc", href: "https://cineby.sc/" },
-      hash: undefined as any,
+    return {
+      S: s,
+      acc: w(2779096485 ^ a) >>> 0,
     };
+  })();
 
-    const sandbox = {
-      window: fakeWindow,
-      crypto: webcrypto,
-      TextEncoder,
-      setTimeout: customSetTimeout,
-      setInterval: customSetInterval,
-      clearTimeout,
-      clearInterval,
-    };
+  function nextWord(stateObj: any, index: number): number {
+    const oArr = stateObj.S;
+    let r = stateObj.acc;
+    const n = r % 61;
+    const i = 0 - Number(n in oArr);
+    const d = oArr[n] >>> 0;
 
-    vm.createContext(sandbox);
+    const s_val = r;
+    const a_val = (d ^ (Math.imul(2654435769, index + 1) >>> 0)) >>> 0;
+    let l_val = ((s_val ^ a_val) >>> 0) | ((s_val & a_val & i) >>> 0);
 
-    // Execute compiled script in isolated context
-    script.runInContext(sandbox);
-
-    // Poll dynamically for the hash to reduce wait time and avoid background timers running longer
-    let attempts = 0;
-    while (fakeWindow.hash === undefined && attempts < 100) {
-      await new Promise((r) => setImmediate(r));
-      attempts++;
-    }
-
-    hash = String(fakeWindow.hash);
-    if (!hash || hash === "undefined") {
-      throw new Error("Failed to get verification hash");
-    }
-    cachedHash = hash;
-    cachedHashTime = now;
+    l_val = (y((l_val + r) >>> 0, 31 & n) ^ y(r, 31 & Math.imul(n, 7))) >>> 0;
+    r = w((l_val + 2654435769) >>> 0);
+    oArr[n] = r >>> 0;
+    stateObj.acc = r;
+    return r >>> 0;
   }
 
-  try {
-    const hashPtr = writeString(hash);
-    if (!exp.verify(hashPtr)) {
-      throw new Error("WASM verify signature failed");
-    }
-
-    const ctPtr = writeString(ciphertextHex);
-    const resPtr = exp.decrypt(ctPtr, parseInt(tmdbId, 10)) >>> 0;
-    const wasmDecryptedStr = readString(resPtr);
-    if (!wasmDecryptedStr) {
-      throw new Error("WASM decrypt returned null");
-    }
-
-    // Decrypt the outer AES layer with key ""
-    const pt = CryptoJS.AES.decrypt(wasmDecryptedStr, "").toString(
-      CryptoJS.enc.Utf8,
-    );
-    if (!pt) {
-      throw new Error("CryptoJS AES decryption yielded empty string");
-    }
-
-    return JSON.parse(pt);
-  } finally {
-    // Clear all sandboxed background timers to prevent leaks
-    activeTimers.forEach((t) => clearTimeout(t));
-    activeIntervals.forEach((i) => clearInterval(i));
-
-    // Trigger AssemblyScript GC
-    try {
-      exp.__collect();
-    } catch {}
+  const keyBytes = new Uint8Array(o.length);
+  let keyIndex = 0;
+  for (let e = 0; e < o.length; ) {
+    const t = nextWord(state, keyIndex++);
+    keyBytes[e++] = t & 255;
+    if (e < o.length) keyBytes[e++] = (t >>> 8) & 255;
+    if (e < o.length) keyBytes[e++] = (t >>> 16) & 255;
+    if (e < o.length) keyBytes[e++] = (t >>> 24) & 255;
   }
+
+  for (let e = 0; e < o.length; e++) {
+    const ob = o[e];
+    const kb = keyBytes[e];
+    if (ob !== undefined && kb !== undefined) {
+      o[e] = ob ^ kb;
+    }
+  }
+
+  for (let e = 0; e < f.length; e++) {
+    const ob = o[e];
+    const fb = f[e];
+    if (ob === undefined || fb === undefined || ob !== fb) {
+      throw new Error("decrypt failed: bad seed or tampered payload");
+    }
+  }
+
+  const payload = o.subarray(f.length);
+  const pt = new TextDecoder("utf-8").decode(payload);
+  return JSON.parse(pt);
 }
 
 let decryptionQueue = Promise.resolve();
 
 export async function decryptSourcesSerialized(
   ciphertextHex: string,
+  seed: string,
   tmdbId: string,
 ): Promise<any> {
   const result = decryptionQueue.then(async () => {
     // Yield to the event loop to let database heartbeats & HTTP I/O process
     await new Promise((resolve) => setImmediate(resolve));
-    return await decryptSources(ciphertextHex, tmdbId);
+    return decryptSources(ciphertextHex, seed, tmdbId);
   });
   decryptionQueue = result.then(() => {}).catch(() => {});
   return result;
@@ -245,10 +144,12 @@ interface ProviderDef {
 }
 
 const providers: ProviderDef[] = [
-  { name: "Neon", path: "mb-flix", audio: "Original audio", flag: "us" },
+  { name: "Jett", path: "jett", audio: "Original audio", flag: "us" },
   { name: "Yoru", path: "cdn", audio: "Movies only, may have 4K", flag: "us" },
+  { name: "Tejo", path: "tejo", audio: "Original audio", flag: "us" },
+  { name: "Neon", path: "neon2", audio: "Original audio", flag: "us" },
+  { name: "Sage", path: "ym", audio: "Original audio", flag: "us" },
   { name: "Cypher", path: "downloader2", audio: "Original audio", flag: "us" },
-  { name: "Sage", path: "1movies", audio: "Original audio", flag: "us" },
   { name: "Breach", path: "m4uhd", audio: "Original audio", flag: "us" },
   {
     name: "Vyse",
@@ -287,6 +188,7 @@ async function fetchProviderStreams(
   tmdbId: string,
   season: number,
   episode: number,
+  seed: string,
 ): Promise<{
   sourceName: string;
   audio: string;
@@ -294,7 +196,7 @@ async function fetchProviderStreams(
   sources: any[];
   subtitles: any[];
 }> {
-  const url = `https://api.videasy.to/${prov.path}/sources-with-title`;
+  const url = `https://api.wingsdatabase.com/${prov.path}/sources-with-title`;
   const params: Record<string, string> = {
     title: encodeURIComponent(title),
     mediaType,
@@ -304,6 +206,8 @@ async function fetchProviderStreams(
     seasonId: String(season),
     tmdbId,
     imdbId: "",
+    enc: "2",
+    seed,
     ...prov.extraParams,
   };
 
@@ -342,7 +246,7 @@ async function fetchProviderStreams(
     throw new Error(`Empty response or error message: ${ciphertext}`);
   }
 
-  const decrypted = await decryptSourcesSerialized(ciphertext, tmdbId);
+  const decrypted = await decryptSourcesSerialized(ciphertext, seed, tmdbId);
 
   let sources = decrypted.sources || [];
   if (prov.filter) {
@@ -447,6 +351,7 @@ async function scanProvider(
   tmdbId: string,
   season: number,
   episode: number,
+  seed: string,
 ): Promise<Record<string, any> | null> {
   try {
     const res = await fetchProviderStreams(
@@ -457,6 +362,7 @@ async function scanProvider(
       tmdbId,
       season,
       episode,
+      seed,
     );
 
     if (!res || !res.sources || res.sources.length === 0) return null;
@@ -683,6 +589,35 @@ export async function fetchVideasySources(
     ).catch(() => null);
   }
 
+  let seed = "";
+  try {
+    const seedRes = await fetch(
+      `https://api.wingsdatabase.com/seed?mediaId=${tmdbId}`,
+      {
+        headers: {
+          accept: "*/*",
+          origin: "https://player.videasy.to",
+          referer: "https://player.videasy.to/",
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (seedRes.ok) {
+      const seedData = (await seedRes.json()) as any;
+      seed = seedData.seed;
+    }
+  } catch (err: any) {
+    console.error(`[VIDEASY] Failed to fetch seed:`, err.message);
+  }
+
+  if (!seed) {
+    console.error(`[VIDEASY] Seed is empty, aborting scraper.`);
+    activeScans.delete(scanKey);
+    return {};
+  }
+
   const activeMirrors: Record<string, any> = {};
 
   // Map each provider to a promise that writes directly to MongoDB cache
@@ -711,6 +646,7 @@ export async function fetchVideasySources(
       tmdbId,
       season,
       episode,
+      seed,
     );
     if (res) {
       Object.assign(activeMirrors, res);

@@ -67,7 +67,9 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("hianime.filmu.in") ||
       lower.includes("rive.filmu.in") ||
       lower.includes("streamzone1.site") ||
-      lower.includes("mewstream.buzz")
+      lower.includes("mewstream.buzz") ||
+      lower.includes("zapora.buzz") ||
+      lower.includes("glimmeron.click")
     ) {
       referer = "https://megaplay.buzz/";
       origin = "https://megaplay.buzz";
@@ -81,11 +83,47 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://embed.filmu.in/";
       origin = isManifest ? "https://embed.filmu.in" : "null";
     } else if (
+      // goodstream.cc CDN — segments resolve to letsgocdn*.shop
+      lower.includes("goodstream.cc") ||
+      lower.includes("letsgocdn") ||
+      // Vidnest HollyMovieHD CDN
+      lower.includes("tripplestream.online")
+    ) {
+      referer = "https://goodstream.cc/";
+      origin = "https://goodstream.cc";
+    } else if (
+      // Vidnest Videasy proxy
+      lower.includes("tiktoks.animanga.fun") ||
+      lower.includes("animanga.fun")
+    ) {
+      referer = "https://tiktoks.animanga.fun/";
+      origin = "https://tiktoks.animanga.fun";
+    } else if (
+      // Vidnest AllMovies CDN
+      lower.includes("laika422mon.com")
+    ) {
+      referer = "https://vidnest.fun/";
+      origin = "https://vidnest.fun";
+    } else if (
+      // Vidnest MoviesAPI / KlikXXI CDN (aurorion family)
+      lower.includes("aurorionmarketing.sbs") ||
+      lower.includes("aurorionacademy.site") ||
+      lower.includes("auroramedialimited.space") ||
+      lower.includes("aurorafabrication.space") ||
+      lower.includes("digitalfuture.cyou") ||
+      lower.includes("lyverra.cyou") ||
+      lower.includes("lavonadesign.sbs")
+    ) {
+      referer = "https://vidnest.fun/";
+      origin = "https://vidnest.fun";
+    } else if (
       lower.includes("ironwallnet.net") ||
       lower.includes("digitalsun.app") ||
       lower.includes("itsdeskmate.com") ||
       lower.includes("keymi417exx.com") ||
       lower.includes("goldweather.net") ||
+      lower.includes("shadowlemon.site") ||
+      lower.includes("realworkers") ||
       lower.includes("cfw557.workers.dev") ||
       lower.includes("cfw69.workers.dev") ||
       lower.includes("louierojubi7526.workers.dev") ||
@@ -106,6 +144,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vdrk.site") ||
       lower.includes("vidrock.ru") ||
       lower.includes("vidrock.net") ||
+      lower.includes("streamrk.site") ||
       lower.includes("hydrostorm") ||
       lower.includes("hellstorm.lol") ||
       lower.includes("hellstorm") ||
@@ -122,7 +161,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://vidrock.ru/";
       origin = "https://vidrock.ru";
     } else if (
-      lower.includes("storm.vodvidl.site") ||
+      lower.includes("vodvidl.site") ||
       lower.includes("vidlink.pro") ||
       lower.includes("nightbreeze") ||
       lower.includes("thunderleaf") ||
