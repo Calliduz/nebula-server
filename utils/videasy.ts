@@ -1,3 +1,4 @@
+import { gotScraping } from "got-scraping";
 import { StreamCache, DeadPool, FailedProvider } from "../models/Cache.js";
 
 const b = [
@@ -217,31 +218,32 @@ async function fetchProviderStreams(
   });
 
   const targetUrl = urlWithParams.toString();
-  const res = await fetch(targetUrl, {
-    method: "GET",
-    headers: {
-      accept: "*/*",
-      "accept-language": "en-US,en;q=0.5",
-      origin: "https://player.videasy.to",
-      referer: "https://player.videasy.to/",
-      "sec-ch-ua": '"Brave";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-site",
-      "sec-gpc": "1",
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-    },
-    signal: AbortSignal.timeout(45000),
-  });
-
-  if (!res.ok) {
-    throw new Error(`HTTP error ${res.status}`);
+  let ciphertext = "";
+  try {
+    const res = await gotScraping.get(targetUrl, {
+      headers: {
+        accept: "*/*",
+        "accept-language": "en-US,en;q=0.5",
+        origin: "https://player.videasy.to",
+        referer: "https://player.videasy.to/",
+        "sec-ch-ua":
+          '"Brave";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "sec-gpc": "1",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+      },
+      timeout: { request: 45000 },
+    });
+    ciphertext = (res.body || "").trim();
+  } catch (err: any) {
+    const status = err.response?.statusCode || 500;
+    throw new Error(`HTTP error ${status}`);
   }
-
-  const ciphertext = (await res.text()).trim();
   if (!ciphertext || ciphertext.startsWith("{")) {
     throw new Error(`Empty response or error message: ${ciphertext}`);
   }
@@ -591,7 +593,7 @@ export async function fetchVideasySources(
 
   let seed = "";
   try {
-    const seedRes = await fetch(
+    const seedRes = await gotScraping.get(
       `https://api.wingsdatabase.com/seed?mediaId=${tmdbId}`,
       {
         headers: {
@@ -601,15 +603,17 @@ export async function fetchVideasySources(
           "user-agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
         },
-        signal: AbortSignal.timeout(10000),
+        responseType: "json",
+        timeout: { request: 10000 },
       },
     );
-    if (seedRes.ok) {
-      const seedData = (await seedRes.json()) as any;
-      seed = seedData.seed;
-    }
+    seed = (seedRes.body as any)?.seed || "";
   } catch (err: any) {
-    console.error(`[VIDEASY] Failed to fetch seed:`, err.message);
+    const status = err.response?.statusCode || "unknown";
+    console.error(
+      `[VIDEASY] Failed to fetch seed. Status: ${status}. Error:`,
+      err.message,
+    );
   }
 
   if (!seed) {
