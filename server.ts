@@ -1707,12 +1707,20 @@ app.get("/api/tmdb-proxy", async (req, res) => {
 
   try {
     // 1. Cache Check
-    const cached = await TmdbCache.findOne({
-      key: cacheKey,
-      expiresAt: { $gt: new Date() },
-    });
-    if (cached) {
-      return res.json(cached.data);
+    const bypassCache = req.query.bypassCache === "true";
+    if (bypassCache) {
+      const clientAdminKey = req.headers["x-admin-key"] || req.query.adminKey;
+      if (!process.env.ADMIN_KEY || clientAdminKey !== process.env.ADMIN_KEY) {
+        return res.status(403).json({ error: "Unauthorized cache bypass request" });
+      }
+    } else {
+      const cached = await TmdbCache.findOne({
+        key: cacheKey,
+        expiresAt: { $gt: new Date() },
+      });
+      if (cached) {
+        return res.json(cached.data);
+      }
     }
 
     // 2. Fetch from TMDB
@@ -1735,16 +1743,16 @@ app.get("/api/tmdb-proxy", async (req, res) => {
     // Endpoint-aware TTL mapping (default 6h)
     let ttl = 1000 * 60 * 60 * 6;
     if (endpoint.startsWith("/trending/")) {
-      ttl = 1000 * 60 * 60 * 2; // 2 hours
+      ttl = 1000 * 60 * 60 * 12; // 12 hours
     } else if (endpoint === "/movie/popular" || endpoint === "/tv/popular") {
-      ttl = 1000 * 60 * 60 * 4; // 4 hours
+      ttl = 1000 * 60 * 60 * 24; // 24 hours
     } else if (endpoint.startsWith("/discover/")) {
-      ttl = 1000 * 60 * 60 * 6; // 6 hours
+      ttl = 1000 * 60 * 60 * 24; // 24 hours
     } else if (
       endpoint.endsWith("/recommendations") ||
       endpoint.endsWith("/similar")
     ) {
-      ttl = 1000 * 60 * 60 * 4; // 4 hours
+      ttl = 1000 * 60 * 60 * 24; // 24 hours
     } else {
       const parts = endpoint.split("/").filter(Boolean);
       if (
