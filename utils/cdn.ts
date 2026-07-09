@@ -75,7 +75,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       origin = "https://megaplay.buzz";
     } else if (
       lower.includes("1shows.app") ||
-      lower.includes("filmu")
+      lower.includes("filmu") ||
+      lower.includes("silverpathway.sbs") ||
+      lower.includes("bingr") ||
+      lower.includes("kunt3490.workers.dev")
     ) {
       referer = "https://embed.filmu.in/";
       origin = "https://embed.filmu.in";
@@ -120,7 +123,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("digitalfuture.cyou") ||
       lower.includes("lyverra.cyou") ||
       lower.includes("lavonadesign.sbs") ||
-      lower.includes("silverpathway.sbs") ||
       lower.includes("45.156.158.180") ||
       lower.includes("45.156.")
     ) {
@@ -149,14 +151,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://player.videasy.to/";
       origin = isManifest ? "https://player.videasy.to" : "null";
       headers["sec-fetch-dest"] = "empty";
-      delete headers["x-forwarded-for"];
-      delete headers["x-real-ip"];
-    } else if (
-      lower.includes("bingr") ||
-      lower.includes("kunt3490.workers.dev")
-    ) {
-      referer = "https://bingr.one/";
-      origin = "https://bingr.one";
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (

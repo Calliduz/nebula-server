@@ -58,11 +58,11 @@ jobs:
             echo "Building application..."
             npm run build
 
-            # 5. Reload PM2
-            echo "Reloading PM2 process..."
+            # 5. Restart PM2
+            echo "Restarting PM2 process..."
             if pm2 list | grep -q "nebula-server"; then
-              pm2 reload nebula-server
-              echo "Deployment complete: PM2 reloaded."
+              pm2 restart nebula-server
+              echo "Deployment complete: PM2 restarted."
             else
               echo "Warning: PM2 process 'nebula-server' not found. Starting it for the first time..."
               pm2 start dist/server.js --name "nebula-server" --node-args="--max-old-space-size=512"
