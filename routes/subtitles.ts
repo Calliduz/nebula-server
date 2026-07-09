@@ -92,6 +92,32 @@ function isEnglish(s: any): boolean {
   );
 }
 
+function getLanguageIso(label: string): string {
+  const clean = label.trim().toLowerCase();
+  const map: Record<string, string> = {
+    english: "en",
+    spanish: "es",
+    french: "fr",
+    german: "de",
+    italian: "it",
+    portuguese: "pt",
+    russian: "ru",
+    chinese: "zh",
+    japanese: "ja",
+    korean: "ko",
+    arabic: "ar",
+    turkish: "tr",
+    vietnamese: "vi",
+    indonesian: "id",
+    filipino: "fil",
+    malay: "ms",
+    bengali: "bn",
+    hindi: "hi",
+    thai: "th",
+  };
+  return map[clean] || clean.substring(0, 2);
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 // Accepts fetchVidLinkRaw injected from server.ts to avoid circular imports.
 
@@ -357,6 +383,38 @@ export function createSubtitleRouter(
             return [];
           }
         })(),
+
+        // I — VidRock subtitles directly from sub.vdrk.site
+        (async () => {
+          try {
+            const path = kind === "tv" ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`;
+            const url = `https://sub.vdrk.site/v2/${path}`;
+            const response = await fetch(url, {
+              headers: {
+                accept: "*/*",
+                "accept-language": "en-US,en;q=0.7",
+                origin: "https://vidrock.ru",
+                referer: "https://vidrock.ru/",
+                "user-agent": UA,
+              },
+              signal: AbortSignal.timeout(10000),
+            });
+            if (!response.ok) return [];
+            const data = await response.json();
+            if (Array.isArray(data)) {
+              return data.map((s: any) => ({
+                id: `vidrock-${s.label.toLowerCase()}-${tmdbId}-${season}-${episode}`,
+                url: s.file,
+                lang: getLanguageIso(s.label),
+                languageName: s.label,
+                source: "VidRock",
+              }));
+            }
+          } catch (err: any) {
+            console.warn(`[SUBS] VidRock sub.vdrk extraction failed: ${err.message}`);
+          }
+          return [];
+        })(),
       ]);
 
       const [
@@ -367,6 +425,7 @@ export function createSubtitleRouter(
         filmuResult,
         vidnestResult,
         vaplayerResult,
+        vidrockResult,
       ] = results;
 
       const openSubsTrack =
@@ -389,16 +448,21 @@ export function createSubtitleRouter(
         vaplayerResult && vaplayerResult.status === "fulfilled"
           ? vaplayerResult.value
           : [];
+      const vidrockTrack =
+        vidrockResult && vidrockResult.status === "fulfilled"
+          ? vidrockResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
       const seenUrls = new Set<string>();
       const dedup = (tracks: any[]): any[] =>
         tracks.filter((s) => {
-          if (!s?.url || seenUrls.has(s.url)) return false;
+          if (!s || !s.url) return false;
+          if (seenUrls.has(s.url)) return false;
           seenUrls.add(s.url);
           return true;
         });
@@ -406,11 +470,13 @@ export function createSubtitleRouter(
       // Merge in priority order (English VidLink/Videasy before non-English)
       const allTracksOrdered = [
         ...dedup(vidVaultTrack),
+        ...dedup(vidrockTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
+        ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),

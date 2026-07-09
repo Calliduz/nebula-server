@@ -104,6 +104,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidnest.fun/";
       origin = "https://vidnest.fun";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
     } else if (
       // Vidnest MoviesAPI / KlikXXI CDN (aurorion family)
       lower.includes("aurorionmarketing.sbs") ||
@@ -116,6 +118,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidnest.fun/";
       origin = "https://vidnest.fun";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
     } else if (
       lower.includes("ironwallnet.net") ||
       lower.includes("digitalsun.app") ||

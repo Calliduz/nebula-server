@@ -1,5 +1,6 @@
-import { gotScraping } from "got-scraping";
+import { fetchWithGotScraping } from "./bypass.js";
 import { StreamCache, DeadPool, FailedProvider } from "../models/Cache.js";
+import { fetchImdbId } from "./subtitles.js";
 
 const b = [
   1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993,
@@ -190,6 +191,7 @@ async function fetchProviderStreams(
   season: number,
   episode: number,
   seed: string,
+  imdbId: string,
 ): Promise<{
   sourceName: string;
   audio: string;
@@ -206,7 +208,7 @@ async function fetchProviderStreams(
     episodeId: String(episode),
     seasonId: String(season),
     tmdbId,
-    imdbId: "",
+    imdbId: imdbId || "",
     enc: "2",
     seed,
     ...prov.extraParams,
@@ -218,28 +220,36 @@ async function fetchProviderStreams(
   });
 
   const targetUrl = urlWithParams.toString();
+  console.log(`[VIDEASY] Querying: ${targetUrl}`);
   let ciphertext = "";
   try {
-    const res = await gotScraping.get(targetUrl, {
-      headers: {
+    const res = await fetchWithGotScraping(
+      targetUrl,
+      {
         accept: "*/*",
         "accept-language": "en-US,en;q=0.5",
         origin: "https://player.videasy.to",
         referer: "https://player.videasy.to/",
-        "sec-ch-ua":
-          '"Brave";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+        "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"',
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-site",
+        "sec-fetch-site": "cross-site",
         "sec-gpc": "1",
         "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
       },
-      timeout: { request: 45000 },
-    });
-    ciphertext = (res.body || "").trim();
+      undefined,
+      "get",
+      undefined,
+      undefined,
+      false, // http2 = false
+    ).catch(() => null);
+
+    if (res && res.statusCode >= 200 && res.statusCode < 300 && res.body) {
+      ciphertext = res.body.toString().trim();
+    }
   } catch (err: any) {
     const status = err.response?.statusCode || 500;
     throw new Error(`HTTP error ${status}`);
@@ -354,6 +364,7 @@ async function scanProvider(
   season: number,
   episode: number,
   seed: string,
+  imdbId: string,
 ): Promise<Record<string, any> | null> {
   try {
     const res = await fetchProviderStreams(
@@ -365,6 +376,7 @@ async function scanProvider(
       season,
       episode,
       seed,
+      imdbId,
     );
 
     if (!res || !res.sources || res.sources.length === 0) return null;
@@ -530,6 +542,8 @@ export async function fetchVideasySources(
     return {};
   }
 
+  const imdbId = (await fetchImdbId(tmdbId, mediaType, title)) || "";
+
   const scanKey = `videasy-${tmdbId}-${mediaType}-${season}-${episode}`;
   if (activeScans.has(scanKey)) {
     console.log(
@@ -591,23 +605,38 @@ export async function fetchVideasySources(
     ).catch(() => null);
   }
 
+  const seedUrl = `https://api.wingsdatabase.com/seed?mediaId=${tmdbId}`;
+  const seedHeaders = {
+    accept: "*/*",
+    "accept-language": "en-US,en;q=0.5",
+    origin: "https://player.videasy.to",
+    referer: "https://player.videasy.to/",
+    "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "sec-gpc": "1",
+    "user-agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+  };
+
   let seed = "";
   try {
-    const seedRes = await gotScraping.get(
-      `https://api.wingsdatabase.com/seed?mediaId=${tmdbId}`,
-      {
-        headers: {
-          accept: "*/*",
-          origin: "https://player.videasy.to",
-          referer: "https://player.videasy.to/",
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        },
-        responseType: "json",
-        timeout: { request: 10000 },
-      },
+    const res = await fetchWithGotScraping(
+      seedUrl,
+      seedHeaders,
+      undefined,
+      "get",
+      undefined,
+      undefined,
+      false, // http2 = false
     );
-    seed = (seedRes.body as any)?.seed || "";
+    if (res && res.statusCode >= 200 && res.statusCode < 300 && res.body) {
+      const bodyJson = JSON.parse(res.body.toString());
+      seed = bodyJson.seed || "";
+    }
   } catch (err: any) {
     const status = err.response?.statusCode || "unknown";
     console.error(
@@ -651,6 +680,7 @@ export async function fetchVideasySources(
       season,
       episode,
       seed,
+      imdbId,
     );
     if (res) {
       Object.assign(activeMirrors, res);

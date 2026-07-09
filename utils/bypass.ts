@@ -47,6 +47,15 @@ export async function fetchWithCycleTLS(
 
   const finalHeaders = { ...defaultHeaders, ...headers };
 
+  if (
+    url.includes("wingsdatabase.com") ||
+    url.includes("laika422mon.com") ||
+    url.includes("aurorion")
+  ) {
+    delete finalHeaders["x-forwarded-for"];
+    delete finalHeaders["x-real-ip"];
+  }
+
   const options: any = {
     headers: finalHeaders,
     ja3: "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-21,29-23-24,0",
@@ -65,7 +74,17 @@ export async function fetchWithCycleTLS(
   if (typeof res.data === "string") {
     bodyBuffer = Buffer.from(res.data, "utf-8");
   } else if (res.data && typeof res.data === "object") {
-    bodyBuffer = Buffer.from(Object.values(res.data) as number[]);
+    const contentTypeKey = Object.keys(res.headers || {}).find(
+      (k) => k.toLowerCase() === "content-type",
+    );
+    const contentTypeVal = contentTypeKey
+      ? String(res.headers[contentTypeKey])
+      : "";
+    if (contentTypeVal.toLowerCase().includes("json")) {
+      bodyBuffer = Buffer.from(JSON.stringify(res.data), "utf-8");
+    } else {
+      bodyBuffer = Buffer.from(Object.values(res.data) as number[]);
+    }
   } else {
     bodyBuffer = Buffer.from("");
   }
@@ -85,6 +104,7 @@ export async function fetchWithGotScraping(
   method: string = "get",
   body?: any,
   signal?: AbortSignal,
+  http2: boolean = true,
 ) {
   const origin = new URL(url).origin;
   const options: any = {
@@ -106,7 +126,7 @@ export async function fetchWithGotScraping(
     responseType: "buffer",
     retry: { limit: 0 },
     timeout: { request: 45000 },
-    http2: true,
+    http2,
     signal,
   };
 

@@ -3210,7 +3210,7 @@ async function getFanartMetadata(
 }
 
 // @ts-ignore
-import { generateToken as generateVidrockToken } from "./utils/vidrock_token.js";
+import { decryptVidrock } from "./utils/vidrock_decrypt.js";
 // @ts-ignore
 import { fetchVideasySources, activeScans } from "./utils/videasy.js";
 
@@ -3275,8 +3275,8 @@ app.get("/api/vidrock", async (req, res) => {
       }
     }
 
-    const token = generateVidrockToken(tmdbId, type, season, episode);
-    const url = `https://vidrock.ru/api/${type}/${token}`;
+    const path = type === "tv" ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`;
+    const url = `https://vidrock.ru/api/${path}`;
     const headers = {
       accept: "*/*",
       "accept-language": "en-US,en;q=0.9",
@@ -3308,11 +3308,20 @@ app.get("/api/vidrock", async (req, res) => {
 
         const activeSources = Object.entries(data)
           .filter(([_, v]: any) => v && v.url)
-          .map(([name, v]: any) => ({
-            source: name.startsWith("VidRock") ? name : `VidRock (${name})`,
-            url: v.url,
-            type: v.type || "hls",
-          }));
+          .map(([name, v]: any) => {
+            let decryptedUrl = "";
+            try {
+              decryptedUrl = decryptVidrock(v.url);
+            } catch (err: any) {
+              console.warn(`[VIDROCK] Decryption failed for source ${name}:`, err.message);
+            }
+            return {
+              source: name.startsWith("VidRock") ? name : `VidRock (${name})`,
+              url: decryptedUrl,
+              type: v.type || "hls",
+            };
+          })
+          .filter(s => s.url);
 
         const firstActiveSource = activeSources[0];
         if (firstActiveSource) {
