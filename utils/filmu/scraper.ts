@@ -367,25 +367,29 @@ export class FilmuScraper {
                 queryObj.season = season;
                 queryObj.episode = episode;
               }
-              const response = await gotScraping.post("https://api.bingr.one/api/stream", {
-                headers: {
-                  accept: "*/*",
-                  "accept-language": "en-US,en;q=0.9",
-                  "content-type": "application/json",
-                  origin: "https://bingr.one",
-                  referer: "https://bingr.one/",
-                  "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+              const response = await gotScraping.post(
+                "https://api.bingr.one/api/stream",
+                {
+                  headers: {
+                    accept: "*/*",
+                    "accept-language": "en-US,en;q=0.9",
+                    "content-type": "application/json",
+                    origin: "https://bingr.one",
+                    referer: "https://bingr.one/",
+                    "user-agent":
+                      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+                  },
+                  json: {
+                    srv,
+                    t: kind,
+                    id: tmdbId,
+                    query: queryObj,
+                  },
+                  responseType: "json",
+                  timeout: { request: 12000 },
+                  signal,
                 },
-                json: {
-                  srv,
-                  t: kind,
-                  id: tmdbId,
-                  query: queryObj,
-                },
-                responseType: "json",
-                timeout: { request: 12000 },
-                signal,
-              });
+              );
 
               const data = response.body as any;
               const scraperName = data?.scraperName || srv;
@@ -401,7 +405,8 @@ export class FilmuScraper {
 
               return sources.map((src: any) => {
                 const label = src.label || src.name || "Source";
-                const isM3u8 = src.url?.includes(".m3u8") || src.type?.includes("m3u8");
+                const isM3u8 =
+                  src.url?.includes(".m3u8") || src.type?.includes("m3u8");
                 return {
                   url: src.url,
                   source: `FilmU-Bingr (${scraperName} - ${label})`,

@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
-const KEY_HEX = "7f3e9c2a8b5d1f4e6a9c3b7d2e5f8a1c4b6d9e2f5a8c1b4d7e9f2a5c8b1d4e7f";
+const KEY_HEX =
+  "7f3e9c2a8b5d1f4e6a9c3b7d2e5f8a1c4b6d9e2f5a8c1b4d7e9f2a5c8b1d4e7f";
 const key = Buffer.from(KEY_HEX, "hex");
 
 /**
@@ -9,7 +10,7 @@ const key = Buffer.from(KEY_HEX, "hex");
  */
 export function decryptVidrock(ciphertextUrl: string): string {
   const bytes = Buffer.from(ciphertextUrl, "base64url");
-  
+
   if (bytes.length < 28) {
     throw new Error("Ciphertext too short");
   }

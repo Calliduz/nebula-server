@@ -387,7 +387,10 @@ export function createSubtitleRouter(
         // I — VidRock subtitles directly from sub.vdrk.site
         (async () => {
           try {
-            const path = kind === "tv" ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`;
+            const path =
+              kind === "tv"
+                ? `tv/${tmdbId}/${season}/${episode}`
+                : `movie/${tmdbId}`;
             const url = `https://sub.vdrk.site/v2/${path}`;
             const response = await fetch(url, {
               headers: {
@@ -411,7 +414,9 @@ export function createSubtitleRouter(
               }));
             }
           } catch (err: any) {
-            console.warn(`[SUBS] VidRock sub.vdrk extraction failed: ${err.message}`);
+            console.warn(
+              `[SUBS] VidRock sub.vdrk extraction failed: ${err.message}`,
+            );
           }
           return [];
         })(),

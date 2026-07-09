@@ -1711,7 +1711,9 @@ app.get("/api/tmdb-proxy", async (req, res) => {
     if (bypassCache) {
       const clientAdminKey = req.headers["x-admin-key"] || req.query.adminKey;
       if (!process.env.ADMIN_KEY || clientAdminKey !== process.env.ADMIN_KEY) {
-        return res.status(403).json({ error: "Unauthorized cache bypass request" });
+        return res
+          .status(403)
+          .json({ error: "Unauthorized cache bypass request" });
       }
     } else {
       const cached = await TmdbCache.findOne({
@@ -3275,7 +3277,8 @@ app.get("/api/vidrock", async (req, res) => {
       }
     }
 
-    const path = type === "tv" ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`;
+    const path =
+      type === "tv" ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`;
     const url = `https://vidrock.ru/api/${path}`;
     const headers = {
       accept: "*/*",
@@ -3313,7 +3316,10 @@ app.get("/api/vidrock", async (req, res) => {
             try {
               decryptedUrl = decryptVidrock(v.url);
             } catch (err: any) {
-              console.warn(`[VIDROCK] Decryption failed for source ${name}:`, err.message);
+              console.warn(
+                `[VIDROCK] Decryption failed for source ${name}:`,
+                err.message,
+              );
             }
             return {
               source: name.startsWith("VidRock") ? name : `VidRock (${name})`,
@@ -3321,7 +3327,7 @@ app.get("/api/vidrock", async (req, res) => {
               type: v.type || "hls",
             };
           })
-          .filter(s => s.url);
+          .filter((s) => s.url);
 
         const firstActiveSource = activeSources[0];
         if (firstActiveSource) {
