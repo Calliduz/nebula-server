@@ -23,7 +23,7 @@ jobs:
 
       # ── 3. Full install + build on GitHub's 7 GB runner ──────────────────────
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build
         run: npm run build
