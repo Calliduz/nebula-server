@@ -82,7 +82,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (
-      lower.includes("1shows.app") ||
       lower.includes("filmu")
     ) {
       referer = "https://embed.filmu.in/";
@@ -129,6 +128,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("lyverra.cyou") ||
       lower.includes("lavonadesign.sbs") ||
       lower.includes("silverpathway.sbs") ||
+      lower.includes("silverpathacademy.cyou") ||
       lower.includes("cleantechworld.sbs") ||
       lower.includes("45.156.158.180") ||
       lower.includes("45.156.")
@@ -165,6 +165,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vdrk.site") ||
       lower.includes("vidrock.ru") ||
       lower.includes("vidrock.net") ||
+      lower.includes("1shows.app") ||
       lower.includes("streamrk.site") ||
       lower.includes("hydrostorm") ||
       lower.includes("hellstorm.lol") ||
