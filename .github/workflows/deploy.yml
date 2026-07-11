@@ -35,8 +35,10 @@ jobs:
 
       # ── 5. Pack compiled output, prod node_modules, and manifests ─────────────
       #   We bundle node_modules so the VPS has to do zero npm work.
+      #   We delete unused cycletls platform binaries to save ~100MB of transfer size.
       - name: Create deployment tarball
         run: |
+          find node_modules/cycletls/dist/ -type f ! -name "index" ! -name "index.js" ! -name "*.d.ts" -delete || true
           tar -czf deploy.tar.gz \
             dist \
             node_modules \
