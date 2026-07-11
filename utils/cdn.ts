@@ -74,11 +74,16 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://megaplay.buzz/";
       origin = "https://megaplay.buzz";
     } else if (
-      lower.includes("1shows.app") ||
-      lower.includes("filmu") ||
-      lower.includes("silverpathway.sbs") ||
       lower.includes("bingr") ||
       lower.includes("kunt3490.workers.dev")
+    ) {
+      referer = "https://bingr.one/";
+      origin = "https://bingr.one";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
+    } else if (
+      lower.includes("1shows.app") ||
+      lower.includes("filmu")
     ) {
       referer = "https://embed.filmu.in/";
       origin = "https://embed.filmu.in";
@@ -123,6 +128,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("digitalfuture.cyou") ||
       lower.includes("lyverra.cyou") ||
       lower.includes("lavonadesign.sbs") ||
+      lower.includes("silverpathway.sbs") ||
+      lower.includes("cleantechworld.sbs") ||
       lower.includes("45.156.158.180") ||
       lower.includes("45.156.")
     ) {
@@ -163,10 +170,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("hellstorm.lol") ||
       lower.includes("hellstorm") ||
       lower.includes("1x2.space") ||
-      (lower.includes("hakunaymatata.com") &&
-        !lower.includes("cacdn.hakunaymatata.com")) ||
-      (lower.includes("hakunaymatata") &&
-        !lower.includes("cacdn.hakunaymatata.com")) ||
+      lower.includes("hakunaymatata.com") ||
+      lower.includes("hakunaymatata") ||
       lower.includes("workers.dev") ||
       lower.includes("tiktokcdn") ||
       lower.includes("byteoversea") ||
@@ -178,8 +183,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vodvidl.site") ||
       lower.includes("vidlink.pro") ||
       lower.includes("nightbreeze") ||
-      lower.includes("thunderleaf") ||
-      lower.includes("cacdn.hakunaymatata.com")
+      lower.includes("thunderleaf")
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";

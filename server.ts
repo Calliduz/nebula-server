@@ -1918,6 +1918,15 @@ app.get("/api/proxy/stream", async (req, res) => {
     );
   }
 
+  // FilmU wormhole→box rewrite: wormhole.filmu.in/proxy/m3u8 returns 403;
+  // box.filmu.in/proxy/m3u8 bypasses the origin gate and returns 200 OK.
+  if (targetUrl.includes("wormhole.filmu.in/proxy/m3u8")) {
+    targetUrl = targetUrl.replace(
+      "wormhole.filmu.in/proxy/m3u8",
+      "box.filmu.in/proxy/m3u8",
+    );
+  }
+
   // Redirect local master.m3u8 requests directly to avoid proxying localhost over public proxy tunnels
   if (targetUrl.includes("/api/videasy/master.m3u8")) {
     console.log(
@@ -2274,6 +2283,15 @@ app.get("/api/proxy/segment", async (req, res) => {
     targetUrl = targetUrl.replace(
       "dl.gemlelispe.workers.dev",
       "dreadnought.47qzoobg8k.workers.dev",
+    );
+  }
+
+  // FilmU wormhole→box rewrite: wormhole.filmu.in/proxy/m3u8 returns 403;
+  // box.filmu.in/proxy/m3u8 bypasses the origin gate and returns 200 OK.
+  if (targetUrl.includes("wormhole.filmu.in/proxy/m3u8")) {
+    targetUrl = targetUrl.replace(
+      "wormhole.filmu.in/proxy/m3u8",
+      "box.filmu.in/proxy/m3u8",
     );
   }
 

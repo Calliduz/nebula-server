@@ -553,6 +553,17 @@ export class FilmuScraper {
 
       mirrors.length = 0;
       mirrors.push(...consolidatedMirrors);
+
+      // Rewrite wormhole→box in all mirror URLs at scrape time so they're
+      // stored correctly in MongoDB and don't need proxy-level patching.
+      for (const m of mirrors) {
+        if (m.url && m.url.includes("wormhole.filmu.in/proxy/m3u8")) {
+          m.url = m.url.replace(
+            "wormhole.filmu.in/proxy/m3u8",
+            "box.filmu.in/proxy/m3u8",
+          );
+        }
+      }
     } catch (e: any) {
       console.error(`[FilmU Scraper] Unified scraping failed:`, e.message);
     }

@@ -560,8 +560,7 @@ export function createSubtitleRouter(
       if (
         url.includes("vidlink") ||
         url.includes("megafiles") ||
-        url.includes("storm.vodvidl.site") ||
-        url.includes("cacdn.hakunaymatata.com")
+        url.includes("storm.vodvidl.site")
       ) {
         referer = "https://vidlink.pro/";
         origin = "https://vidlink.pro";
@@ -570,8 +569,7 @@ export function createSubtitleRouter(
         url.includes("vidrock.ru") ||
         /stor+m\.site/.test(url) ||
         url.includes("workers.dev") ||
-        (url.includes("hakunaymatata.com") &&
-          !url.includes("cacdn.hakunaymatata.com"))
+        url.includes("hakunaymatata.com")
       ) {
         referer = "https://vidrock.ru/";
         origin = "https://vidrock.ru";
