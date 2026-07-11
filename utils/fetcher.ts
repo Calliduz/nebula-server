@@ -3,7 +3,6 @@ import https from "https";
 import fs from "fs";
 import path from "path";
 import type { Fetcher, FetcherResponse } from "@movie-web/providers";
-import puppeteerPool from "./puppeteerPool.js";
 import {
   fetchWithCycleTLS,
   fetchWithGotScraping,
@@ -197,7 +196,7 @@ export async function hybridFetch(url: string, options: any = {}) {
           return text;
         }
         console.warn(
-          `${logPrefix} ✘ CycleTLS Bypass failed (${cycleBypass.statusCode}). Falling back to Puppeteer...`,
+          `${logPrefix} ✘ CycleTLS Bypass failed (${cycleBypass.statusCode}). No further fallback.`,
         );
 
         if (cycleBypass.statusCode === 403) {
@@ -215,27 +214,24 @@ export async function hybridFetch(url: string, options: any = {}) {
         }
       } catch (e: any) {
         console.warn(
-          `${logPrefix} ✘ Rapid Bypass error: ${e.message}. Falling back to Puppeteer...`,
+          `${logPrefix} ✘ Rapid Bypass error: ${e.message}. Returning null.`,
         );
       }
     }
   }
 
-  // 4. Puppeteer (DISABLED to save RAM)
+  // All bypass strategies exhausted — return null to let the caller handle gracefully.
   console.warn(
-    `${logPrefix} ✘ Rapid Bypass failed. Browser fallback is DISABLED to save RAM.`,
+    `${logPrefix} ✘ All bypass strategies failed. Returning null.`,
   );
   return null;
 }
 
-// ── Embed HLS Interceptor (DISABLED to save RAM) ─────────
+// ── Embed HLS Interceptor (not implemented) ─────────────
 export async function extractHlsFromEmbed(
-  embedUrl: string,
-  timeoutMs = 15000,
+  _embedUrl: string,
+  _timeoutMs = 15000,
 ): Promise<string | null> {
-  console.warn(
-    `[EmbedExtractor] Browser-based extraction is DISABLED to save RAM.`,
-  );
   return null;
 }
 

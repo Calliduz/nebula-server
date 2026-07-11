@@ -3,14 +3,57 @@ name: Deploy Nebula Server
 on:
   push:
     branches:
-      - master # Trigger deploy on push to the master branch
+      - master
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH into VPS and Deploy
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Node setup with npm cache ─────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ── 3. Full install + build on GitHub's 7 GB runner ──────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        # esbuild → dist/server.js (packages=external, so node_modules still
+        # needed at runtime — but we let the VPS install only prod deps below)
+
+      # ── 4. Pack only the compiled output + manifests (no node_modules) ───────
+      #   Keeping the tarball small means a fast SCP upload every deploy.
+      - name: Create deployment tarball
+        run: |
+          tar -czf deploy.tar.gz \
+            dist \
+            package.json \
+            package-lock.json
+
+      # ── 5. Upload tarball to VPS ──────────────────────────────────────────────
+      - name: Copy bundle to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: "deploy.tar.gz"
+          target: "~/nebula-deploy-tmp/"
+
+      # ── 6. SSH: extract, install prod deps only, restart PM2 ─────────────────
+      #   npm ci --omit=dev is now cheap: no puppeteer, no Chromium download,
+      #   only small runtime packages. No TypeScript compilation happens here.
+      - name: Deploy on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -18,54 +61,41 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            echo "Starting deployment..."
+            set -e
 
-            # 1. Dynamically locate the nebula-server directory in home directory
+            # Locate project directory
             TARGET_DIR=$(find $HOME -maxdepth 3 -type d -name "nebula-server" -print -quit 2>/dev/null)
-
             if [ -z "$TARGET_DIR" ]; then
               echo "Error: Could not find nebula-server directory in $HOME"
               exit 1
             fi
+            echo "Deploying to: $TARGET_DIR"
 
-            echo "Found project directory at: $TARGET_DIR"
+            # Extract tarball into project directory (overwrites dist/ in-place)
+            tar -xzf ~/nebula-deploy-tmp/deploy.tar.gz -C "$TARGET_DIR"
+            rm -f ~/nebula-deploy-tmp/deploy.tar.gz
+
             cd "$TARGET_DIR"
 
-            # 2. Pull the latest code
-            echo "Pulling latest code from git..."
-            git pull origin master
-
-            # 3. Load Node.js environment variables (NVM support)
-            echo "Loading Node environment..."
+            # Load NVM so npm is available
             export NVM_DIR="$HOME/.nvm"
-            if [ -s "$NVM_DIR/nvm.sh" ]; then
-              \. "$NVM_DIR/nvm.sh"
-            fi
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-            # Verify node & npm are available
-            if ! command -v npm &> /dev/null; then
-              echo "Error: npm is not installed or not in PATH"
-              exit 1
-            fi
+            # Install/sync production dependencies only.
+            # No devDeps (esbuild, typescript, tsx, etc.) — nothing to compile.
+            # npm picks the correct native binaries for this platform.
+            echo "Syncing production dependencies..."
+            npm ci --omit=dev
 
-            echo "Using Node version: $(node -v)"
-            echo "Using npm version: $(npm -v)"
-
-            # 4. Install dependencies and build
-            echo "Installing dependencies..."
-            npm ci --production=false # Ensure devDependencies (like typescript/esbuild) are installed to build
-
-            echo "Building application..."
-            npm run build
-
-            # 5. Restart PM2
-            echo "Restarting PM2 process..."
+            # Restart (or start) PM2
             if pm2 list | grep -q "nebula-server"; then
-              pm2 restart nebula-server
-              echo "Deployment complete: PM2 restarted."
+              pm2 restart nebula-server --update-env
+              echo "Deployment complete — PM2 restarted."
             else
-              echo "Warning: PM2 process 'nebula-server' not found. Starting it for the first time..."
-              pm2 start dist/server.js --name "nebula-server" --node-args="--max-old-space-size=512"
+              echo "PM2 process not found — starting for the first time..."
+              pm2 start "$TARGET_DIR/dist/server.js" \
+                --name "nebula-server" \
+                --node-args="--max-old-space-size=512"
               pm2 save
-              echo "Deployment complete: PM2 process started."
+              echo "Deployment complete — PM2 process started."
             fi
