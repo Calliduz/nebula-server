@@ -27,19 +27,23 @@ jobs:
 
       - name: Build
         run: npm run build
-        # esbuild → dist/server.js (packages=external, so node_modules still
-        # needed at runtime — but we let the VPS install only prod deps below)
+        # esbuild → dist/server.js
 
-      # ── 4. Pack only the compiled output + manifests (no node_modules) ───────
-      #   Keeping the tarball small means a fast SCP upload every deploy.
+      # ── 4. Prune to production-only deps (drops devDependencies) ──────────────
+      - name: Prune devDependencies
+        run: npm prune --production
+
+      # ── 5. Pack compiled output, prod node_modules, and manifests ─────────────
+      #   We bundle node_modules so the VPS has to do zero npm work.
       - name: Create deployment tarball
         run: |
           tar -czf deploy.tar.gz \
             dist \
+            node_modules \
             package.json \
             package-lock.json
 
-      # ── 5. Upload tarball to VPS ──────────────────────────────────────────────
+      # ── 6. Upload tarball to VPS ──────────────────────────────────────────────
       - name: Copy bundle to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -50,9 +54,7 @@ jobs:
           source: "deploy.tar.gz"
           target: "~/nebula-deploy-tmp/"
 
-      # ── 6. SSH: extract, install prod deps only, restart PM2 ─────────────────
-      #   npm ci --omit=dev is now cheap: no puppeteer, no Chromium download,
-      #   only small runtime packages. No TypeScript compilation happens here.
+      # ── 7. SSH: extract and restart PM2 — no npm work on the VPS ─────────────
       - name: Deploy on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -71,21 +73,13 @@ jobs:
             fi
             echo "Deploying to: $TARGET_DIR"
 
-            # Extract tarball into project directory (overwrites dist/ in-place)
+            # Extract tarball into project directory (overwrites dist/ and node_modules/ in-place)
             tar -xzf ~/nebula-deploy-tmp/deploy.tar.gz -C "$TARGET_DIR"
             rm -f ~/nebula-deploy-tmp/deploy.tar.gz
 
-            cd "$TARGET_DIR"
-
-            # Load NVM so npm is available
+            # Load NVM so pm2 is available
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
-            # Install/sync production dependencies only.
-            # No devDeps (esbuild, typescript, tsx, etc.) — nothing to compile.
-            # npm picks the correct native binaries for this platform.
-            echo "Syncing production dependencies..."
-            npm ci --omit=dev
 
             # Restart (or start) PM2
             if pm2 list | grep -q "nebula-server"; then
