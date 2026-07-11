@@ -29,19 +29,12 @@ jobs:
         run: npm run build
         # esbuild → dist/server.js
 
-      # ── 4. Prune to production-only deps (drops devDependencies) ──────────────
-      - name: Prune devDependencies
-        run: npm prune --production
-
-      # ── 5. Pack compiled output, prod node_modules, and manifests ─────────────
-      #   We bundle node_modules so the VPS has to do zero npm work.
-      #   We delete unused cycletls platform binaries to save ~100MB of transfer size.
+      # ── 5. Pack compiled output and manifests (no node_modules) ────────────────
+      #   Keeping the tarball tiny (~60KB) ensures an instant SCP upload.
       - name: Create deployment tarball
         run: |
-          find node_modules/cycletls/dist/ -type f ! -name "index" ! -name "index.js" ! -name "*.d.ts" -delete || true
           tar -czf deploy.tar.gz \
             dist \
-            node_modules \
             package.json \
             package-lock.json
 
@@ -56,7 +49,7 @@ jobs:
           source: "deploy.tar.gz"
           target: "~/nebula-deploy-tmp/"
 
-      # ── 7. SSH: extract and restart PM2 — no npm work on the VPS ─────────────
+      # ── 7. SSH: extract, smart-install dependencies, restart PM2 ─────────────
       - name: Deploy on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -75,13 +68,31 @@ jobs:
             fi
             echo "Deploying to: $TARGET_DIR"
 
-            # Extract tarball into project directory (overwrites dist/ and node_modules/ in-place)
+            # Extract tarball into target directory (overwrites dist/ and package manifests)
             tar -xzf ~/nebula-deploy-tmp/deploy.tar.gz -C "$TARGET_DIR"
             rm -f ~/nebula-deploy-tmp/deploy.tar.gz
 
-            # Load NVM so pm2 is available
+            cd "$TARGET_DIR"
+
+            # Load NVM so npm is available
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            # Smart Dependency Sync:
+            # Only run npm install if package-lock.json has changed.
+            NEW_HASH=$(md5sum package-lock.json | awk '{print $1}')
+            OLD_HASH=""
+            if [ -f .package-lock.hash ]; then
+              OLD_HASH=$(cat .package-lock.hash)
+            fi
+
+            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+              echo "package-lock.json changed. Installing production dependencies..."
+              npm install --omit=dev
+              echo "$NEW_HASH" > .package-lock.hash
+            else
+              echo "Dependencies are unchanged. Skipping npm install."
+            fi
 
             # Restart (or start) PM2
             if pm2 list | grep -q "nebula-server"; then
@@ -95,3 +106,4 @@ jobs:
               pm2 save
               echo "Deployment complete — PM2 process started."
             fi
+
