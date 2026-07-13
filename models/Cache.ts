@@ -167,3 +167,23 @@ export const FailedProvider = mongoose.model(
   "FailedProvider",
   FailedProviderSchema,
 );
+
+// IntroDB Cache Schema (Indefinite storage for skip timestamps)
+const IntroDBCacheSchema = new mongoose.Schema({
+  tmdbId: { type: String, required: true },
+  type: { type: String, enum: ["movie", "tv"], default: "movie" },
+  season: { type: Number },
+  episode: { type: Number },
+  intro: { type: Array, default: [] },
+  recap: { type: Array, default: [] },
+  credits: { type: Array, default: [] },
+  preview: { type: Array, default: [] },
+  createdAt: { type: Date, default: Date.now },
+});
+
+IntroDBCacheSchema.index(
+  { tmdbId: 1, type: 1, season: 1, episode: 1 },
+  { unique: true },
+);
+
+export const IntroDBCache = mongoose.model("IntroDBCache", IntroDBCacheSchema);

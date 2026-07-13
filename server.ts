@@ -15,6 +15,7 @@ import {
   DramaDetailCache,
   DeadPool,
   TmdbCache,
+  IntroDBCache,
 } from "./models/Cache.js";
 import {
   fetchWithCycleTLS,
@@ -3784,6 +3785,88 @@ app.get("/api/vidlink", async (req, res) => {
   } catch (error) {
     console.error("[VIDLINK] fetch failed", error);
     res.status(500).json({ error: "Failed to fetch from VidLink" });
+  }
+});
+
+// ── TheIntroDB Cache Endpoints ──────────────────────────────────────────────
+
+app.get("/api/introdb", async (req, res) => {
+  try {
+    const { tmdbId, type, season, episode } = req.query;
+    if (!tmdbId || !type) {
+      res
+        .status(400)
+        .json({ error: "Missing required query parameters: tmdbId, type" });
+      return;
+    }
+
+    const query: any = {
+      tmdbId: tmdbId.toString(),
+      type: type.toString(),
+    };
+
+    if (type === "tv") {
+      query.season = season ? parseInt(season.toString(), 10) : undefined;
+      query.episode = episode ? parseInt(episode.toString(), 10) : undefined;
+    }
+
+    const cached = await IntroDBCache.findOne(query);
+    if (!cached) {
+      res.status(404).json({ error: "Cache miss" });
+      return;
+    }
+
+    res.json(cached);
+  } catch (err: any) {
+    console.error("[INTRODB/cache] fetch error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/introdb", express.json(), async (req, res) => {
+  try {
+    const { tmdbId, type, season, episode, intro, recap, credits, preview } =
+      req.body;
+    if (!tmdbId || !type) {
+      res
+        .status(400)
+        .json({ error: "Missing required body parameters: tmdbId, type" });
+      return;
+    }
+
+    const filter: any = {
+      tmdbId: tmdbId.toString(),
+      type: type.toString(),
+    };
+
+    const update: any = {
+      tmdbId: tmdbId.toString(),
+      type: type.toString(),
+      intro: Array.isArray(intro) ? intro : [],
+      recap: Array.isArray(recap) ? recap : [],
+      credits: Array.isArray(credits) ? credits : [],
+      preview: Array.isArray(preview) ? preview : [],
+      createdAt: new Date(),
+    };
+
+    if (type === "tv") {
+      const s = season !== undefined ? parseInt(season.toString(), 10) : 1;
+      const e = episode !== undefined ? parseInt(episode.toString(), 10) : 1;
+      filter.season = s;
+      filter.episode = e;
+      update.season = s;
+      update.episode = e;
+    }
+
+    await IntroDBCache.findOneAndUpdate(filter, update, {
+      upsert: true,
+      new: true,
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("[INTRODB/cache] save error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
