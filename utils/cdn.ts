@@ -45,9 +45,22 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
 
       if (customHeaders) {
         const parsed = JSON.parse(customHeaders);
-        if (parsed.referer) referer = parsed.referer;
-        if (parsed.origin) origin = parsed.origin;
-        if (parsed.cookie) cookie = parsed.cookie;
+        const findKey = (obj: any, key: string) => {
+          const lowerKey = key.toLowerCase();
+          const foundKey = Object.keys(obj).find(
+            (k) => k.toLowerCase() === lowerKey,
+          );
+          return foundKey ? obj[foundKey] : undefined;
+        };
+        const refVal = findKey(parsed, "referer");
+        const origVal = findKey(parsed, "origin");
+        const cookieVal = findKey(parsed, "cookie");
+        const uaVal = findKey(parsed, "user-agent");
+
+        if (refVal) referer = refVal;
+        if (origVal) origin = origVal;
+        if (cookieVal) cookie = cookieVal;
+        if (uaVal) headers["user-agent"] = uaVal;
       }
 
       // If a host param is provided, it might be the target host for the proxy
@@ -102,8 +115,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://embed.filmu.in/";
       origin = isManifest ? "https://embed.filmu.in" : "null";
     } else if (lower.includes("goodstream.cc")) {
-      referer = "https://vidnest.fun/";
-      origin = "https://vidnest.fun";
+      referer = "https://flashstream.cc/";
+      origin = "https://flashstream.cc";
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (

@@ -46,8 +46,8 @@ export class VidnestScraper {
 
     const subUrl =
       kind === "movie"
-        ? `${baseUrl}/subtitles/${tmdbId}`
-        : `${baseUrl}/subtitles/${tmdbId}/${season}/${episode}`;
+        ? `https://sub.vdrk.site/v2/movie/${tmdbId}`
+        : `https://sub.vdrk.site/v2/tv/${tmdbId}/${season}/${episode}`;
 
     const headers = {
       "User-Agent":
@@ -110,11 +110,11 @@ export class VidnestScraper {
 
       if (Array.isArray(subsData)) {
         subtitles = subsData
-          .filter((s: any) => s.url && s.lang)
+          .filter((s: any) => (s.url || s.file) && (s.lang || s.label))
           .map((s: any) => ({
-            url: s.url,
-            lang: s.lang,
-            languageName: s.lang,
+            url: s.file || s.url,
+            lang: s.label || s.lang,
+            languageName: s.label || s.lang,
             source: "Vidnest",
           }));
       }
@@ -183,7 +183,7 @@ export class VidnestScraper {
         }
       }
 
-      // Schema C — movies5f: { code, data: { medias: [...] } }
+      // Schema C — movies5f: { code, data: { medias: [...], downloads: [...] } }
       const c5fMedias = streamData?.data?.medias;
       if (Array.isArray(c5fMedias)) {
         for (const m of c5fMedias as any[]) {
@@ -191,6 +191,18 @@ export class VidnestScraper {
             normalised.push({
               link: m.mediaUrl,
               resolution: m.definition || "Auto",
+              type: "mp4",
+            });
+          }
+        }
+      }
+      const c5fDownloads = streamData?.data?.downloads;
+      if (Array.isArray(c5fDownloads)) {
+        for (const d of c5fDownloads as any[]) {
+          if (d?.url) {
+            normalised.push({
+              link: d.url,
+              resolution: d.resolution ? `${d.resolution}p` : "Auto",
               type: "mp4",
             });
           }
@@ -222,7 +234,7 @@ export class VidnestScraper {
         });
       }
 
-      // Schema F — vidlink: { data: { stream: { playlist, captions } }, headers, provider }
+      // Schema F — vidlink: { data: { stream: { playlist, qualities, captions } }, headers, provider }
       const vlStream = streamData?.data?.stream;
       if (vlStream) {
         // playlist is the primary HLS manifest
@@ -233,6 +245,19 @@ export class VidnestScraper {
             resolution: "Auto",
             type: "hls",
           });
+        }
+        // qualities object present for direct mp4 streams
+        if (vlStream?.qualities && typeof vlStream.qualities === "object") {
+          for (const [res, q] of Object.entries(vlStream.qualities)) {
+            const url = (q as any)?.url;
+            if (typeof url === "string" && url.startsWith("http")) {
+              normalised.push({
+                link: url,
+                resolution: `${res}p`,
+                type: (q as any)?.type === "mp4" ? "mp4" : "hls",
+              });
+            }
+          }
         }
         // alternativeParts or sources array sometimes present
         if (Array.isArray(vlStream?.sources)) {
