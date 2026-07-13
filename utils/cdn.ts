@@ -111,6 +111,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     } else if (
       // goodstream.cc CDN segments resolve to letsgocdn*.shop
       lower.includes("letsgocdn") ||
+      lower.includes("technologyknowledge.site") ||
       // Vidnest HollyMovieHD CDN
       lower.includes("tripplestream.online")
     ) {
