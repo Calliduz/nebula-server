@@ -221,9 +221,7 @@ export async function hybridFetch(url: string, options: any = {}) {
   }
 
   // All bypass strategies exhausted — return null to let the caller handle gracefully.
-  console.warn(
-    `${logPrefix} ✘ All bypass strategies failed. Returning null.`,
-  );
+  console.warn(`${logPrefix} ✘ All bypass strategies failed. Returning null.`);
   return null;
 }
 

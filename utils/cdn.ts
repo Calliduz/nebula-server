@@ -79,8 +79,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://bingr.one/";
       origin = "https://bingr.one";
-      headers["user-agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
-      headers["sec-ch-ua"] = '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"';
+      headers["user-agent"] =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
+      headers["sec-ch-ua"] =
+        '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"';
       headers["sec-ch-ua-mobile"] = "?0";
       headers["sec-ch-ua-platform"] = '"Windows"';
       headers["accept-encoding"] = "identity;q=1, *;q=0";
@@ -88,9 +90,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       headers["accept-language"] = "en-US,en;q=0.6";
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
-    } else if (
-      lower.includes("filmu")
-    ) {
+    } else if (lower.includes("filmu")) {
       referer = "https://embed.filmu.in/";
       origin = "https://embed.filmu.in";
       delete headers["x-forwarded-for"];
@@ -101,9 +101,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://embed.filmu.in/";
       origin = isManifest ? "https://embed.filmu.in" : "null";
-    } else if (
-      lower.includes("goodstream.cc")
-    ) {
+    } else if (lower.includes("goodstream.cc")) {
       referer = "https://vidnest.fun/";
       origin = "https://vidnest.fun";
       delete headers["x-forwarded-for"];
