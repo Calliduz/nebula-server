@@ -182,9 +182,9 @@ export function createVidnestRouter(): Router {
       };
 
       const scanPromise = runScan();
-      // Give the scraper 7 seconds to resolve
+      // Give the scraper 6 seconds to resolve
       const raceTimeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 7000),
+        setTimeout(resolve, 6000),
       );
 
       await Promise.race([scanPromise, raceTimeout]);
@@ -193,7 +193,7 @@ export function createVidnestRouter(): Router {
         return res.json(fetchResult);
       } else {
         console.log(
-          `[VIDNEST] Scan still running after 7s for ${tmdbId}. Returning empty — bg scan continues.`,
+          `[VIDNEST] Scan still running after 6s for ${tmdbId}. Returning empty — bg scan continues.`,
         );
         return res.json({});
       }

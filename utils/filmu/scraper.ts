@@ -61,7 +61,7 @@ export class FilmuScraper {
         },
         searchParams: apiKey.length <= 40 ? { api_key: apiKey } : {},
         responseType: "json",
-        timeout: { request: 8000 },
+        timeout: { request: 4000 },
         signal,
       });
 
@@ -386,7 +386,7 @@ export class FilmuScraper {
                     query: queryObj,
                   },
                   responseType: "json",
-                  timeout: { request: 12000 },
+                  timeout: { request: 5000 },
                   signal,
                 },
               );

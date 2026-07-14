@@ -27,7 +27,7 @@ export class VaplayerScraper {
     const gotOptions: any = {
       headers,
       responseType: "json",
-      timeout: { request: 15000 },
+      timeout: { request: 5000 },
     };
     if (proxyUrl) gotOptions.proxyUrl = proxyUrl;
     if (signal) gotOptions.signal = signal;

@@ -162,9 +162,9 @@ export function createVaplayerRouter(): Router {
       };
 
       const scanPromise = runScan();
-      // Give the scraper 7 seconds to resolve
+      // Give the scraper 6 seconds to resolve
       const raceTimeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 7000),
+        setTimeout(resolve, 6000),
       );
 
       await Promise.race([scanPromise, raceTimeout]);
@@ -173,7 +173,7 @@ export function createVaplayerRouter(): Router {
         return res.json(fetchResult);
       } else {
         console.log(
-          `[VAPLAYER] Scan still running after 7s for ${tmdbId}. Returning empty — bg scan continues.`,
+          `[VAPLAYER] Scan still running after 6s for ${tmdbId}. Returning empty — bg scan continues.`,
         );
         return res.json({});
       }

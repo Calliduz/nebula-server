@@ -190,10 +190,10 @@ export function createFilmuRouter(): Router {
       };
 
       const scanPromise = runScan();
-      // Give the scraper 7 seconds — FilmU requires TMDB lookups + parallel
+      // Give the scraper 6 seconds — FilmU requires TMDB lookups + parallel
       // provider scrapes, so it's slower than VidLink's direct WASM token.
       const raceTimeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 7000),
+        setTimeout(resolve, 6000),
       );
 
       await Promise.race([scanPromise, raceTimeout]);
@@ -202,7 +202,7 @@ export function createFilmuRouter(): Router {
         return res.json(fetchResult);
       } else {
         console.log(
-          `[FILMU] Scan still running after 7s for ${tmdbId}. Returning empty — bg scan continues.`,
+          `[FILMU] Scan still running after 6s for ${tmdbId}. Returning empty — bg scan continues.`,
         );
         return res.json({});
       }

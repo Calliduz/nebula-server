@@ -101,6 +101,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       headers["accept-encoding"] = "identity;q=1, *;q=0";
       headers["sec-gpc"] = "1";
       headers["accept-language"] = "en-US,en;q=0.6";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
     } else if (
       // Vidnest Prime / Catflix worker proxies
       lower.includes("vidnest-1.workers.dev") ||
@@ -165,6 +167,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     } else if (
       // Vidnest MoviesAPI / KlikXXI CDN (aurorion family)
       lower.includes("aurorionmarketing.sbs") ||
+      lower.includes("mindspireconsulting.sbs") ||
       lower.includes("aurorionacademy.site") ||
       lower.includes("auroramedialimited.space") ||
       lower.includes("aurorafabrication.space") ||
