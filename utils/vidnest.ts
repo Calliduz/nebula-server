@@ -305,8 +305,13 @@ export class VidnestScraper {
         let link = u.link;
 
         // Re-route hakunaymatata.com through Cloudflare worker proxy
+        let isHakunaBase = false;
+        try {
+          isHakunaBase = new URL(link).hostname.includes("hakunaymatata.com");
+        } catch {}
+
         if (
-          link.includes("hakunaymatata.com") &&
+          isHakunaBase &&
           !link.includes("cacdn.hakunaymatata.com") &&
           !link.includes("workers.dev")
         ) {

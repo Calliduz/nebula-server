@@ -1901,6 +1901,15 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
+  // Extract nested URL from dreadnought proxy if it got wrapped incorrectly
+  if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
+    const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
+    const innerUrl = decodeURIComponent(parts[1] || "");
+    if (innerUrl.startsWith("http")) {
+      targetUrl = innerUrl;
+    }
+  }
+
   let isGoodstream = false;
   try {
     isGoodstream = new URL(targetUrl).hostname.includes("goodstream.cc");
@@ -2285,6 +2294,15 @@ app.get("/api/proxy/segment", async (req, res) => {
       targetUrl = decodeURIComponent(targetUrl);
     } catch {
       return res.status(400).send("Invalid url encoding");
+    }
+  }
+
+  // Extract nested URL from dreadnought proxy if it got wrapped incorrectly
+  if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
+    const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
+    const innerUrl = decodeURIComponent(parts[1] || "");
+    if (innerUrl.startsWith("http")) {
+      targetUrl = innerUrl;
     }
   }
 
