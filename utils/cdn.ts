@@ -101,6 +101,20 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       headers["accept-encoding"] = "identity;q=1, *;q=0";
       headers["sec-gpc"] = "1";
       headers["accept-language"] = "en-US,en;q=0.6";
+    } else if (
+      // Vidnest Prime / Catflix worker proxies
+      lower.includes("vidnest-1.workers.dev") ||
+      lower.includes("vidnest-2.workers.dev") ||
+      lower.includes("vidnest-3.workers.dev") ||
+      lower.includes("vudnest-4.workers.dev") ||
+      lower.includes("vidnest-4.workers.dev") ||
+      lower.includes("vidness-1.workers.dev") ||
+      lower.includes("vidnestt.workers.dev") ||
+      lower.includes("vidnests22-e71.workers.dev") ||
+      lower.includes("vidnees.workers.dev")
+    ) {
+      referer = "https://vidnest.fun/";
+      origin = "https://vidnest.fun";
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (lower.includes("filmu")) {
@@ -130,11 +144,16 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       origin = "https://goodstream.cc";
     } else if (
       // Vidnest Videasy proxy
-      lower.includes("tiktoks.animanga.fun") ||
-      lower.includes("animanga.fun")
+      lower.includes("tiktoks.animanga.fun")
     ) {
       referer = "https://tiktoks.animanga.fun/";
       origin = "https://tiktoks.animanga.fun";
+    } else if (
+      lower.includes("upcloud.animanga.fun") ||
+      lower.includes("animanga.fun")
+    ) {
+      referer = "https://vidnest.fun/";
+      origin = "https://vidnest.fun";
     } else if (
       // Vidnest AllMovies CDN
       lower.includes("laika422mon.com")
@@ -152,14 +171,19 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("digitalfuture.cyou") ||
       lower.includes("lyverra.cyou") ||
       lower.includes("lavonadesign.sbs") ||
+      lower.includes("luminairewellbeing.sbs") ||
       lower.includes("silverpathway.sbs") ||
       lower.includes("silverpathacademy.cyou") ||
       lower.includes("cleantechworld.sbs") ||
+      lower.includes("bellecrest.store") ||
+      lower.includes("185.237.") ||
+      lower.includes("203.188.") ||
+      /https?:\/\/\d+\.\d+\.\d+\.\d+/.test(lower) ||
       lower.includes("45.156.158.180") ||
       lower.includes("45.156.")
     ) {
-      referer = "https://vidnest.fun/";
-      origin = "https://vidnest.fun";
+      referer = "https://flixcdn.cyou/";
+      origin = "https://flixcdn.cyou";
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (

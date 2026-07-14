@@ -1901,6 +1901,25 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
+  let isGoodstream = false;
+  try {
+    isGoodstream = new URL(targetUrl).hostname.includes("goodstream.cc");
+  } catch {}
+
+  if (isGoodstream) {
+    const headersJson = JSON.stringify({
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+      accept: "*/*",
+      "accept-language": "en-US,en;q=0.5",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "cross-site",
+      origin: "https://flashstream.cc",
+      referer: "https://flashstream.cc/",
+    });
+    targetUrl = `https://upcloud.animanga.fun/proxy?url=${encodeURIComponent(targetUrl)}&headers=${encodeURIComponent(headersJson)}`;
+  }
+
   let isHakunaHost = false;
   try {
     isHakunaHost = new URL(targetUrl).hostname.includes("hakunaymatata.com");
@@ -2267,6 +2286,25 @@ app.get("/api/proxy/segment", async (req, res) => {
     } catch {
       return res.status(400).send("Invalid url encoding");
     }
+  }
+
+  let isGoodstream = false;
+  try {
+    isGoodstream = new URL(targetUrl).hostname.includes("goodstream.cc");
+  } catch {}
+
+  if (isGoodstream) {
+    const headersJson = JSON.stringify({
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+      accept: "*/*",
+      "accept-language": "en-US,en;q=0.5",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "cross-site",
+      origin: "https://flashstream.cc",
+      referer: "https://flashstream.cc/",
+    });
+    targetUrl = `https://upcloud.animanga.fun/proxy?url=${encodeURIComponent(targetUrl)}&headers=${encodeURIComponent(headersJson)}`;
   }
 
   let isHakunaHost = false;
