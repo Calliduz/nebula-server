@@ -12,7 +12,7 @@ import axios from "axios";
 import jschardet from "jschardet";
 import iconv from "iconv-lite";
 import { StreamCache, SubtitleCache } from "../models/Cache.js";
-import { getSubtitles } from "../utils/subtitles.js";
+import { getSubtitles, getWyzieSubtitles } from "../utils/subtitles.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "../utils/bypass.js";
 import { fetchVidVaultDownloads } from "../utils/vidvault.js";
 
@@ -41,6 +41,7 @@ export const SUBTITLE_ALLOWLIST = [
   "hakunaymatata.com",
   "opensubtitles.org",
   "opensubtitles.com",
+  "dl.opensubtitles.org",
   "sub.webseries.vip",
   "s.megafiles.store",
   "strem.io",
@@ -69,6 +70,9 @@ export const SUBTITLE_ALLOWLIST = [
   "new.vidnest.fun",
   "vaplayer.ru",
   "streamdata.vaplayer.ru",
+  // Wyzie domains
+  "wyzie.io",
+  "sub.wyzie.io",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -77,12 +81,13 @@ function sourcePriority(source: string): number {
   if (source === "VidVault") return 1;
   if (source === "VidRock") return 2;
   if (source === "Videasy") return 3;
-  if (source === "Vidnest") return 4;
-  if (source === "Vaplayer") return 5;
-  if (source === "VidLink") return 6;
-  if (source && source.startsWith("FilmU")) return 7;
-  if (source === "OpenSubtitles") return 8;
-  return 9;
+  if (source === "Wyzie") return 4;
+  if (source === "Vidnest") return 5;
+  if (source === "Vaplayer") return 6;
+  if (source === "VidLink") return 7;
+  if (source && source.startsWith("FilmU")) return 8;
+  if (source === "OpenSubtitles") return 9;
+  return 10;
 }
 
 function isEnglish(s: any): boolean {
@@ -420,6 +425,16 @@ export function createSubtitleRouter(
           }
           return [];
         })(),
+
+        // J — Wyzie subtitles
+        (async () => {
+          try {
+            return await getWyzieSubtitles(tmdbId, kind, season, episode);
+          } catch (err: any) {
+            console.warn(`[SUBS] Wyzie extraction failed: ${err.message}`);
+          }
+          return [];
+        })(),
       ]);
 
       const [
@@ -431,6 +446,7 @@ export function createSubtitleRouter(
         vidnestResult,
         vaplayerResult,
         vidrockResult,
+        wyzieResult,
       ] = results;
 
       const openSubsTrack =
@@ -457,9 +473,13 @@ export function createSubtitleRouter(
         vidrockResult && vidrockResult.status === "fulfilled"
           ? vidrockResult.value
           : [];
+      const wyzieTrack =
+        wyzieResult && wyzieResult.status === "fulfilled"
+          ? wyzieResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -479,12 +499,14 @@ export function createSubtitleRouter(
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
+        ...dedup(wyzieTrack.filter(isEnglish)),
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
+        ...dedup(wyzieTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidnestTrack.filter((s) => !isEnglish(s))),
         ...dedup(vaplayerTrack.filter((s) => !isEnglish(s))),
         ...dedup(openSubsTrack),

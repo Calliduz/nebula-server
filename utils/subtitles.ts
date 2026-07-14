@@ -155,3 +155,48 @@ export function getLanguageName(iso: string) {
   };
   return map[key] || map[iso.toLowerCase().substring(0, 2)] || iso;
 }
+
+export async function getWyzieSubtitles(
+  tmdbId: string | number,
+  type: "movie" | "tv",
+  season?: number,
+  episode?: number,
+) {
+  const key = process.env.WYZIE_API_KEY || "wyzie-f654g5d9x9tyae0tt5rx5hd7bdjrzhvz";
+  if (!key) return [];
+
+  let url = `https://sub.wyzie.io/search?id=${tmdbId}&key=${key}`;
+  if (type === "tv") {
+    url += `&season=${season || 1}&episode=${episode || 1}`;
+  }
+
+  try {
+    const response = await axios.get(url, { timeout: 8000 });
+    const subs = response.data;
+    if (!Array.isArray(subs)) return [];
+
+    const langGroups: Record<string, any[]> = {};
+    for (const sub of subs) {
+      if (!sub.url) continue;
+      const lang = sub.language || "unk";
+      if (!langGroups[lang]) langGroups[lang] = [];
+      if (langGroups[lang].length < 5) {
+        langGroups[lang].push(sub);
+      }
+    }
+
+    const dedupedSubs = Object.values(langGroups).flat();
+
+    return dedupedSubs.map((sub: any, index: number) => ({
+      id: `wyzie-${sub.id || sub.language}-${index}`,
+      url: sub.url,
+      lang: sub.language || "unk",
+      languageName: sub.display || getLanguageName(sub.language || "unk"),
+      source: "Wyzie",
+    }));
+  } catch (error: any) {
+    console.error(`[SUBS] Failed to fetch Wyzie subtitles: ${error.message}`);
+    return [];
+  }
+}
+
