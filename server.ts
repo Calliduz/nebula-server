@@ -680,11 +680,11 @@ app.get("/api/download/stream-file", async (req, res) => {
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
-    targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
+    targetUrl = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(targetUrl)}`;
   } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
     targetUrl = targetUrl.replace(
       "dl.gemlelispe.workers.dev",
-      "dreadnought.47qzoobg8k.workers.dev",
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
     );
   }
 
@@ -1901,9 +1901,15 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
-  // Extract nested URL from dreadnought proxy if it got wrapped incorrectly
+  // Extract nested URL from proxy if it got wrapped incorrectly
   if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
     const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
+    const innerUrl = decodeURIComponent(parts[1] || "");
+    if (innerUrl.startsWith("http")) {
+      targetUrl = innerUrl;
+    }
+  } else if (targetUrl.includes("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=")) {
+    const parts = targetUrl.split("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=");
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
@@ -1939,11 +1945,11 @@ app.get("/api/proxy/stream", async (req, res) => {
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
-    targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
+    targetUrl = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(targetUrl)}`;
   } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
     targetUrl = targetUrl.replace(
       "dl.gemlelispe.workers.dev",
-      "dreadnought.47qzoobg8k.workers.dev",
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
     );
   }
 
@@ -2297,9 +2303,15 @@ app.get("/api/proxy/segment", async (req, res) => {
     }
   }
 
-  // Extract nested URL from dreadnought proxy if it got wrapped incorrectly
+  // Extract nested URL from proxy if it got wrapped incorrectly
   if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
     const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
+    const innerUrl = decodeURIComponent(parts[1] || "");
+    if (innerUrl.startsWith("http")) {
+      targetUrl = innerUrl;
+    }
+  } else if (targetUrl.includes("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=")) {
+    const parts = targetUrl.split("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=");
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
@@ -2335,11 +2347,11 @@ app.get("/api/proxy/segment", async (req, res) => {
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
-    targetUrl = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(targetUrl)}`;
+    targetUrl = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(targetUrl)}`;
   } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
     targetUrl = targetUrl.replace(
       "dl.gemlelispe.workers.dev",
-      "dreadnought.47qzoobg8k.workers.dev",
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
     );
   }
 

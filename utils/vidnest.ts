@@ -315,7 +315,7 @@ export class VidnestScraper {
           !link.includes("cacdn.hakunaymatata.com") &&
           !link.includes("workers.dev")
         ) {
-          link = `https://dreadnought.47qzoobg8k.workers.dev/${encodeURIComponent(link)}`;
+          link = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(link)}`;
         }
 
         const sourceSuffix =
