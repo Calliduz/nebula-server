@@ -162,7 +162,8 @@ export async function getWyzieSubtitles(
   season?: number,
   episode?: number,
 ) {
-  const key = process.env.WYZIE_API_KEY || "wyzie-f654g5d9x9tyae0tt5rx5hd7bdjrzhvz";
+  const key =
+    process.env.WYZIE_API_KEY || "wyzie-f654g5d9x9tyae0tt5rx5hd7bdjrzhvz";
   if (!key) return [];
 
   let url = `https://sub.wyzie.io/search?id=${tmdbId}&key=${key}`;
@@ -199,4 +200,3 @@ export async function getWyzieSubtitles(
     return [];
   }
 }
-
