@@ -204,6 +204,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("nexlunar99.site") ||
       lower.includes("videasy.to") ||
       lower.includes("shegu.org") ||
+      lower.includes("ironbubble.site") ||
+      lower.includes("randomseg") ||
+      lower.includes("stormfire66.com") ||
+      lower.includes("/r2/") ||
       /i-cdn-\d+/.test(lower) ||
       /[a-z]{5}\d{3}[a-z]{3}\./.test(lower)
     ) {
