@@ -1908,8 +1908,14 @@ app.get("/api/proxy/stream", async (req, res) => {
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
     }
-  } else if (targetUrl.includes("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=")) {
-    const parts = targetUrl.split("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=");
+  } else if (
+    targetUrl.includes(
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
+    )
+  ) {
+    const parts = targetUrl.split(
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
+    );
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
@@ -1923,7 +1929,8 @@ app.get("/api/proxy/stream", async (req, res) => {
 
   if (isGoodstream) {
     const headersJson = JSON.stringify({
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
       accept: "*/*",
       "accept-language": "en-US,en;q=0.5",
       "sec-fetch-dest": "empty",
@@ -2310,8 +2317,14 @@ app.get("/api/proxy/segment", async (req, res) => {
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
     }
-  } else if (targetUrl.includes("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=")) {
-    const parts = targetUrl.split("patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=");
+  } else if (
+    targetUrl.includes(
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
+    )
+  ) {
+    const parts = targetUrl.split(
+      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
+    );
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
@@ -2325,7 +2338,8 @@ app.get("/api/proxy/segment", async (req, res) => {
 
   if (isGoodstream) {
     const headersJson = JSON.stringify({
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
       accept: "*/*",
       "accept-language": "en-US,en;q=0.5",
       "sec-fetch-dest": "empty",
@@ -3552,6 +3566,7 @@ app.get("/api/videasy", async (req, res) => {
   const episodeStr = req.query.episode as string;
   const title = (req.query.title as string) || "";
   const releaseYear = (req.query.releaseYear as string) || "";
+  const passedSeed = req.query.seed as string;
 
   if (!tmdbId || !type) {
     return res.status(400).json({ error: "Missing tmdbId or type" });
@@ -3659,6 +3674,7 @@ app.get("/api/videasy", async (req, res) => {
         season,
         episode,
         force,
+        passedSeed,
       );
     }
 

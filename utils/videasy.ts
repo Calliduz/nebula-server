@@ -536,6 +536,7 @@ export async function fetchVideasySources(
   season: number = 1,
   episode: number = 1,
   force: boolean = false,
+  passedSeed?: string,
 ): Promise<Record<string, any>> {
   if (process.env.DISABLE_VIDEASY === "true") {
     console.log(`[VIDEASY] Scraper is temporarily disabled via env config.`);
@@ -622,27 +623,31 @@ export async function fetchVideasySources(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
   };
 
-  let seed = "";
-  try {
-    const res = await fetchWithGotScraping(
-      seedUrl,
-      seedHeaders,
-      undefined,
-      "get",
-      undefined,
-      undefined,
-      false, // http2 = false
-    );
-    if (res && res.statusCode >= 200 && res.statusCode < 300 && res.body) {
-      const bodyJson = JSON.parse(res.body.toString());
-      seed = bodyJson.seed || "";
+  let seed = passedSeed || "";
+  if (!seed) {
+    try {
+      const res = await fetchWithGotScraping(
+        seedUrl,
+        seedHeaders,
+        undefined,
+        "get",
+        undefined,
+        undefined,
+        false, // http2 = false
+      );
+      if (res && res.statusCode >= 200 && res.statusCode < 300 && res.body) {
+        const bodyJson = JSON.parse(res.body.toString());
+        seed = bodyJson.seed || "";
+      }
+    } catch (err: any) {
+      const status = err.response?.statusCode || "unknown";
+      console.error(
+        `[VIDEASY] Failed to fetch seed. Status: ${status}. Error:`,
+        err.message,
+      );
     }
-  } catch (err: any) {
-    const status = err.response?.statusCode || "unknown";
-    console.error(
-      `[VIDEASY] Failed to fetch seed. Status: ${status}. Error:`,
-      err.message,
-    );
+  } else {
+    console.log(`[VIDEASY] Using seed passed from client: ${seed}`);
   }
 
   if (!seed) {
