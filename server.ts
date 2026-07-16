@@ -462,8 +462,6 @@ const VIDSRC_EMBED_HOST = (
   process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru"
 ).replace(/\/$/, "");
 
-
-
 // ── Proxy Management ────────────────────────────────────────────────────────
 const PROXIES_FILE = "./proxies_verified.json";
 let proxyPool: string[] = [];
