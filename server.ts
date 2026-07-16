@@ -462,9 +462,7 @@ const VIDSRC_EMBED_HOST = (
   process.env.VIDSRC_EMBED_HOST || "https://vsembed.ru"
 ).replace(/\/$/, "");
 
-// Residential Proxy Fallback
-const RESIDENTIAL_PROXY = process.env.RESIDENTIAL_PROXY;
-let residentialProxyCooldown = 0;
+
 
 // ── Proxy Management ────────────────────────────────────────────────────────
 const PROXIES_FILE = "./proxies_verified.json";
