@@ -1,4 +1,4 @@
-const CDN_REFERER = "https://cloudnestra.com/";
+const CDN_REFERER = "https://vidnest.fun/";
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
@@ -68,7 +68,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
         // Use it only if not already set by customHeaders
         if (referer === CDN_REFERER)
           referer = hostParam.endsWith("/") ? hostParam : hostParam + "/";
-        if (origin === "https://cloudnestra.com")
+        if (origin === new URL(CDN_REFERER).origin)
           origin = new URL(hostParam).origin;
       }
     } catch {}
