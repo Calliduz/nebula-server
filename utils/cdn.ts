@@ -179,6 +179,13 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("silverpathacademy.cyou") ||
       lower.includes("cleantechworld.sbs") ||
       lower.includes("bellecrest.store") ||
+      lower.includes("mountainviewfinance") ||
+      lower.includes("healthproshop") ||
+      lower.includes("meadowlaneeducation") ||
+      lower.includes("kriss424did") ||
+      lower.includes("lizer123") ||
+      lower.includes("cf-master") ||
+      lower.includes("/v4/") ||
       lower.includes("185.237.") ||
       lower.includes("203.188.") ||
       /https?:\/\/\d+\.\d+\.\d+\.\d+/.test(lower) ||
