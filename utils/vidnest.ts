@@ -34,13 +34,13 @@ export class VidnestScraper {
 
     const baseUrl = "https://new.vidnest.fun";
     const providers = [
+      "vidlink",
+      "moviesapi",
       "moviebox",
       "allmovies",
       "klikxxi",
       "hollymoviehd",
-      "moviesapi",
       "videasy",
-      "vidlink",
       "movies5f",
     ];
 
