@@ -162,9 +162,9 @@ export function createVidriftRouter(): Router {
       };
 
       const scanPromise = runScan();
-      // Give the scraper 6 seconds to resolve
+      // Give the scraper 8 seconds to resolve
       const raceTimeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 6000),
+        setTimeout(resolve, 8000),
       );
 
       await Promise.race([scanPromise, raceTimeout]);
@@ -173,7 +173,7 @@ export function createVidriftRouter(): Router {
         return res.json(fetchResult);
       } else {
         console.log(
-          `[VIDRIFT] Scan still running after 6s for ${tmdbId}. Returning empty — bg scan continues.`,
+          `[VIDRIFT] Scan still running after 8s for ${tmdbId}. Returning empty — bg scan continues.`,
         );
         return res.json({});
       }
