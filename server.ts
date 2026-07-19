@@ -40,6 +40,7 @@ import { createSubtitleRouter } from "./routes/subtitles.js";
 import { createFilmuRouter } from "./routes/filmu.js";
 import { createVidnestRouter } from "./routes/vidnest.js";
 import { createVaplayerRouter } from "./routes/vaplayer.js";
+import { createVidriftRouter } from "./routes/vidrift.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
 import jschardet from "jschardet";
@@ -1794,6 +1795,9 @@ app.use(createVidnestRouter());
 
 // Vaplayer scraper route → routes/vaplayer.ts (detach by removing this line + the import above)
 app.use(createVaplayerRouter());
+
+// Vidrift scraper route → routes/vidrift.ts
+app.use(createVidriftRouter());
 
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {

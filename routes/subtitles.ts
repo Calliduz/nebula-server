@@ -70,6 +70,10 @@ export const SUBTITLE_ALLOWLIST = [
   "new.vidnest.fun",
   "vaplayer.ru",
   "streamdata.vaplayer.ru",
+  // Vidrift domains
+  "vidrift.in",
+  "vdrk.site",
+  "cache.vdrk.site",
   // Wyzie domains
   "wyzie.io",
   "sub.wyzie.io",
@@ -84,10 +88,11 @@ function sourcePriority(source: string): number {
   if (source === "Wyzie") return 4;
   if (source === "Vidnest") return 5;
   if (source === "Vaplayer") return 6;
-  if (source === "VidLink") return 7;
-  if (source && source.startsWith("FilmU")) return 8;
-  if (source === "OpenSubtitles") return 9;
-  return 10;
+  if (source === "Vidrift") return 7;
+  if (source === "VidLink") return 8;
+  if (source && source.startsWith("FilmU")) return 9;
+  if (source === "OpenSubtitles") return 10;
+  return 11;
 }
 
 function isEnglish(s: any): boolean {

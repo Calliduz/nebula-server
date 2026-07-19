@@ -253,6 +253,13 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
     } else if (
+      lower.includes("vidrift.in") ||
+      lower.includes("vdrk.site") ||
+      lower.includes("hostingersite.com")
+    ) {
+      referer = "https://vidrift.in/";
+      origin = "https://vidrift.in";
+    } else if (
       lower.includes("onlinecoursecreator.site") ||
       lower.includes("startupfundinglab.site") ||
       lower.includes("digitalassetlaunchpad.site") ||
