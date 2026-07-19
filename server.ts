@@ -1268,24 +1268,64 @@ app.get("/api/stream", async (req, res) => {
         !cachedRecord.streamExpiresAt ||
         new Date() < cachedRecord.streamExpiresAt
       ) {
-        // If we have a streamUrl and it's likely alive (checked later for Cloudnestra, but for KissKH it's usually fine)
-        // OR if we just want to return the mirrors.
         console.log(`[STREAM] Cache HIT ✔ for ${tmdbId} S${season}E${episode}`);
 
-        // Handle subtile proxying for cached results
-        const allSubtitles: any[] = [];
-        if (cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
-          const subMap = new Map();
+        // Merge mirrors from suffix caches if they exist and are valid
+        const mergedMirrorsMap = new Map<string, any>();
+        if (cachedRecord.mirrors) {
           cachedRecord.mirrors.forEach((m: any) => {
-            if (m.subtitles) {
-              m.subtitles.forEach((s: any) => {
-                const subUrl = s.url;
-                if (subUrl && !subMap.has(subUrl)) subMap.set(subUrl, s);
-              });
+            if (m && m.source && m.url) {
+              mergedMirrorsMap.set(`${m.source}_${m.url}`, m);
             }
           });
-          allSubtitles.push(...subMap.values());
         }
+
+        const suffixes = [
+          "vidrock",
+          "vaplayer",
+          "videasy",
+          "vidrift",
+          "vidnest",
+          "filmu",
+        ];
+        const now = new Date();
+        await Promise.all(
+          suffixes.map(async (suffix) => {
+            try {
+              const record = await StreamCache.findOne({
+                tmdbId: `${tmdbId}-${suffix}`,
+                type: kind,
+                season,
+                episode,
+              });
+              if (
+                record &&
+                record.mirrors &&
+                (!record.streamExpiresAt || now < record.streamExpiresAt)
+              ) {
+                record.mirrors.forEach((m: any) => {
+                  if (m && m.source && m.url) {
+                    mergedMirrorsMap.set(`${m.source}_${m.url}`, m);
+                  }
+                });
+              }
+            } catch (e) {}
+          }),
+        );
+        const finalMirrors = Array.from(mergedMirrorsMap.values());
+
+        // Handle subtitle proxying for merged cached results
+        const allSubtitles: any[] = [];
+        const subMap = new Map();
+        finalMirrors.forEach((m: any) => {
+          if (m.subtitles) {
+            m.subtitles.forEach((s: any) => {
+              const subUrl = s.url;
+              if (subUrl && !subMap.has(subUrl)) subMap.set(subUrl, s);
+            });
+          }
+        });
+        allSubtitles.push(...subMap.values());
 
         return res.json({
           streamUrl: cachedRecord.streamUrl,
@@ -1294,7 +1334,7 @@ app.get("/api/stream", async (req, res) => {
           qualityTag: cachedRecord.qualityTag || "UNKNOWN",
           quality: cachedRecord.qualityTag, // Compatibility
           resolution: cachedRecord.resolution || "UNKNOWN",
-          mirrors: cachedRecord.mirrors || [],
+          mirrors: finalMirrors,
           subtitles: allSubtitles.map((s) => {
             if (
               s.url &&
