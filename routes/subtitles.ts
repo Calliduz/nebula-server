@@ -85,14 +85,14 @@ export const SUBTITLE_ALLOWLIST = [
 function sourcePriority(source: string): number {
   if (source === "VidVault") return 1;
   if (source === "VidRock") return 2;
-  if (source === "Peachify") return 3;
-  if (source === "Videasy") return 4;
-  if (source === "Wyzie") return 5;
-  if (source === "Vidnest") return 6;
-  if (source === "Vaplayer") return 7;
-  if (source === "Vidrift") return 8;
-  if (source === "VidLink") return 9;
-  if (source && source.startsWith("FilmU")) return 10;
+  if (source === "Vaplayer") return 3;
+  if (source === "Vidrift") return 4;
+  if (source === "Peachify") return 5;
+  if (source === "Videasy") return 6;
+  if (source === "VidLink") return 7;
+  if (source === "Vidnest") return 8;
+  if (source && source.startsWith("FilmU")) return 9;
+  if (source === "Wyzie") return 10;
   if (source === "OpenSubtitles") return 11;
   return 12;
 }
@@ -591,27 +591,27 @@ export function createSubtitleRouter(
           return true;
         });
 
-      // Merge in priority order (English VidLink/Videasy before non-English)
+      // Merge in priority order
       const allTracksOrdered = [
         ...dedup(vidVaultTrack),
         ...dedup(vidrockTrack.filter(isEnglish)),
-        ...dedup(peachifyTrack.filter(isEnglish)),
-        ...dedup(vidriftTrack.filter(isEnglish)),
-        ...dedup(filmuTrack.filter(isEnglish)),
-        ...dedup(vidLinkTrack.filter(isEnglish)),
-        ...dedup(videasyTrack.filter(isEnglish)),
-        ...dedup(wyzieTrack.filter(isEnglish)),
-        ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
+        ...dedup(vidriftTrack.filter(isEnglish)),
+        ...dedup(peachifyTrack.filter(isEnglish)),
+        ...dedup(videasyTrack.filter(isEnglish)),
+        ...dedup(vidLinkTrack.filter(isEnglish)),
+        ...dedup(vidnestTrack.filter(isEnglish)),
+        ...dedup(filmuTrack.filter(isEnglish)),
+        ...dedup(wyzieTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
-        ...dedup(peachifyTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vidriftTrack.filter((s) => !isEnglish(s))),
-        ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
-        ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
-        ...dedup(wyzieTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vidnestTrack.filter((s) => !isEnglish(s))),
         ...dedup(vaplayerTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vidriftTrack.filter((s) => !isEnglish(s))),
+        ...dedup(peachifyTrack.filter((s) => !isEnglish(s))),
+        ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vidnestTrack.filter((s) => !isEnglish(s))),
+        ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
+        ...dedup(wyzieTrack.filter((s) => !isEnglish(s))),
         ...dedup(openSubsTrack),
       ];
 

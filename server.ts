@@ -1286,6 +1286,7 @@ app.get("/api/stream", async (req, res) => {
           "vaplayer",
           "videasy",
           "vidrift",
+          "peachify",
           "vidnest",
           "filmu",
         ];
@@ -1862,7 +1863,20 @@ app.post("/api/stream/flush", express.json(), async (req, res) => {
   const tmdbId = req.body?.tmdbId as string;
   if (!tmdbId) return res.status(400).json({ error: "Missing tmdbId" });
   await StreamCache.updateMany(
-    { tmdbId: { $in: [tmdbId, `${tmdbId}-vidrock`, `${tmdbId}-videasy`] } },
+    {
+      tmdbId: {
+        $in: [
+          tmdbId,
+          `${tmdbId}-vidrock`,
+          `${tmdbId}-vaplayer`,
+          `${tmdbId}-videasy`,
+          `${tmdbId}-vidrift`,
+          `${tmdbId}-peachify`,
+          `${tmdbId}-vidnest`,
+          `${tmdbId}-filmu`,
+        ],
+      },
+    },
     { streamUrl: null, streamExpiresAt: null, subtitles: [] },
   ).catch(() => null);
   return res.json({ ok: true, message: "Stream cache cleared for " + tmdbId });
@@ -2808,7 +2822,12 @@ app.get("/api/stream/availability", async (req, res) => {
     const queryIds = [
       ...tmdbIds,
       ...tmdbIds.map((id) => `${id}-vidrock`),
+      ...tmdbIds.map((id) => `${id}-vaplayer`),
       ...tmdbIds.map((id) => `${id}-videasy`),
+      ...tmdbIds.map((id) => `${id}-vidrift`),
+      ...tmdbIds.map((id) => `${id}-peachify`),
+      ...tmdbIds.map((id) => `${id}-vidnest`),
+      ...tmdbIds.map((id) => `${id}-filmu`),
     ];
     const [cachedStreams, deadPool] = await Promise.all([
       StreamCache.find({ tmdbId: { $in: queryIds } }),
@@ -2820,14 +2839,24 @@ app.get("/api/stream/availability", async (req, res) => {
         (s) =>
           (String(s.tmdbId) === String(id) ||
             String(s.tmdbId) === `${id}-vidrock` ||
-            String(s.tmdbId) === `${id}-videasy`) &&
+            String(s.tmdbId) === `${id}-vaplayer` ||
+            String(s.tmdbId) === `${id}-videasy` ||
+            String(s.tmdbId) === `${id}-vidrift` ||
+            String(s.tmdbId) === `${id}-peachify` ||
+            String(s.tmdbId) === `${id}-vidnest` ||
+            String(s.tmdbId) === `${id}-filmu`) &&
           (s.streamUrl || (s.mirrors && s.mirrors.length > 0)),
       );
       const showDead = deadPool.filter(
         (d) =>
           String(d.tmdbId) === String(id) ||
           String(d.tmdbId) === `${id}-vidrock` ||
-          String(d.tmdbId) === `${id}-videasy`,
+          String(d.tmdbId) === `${id}-vaplayer` ||
+          String(d.tmdbId) === `${id}-videasy` ||
+          String(d.tmdbId) === `${id}-vidrift` ||
+          String(d.tmdbId) === `${id}-peachify` ||
+          String(d.tmdbId) === `${id}-vidnest` ||
+          String(d.tmdbId) === `${id}-filmu`,
       );
 
       const hasCached = showCached.length > 0;
@@ -2914,7 +2943,16 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
     // 2. Validate that a matching StreamCache entry exists
     const cacheExists = await StreamCache.findOne({
       tmdbId: {
-        $in: [tmdbId.toString(), `${tmdbId}-vidrock`, `${tmdbId}-videasy`],
+        $in: [
+          tmdbId.toString(),
+          `${tmdbId}-vidrock`,
+          `${tmdbId}-vaplayer`,
+          `${tmdbId}-videasy`,
+          `${tmdbId}-vidrift`,
+          `${tmdbId}-peachify`,
+          `${tmdbId}-vidnest`,
+          `${tmdbId}-filmu`,
+        ],
       },
       type,
       season,
@@ -2985,7 +3023,16 @@ app.post("/api/stream/report-dead", express.json(), async (req, res) => {
     const result = await StreamCache.findOneAndUpdate(
       {
         tmdbId: {
-          $in: [tmdbId.toString(), `${tmdbId}-vidrock`, `${tmdbId}-videasy`],
+          $in: [
+            tmdbId.toString(),
+            `${tmdbId}-vidrock`,
+            `${tmdbId}-vaplayer`,
+            `${tmdbId}-videasy`,
+            `${tmdbId}-vidrift`,
+            `${tmdbId}-peachify`,
+            `${tmdbId}-vidnest`,
+            `${tmdbId}-filmu`,
+          ],
         },
         type,
         season,

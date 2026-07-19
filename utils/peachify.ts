@@ -6,7 +6,7 @@ const KEY_HEX = "a8f2a1b5e9c470814f6b2c3a5d8e7f9c1a2b3c4d5e3f7a8b8cad1e2d0a4d5c5
 const BASE_STREAM_API = "https://usa.eat-peach.sbs";
 const BASE_SUB_API = "https://uwu.eat-peach.sbs";
 
-const PROVIDERS = ["holly", "air", "moviebox", "net", "multi"];
+const PROVIDERS = ["air", "holly", "moviebox", "net", "multi"];
 
 function decodeBase64Url(str: string): Uint8Array {
   let base64 = str.replace(/-/g, "+").replace(/_/g, "/");
