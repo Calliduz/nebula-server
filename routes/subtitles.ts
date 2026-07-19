@@ -77,6 +77,7 @@ export const SUBTITLE_ALLOWLIST = [
   // Wyzie domains
   "wyzie.io",
   "sub.wyzie.io",
+  "eat-peach.sbs",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -84,15 +85,16 @@ export const SUBTITLE_ALLOWLIST = [
 function sourcePriority(source: string): number {
   if (source === "VidVault") return 1;
   if (source === "VidRock") return 2;
-  if (source === "Videasy") return 3;
-  if (source === "Wyzie") return 4;
-  if (source === "Vidnest") return 5;
-  if (source === "Vaplayer") return 6;
-  if (source === "Vidrift") return 7;
-  if (source === "VidLink") return 8;
-  if (source && source.startsWith("FilmU")) return 9;
-  if (source === "OpenSubtitles") return 10;
-  return 11;
+  if (source === "Peachify") return 3;
+  if (source === "Videasy") return 4;
+  if (source === "Wyzie") return 5;
+  if (source === "Vidnest") return 6;
+  if (source === "Vaplayer") return 7;
+  if (source === "Vidrift") return 8;
+  if (source === "VidLink") return 9;
+  if (source && source.startsWith("FilmU")) return 10;
+  if (source === "OpenSubtitles") return 11;
+  return 12;
 }
 
 function isEnglish(s: any): boolean {
@@ -482,6 +484,46 @@ export function createSubtitleRouter(
           }
           return [];
         })(),
+
+        // L — Peachify subtitles from StreamCache
+        (async () => {
+          try {
+            const peachifyCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!peachifyCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            peachifyCache.mirrors
+              .filter(
+                (m: any) =>
+                  typeof m.source === "string" &&
+                  m.source.startsWith("Peachify"),
+              )
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `peachify-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: "Peachify",
+                    });
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Peachify cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
       ]);
 
       const [
@@ -495,6 +537,7 @@ export function createSubtitleRouter(
         vidrockResult,
         wyzieResult,
         vidriftResult,
+        peachifyResult,
       ] = results;
 
       const openSubsTrack =
@@ -529,9 +572,13 @@ export function createSubtitleRouter(
         vidriftResult && vidriftResult.status === "fulfilled"
           ? vidriftResult.value
           : [];
+      const peachifyTrack =
+        peachifyResult && peachifyResult.status === "fulfilled"
+          ? peachifyResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -548,6 +595,7 @@ export function createSubtitleRouter(
       const allTracksOrdered = [
         ...dedup(vidVaultTrack),
         ...dedup(vidrockTrack.filter(isEnglish)),
+        ...dedup(peachifyTrack.filter(isEnglish)),
         ...dedup(vidriftTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
@@ -556,6 +604,7 @@ export function createSubtitleRouter(
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
+        ...dedup(peachifyTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidriftTrack.filter((s) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),

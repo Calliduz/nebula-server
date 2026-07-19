@@ -73,8 +73,17 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       }
     } catch {}
 
-    // Final overrides for specific providers that are extremely sensitive to outer Referer
     if (
+      lower.includes("eat-peach.sbs") ||
+      lower.includes("peachify.pro") ||
+      lower.includes("ergfwsarytrgfftsj.workers.dev") ||
+      lower.includes("wispy-waterfall")
+    ) {
+      referer = "https://peachify.pro/";
+      origin = "https://peachify.pro";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
+    } else if (
       lower.includes("megaplay.buzz") ||
       lower.includes("anime2.filmu.in") ||
       lower.includes("hianime.filmu.in") ||
