@@ -76,10 +76,14 @@ export class VidriftScraper {
             languageName: s.label || "English",
             source: "Vidrift",
           }));
-        console.log(`[VIDRIFT] Found ${subtitles.length} subtitles for TMDB ${tmdbId}`);
+        console.log(
+          `[VIDRIFT] Found ${subtitles.length} subtitles for TMDB ${tmdbId}`,
+        );
       }
     } catch (err: any) {
-      console.warn(`[VIDRIFT] Subtitle fetch failed for TMDB ${tmdbId}: ${err.message}`);
+      console.warn(
+        `[VIDRIFT] Subtitle fetch failed for TMDB ${tmdbId}: ${err.message}`,
+      );
     }
 
     // 2. Fetch Streams in parallel
