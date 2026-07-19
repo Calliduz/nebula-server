@@ -12,7 +12,7 @@ export const randomIP = () => {
 
 export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
   let referer = CDN_REFERER;
-  let origin = new URL(CDN_REFERER).origin;
+  let origin: string | null = new URL(CDN_REFERER).origin;
   let cookie: string | null = null;
 
   // Default browser headers for fetch/CORS
@@ -255,10 +255,12 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     } else if (
       lower.includes("vidrift.in") ||
       lower.includes("vdrk.site") ||
-      lower.includes("hostingersite.com")
+      lower.includes("hostingersite.com") ||
+      lower.includes("profitablelaunchsystem.website") ||
+      /\.website/i.test(lower)
     ) {
       referer = "https://vidrift.in/";
-      origin = "https://vidrift.in";
+      origin = null;
     } else if (
       lower.includes("onlinecoursecreator.site") ||
       lower.includes("startupfundinglab.site") ||
@@ -272,7 +274,11 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
   }
 
   headers["referer"] = referer;
-  headers["origin"] = origin;
+  if (origin) {
+    headers["origin"] = origin;
+  } else {
+    delete headers["origin"];
+  }
 
   if (cookie) headers["cookie"] = cookie;
 
