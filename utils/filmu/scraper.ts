@@ -174,7 +174,8 @@ export class FilmuScraper {
         );
       }
 
-      // ── Task C: Aura VidRock ──
+      // ── Task C: Aura VidRock (Disabled in favor of standalone VidRock) ──
+      /*
       tasks.push(
         (async () => {
           try {
@@ -226,6 +227,7 @@ export class FilmuScraper {
           }
         })(),
       );
+      */
 
       // ── Task D: Kuro Anime (Only run for Animation content type) ──
       if (metadata.isAnimation) {
