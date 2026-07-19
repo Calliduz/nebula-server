@@ -87,11 +87,11 @@ function sourcePriority(source: string): number {
   if (source === "VidRock") return 2;
   if (source === "Vaplayer") return 3;
   if (source === "Vidrift") return 4;
-  if (source === "Peachify") return 5;
-  if (source === "Videasy") return 6;
-  if (source === "VidLink") return 7;
-  if (source === "Vidnest") return 8;
-  if (source && source.startsWith("FilmU")) return 9;
+  if (source === "Videasy") return 5;
+  if (source === "VidLink") return 6;
+  if (source === "Vidnest") return 7;
+  if (source && source.startsWith("FilmU")) return 8;
+  if (source === "Peachify") return 9;
   if (source === "Wyzie") return 10;
   if (source === "OpenSubtitles") return 11;
   return 12;
@@ -597,20 +597,20 @@ export function createSubtitleRouter(
         ...dedup(vidrockTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
         ...dedup(vidriftTrack.filter(isEnglish)),
-        ...dedup(peachifyTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
+        ...dedup(peachifyTrack.filter(isEnglish)),
         ...dedup(wyzieTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
         ...dedup(vaplayerTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidriftTrack.filter((s) => !isEnglish(s))),
-        ...dedup(peachifyTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidnestTrack.filter((s) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
+        ...dedup(peachifyTrack.filter((s) => !isEnglish(s))),
         ...dedup(wyzieTrack.filter((s) => !isEnglish(s))),
         ...dedup(openSubsTrack),
       ];
