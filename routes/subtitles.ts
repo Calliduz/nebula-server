@@ -440,6 +440,48 @@ export function createSubtitleRouter(
           }
           return [];
         })(),
+
+        // K — Vidrift subtitles
+        (async () => {
+          try {
+            const subUrl =
+              kind === "tv"
+                ? `https://vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
+                : `https://vidrift.in/api/source/subtitles/movie/${tmdbId}`;
+            const referer =
+              kind === "tv"
+                ? `https://vidrift.in/embed/tv/${tmdbId}/${season}/${episode}`
+                : `https://vidrift.in/embed/movie/${tmdbId}`;
+
+            const response = await fetch(subUrl, {
+              headers: {
+                accept: "*/*",
+                "accept-language": "en-US,en;q=0.6",
+                referer,
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+              },
+              signal: AbortSignal.timeout(6000),
+            });
+            if (!response.ok) return [];
+            const data = await response.json();
+            if (data && data.success && Array.isArray(data.subtitles)) {
+              return data.subtitles
+                .filter((s: any) => s.file)
+                .map((s: any) => ({
+                  id: `vidrift-${s.label.toLowerCase()}-${tmdbId}-${season}-${episode}`,
+                  url: s.file,
+                  lang: getLanguageIso(s.label),
+                  languageName: s.label,
+                  source: "Vidrift",
+                }));
+            }
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Vidrift subtitle extraction failed: ${err.message}`,
+            );
+          }
+          return [];
+        })(),
       ]);
 
       const [
@@ -452,6 +494,7 @@ export function createSubtitleRouter(
         vaplayerResult,
         vidrockResult,
         wyzieResult,
+        vidriftResult,
       ] = results;
 
       const openSubsTrack =
@@ -482,9 +525,13 @@ export function createSubtitleRouter(
         wyzieResult && wyzieResult.status === "fulfilled"
           ? wyzieResult.value
           : [];
+      const vidriftTrack =
+        vidriftResult && vidriftResult.status === "fulfilled"
+          ? vidriftResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -501,6 +548,7 @@ export function createSubtitleRouter(
       const allTracksOrdered = [
         ...dedup(vidVaultTrack),
         ...dedup(vidrockTrack.filter(isEnglish)),
+        ...dedup(vidriftTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
@@ -508,6 +556,7 @@ export function createSubtitleRouter(
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vidriftTrack.filter((s) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
