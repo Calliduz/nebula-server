@@ -1,4 +1,3 @@
-import { gotScraping } from "got-scraping";
 import type { MirrorStream } from "./scraper.js";
 
 export class VidriftScraper {
@@ -31,7 +30,7 @@ export class VidriftScraper {
     proxyUrl?: string | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<MirrorStream[]> {
-    const { tmdbId, kind, season = 1, episode = 1, proxyUrl, signal } = params;
+    const { tmdbId, kind, season = 1, episode = 1, signal } = params;
 
     const referer =
       kind === "tv"
@@ -55,30 +54,26 @@ export class VidriftScraper {
           ? `https://vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
           : `https://vidrift.in/api/source/subtitles/movie/${tmdbId}`;
 
-      const gotOptions: any = {
+      const res = await fetch(subUrl, {
         headers: this.makeHeaders(referer),
-        responseType: "json",
-        timeout: { request: 5000 },
-        retry: { limit: 0 },
-      };
-      if (proxyUrl) gotOptions.proxyUrl = proxyUrl;
-      if (signal) gotOptions.signal = signal;
+        signal,
+      });
 
-      const subRes = await gotScraping.get(subUrl, gotOptions);
-      const subData = subRes.body as any;
-
-      if (subData && subData.success && Array.isArray(subData.subtitles)) {
-        subtitles = subData.subtitles
-          .filter((s: any) => s.file)
-          .map((s: any) => ({
-            url: s.file,
-            lang: s.label || "en",
-            languageName: s.label || "English",
-            source: "Vidrift",
-          }));
-        console.log(
-          `[VIDRIFT] Found ${subtitles.length} subtitles for TMDB ${tmdbId}`,
-        );
+      if (res.ok) {
+        const subData = (await res.json()) as any;
+        if (subData && subData.success && Array.isArray(subData.subtitles)) {
+          subtitles = subData.subtitles
+            .filter((s: any) => s.file)
+            .map((s: any) => ({
+              url: s.file,
+              lang: s.label || "en",
+              languageName: s.label || "English",
+              source: "Vidrift",
+            }));
+          console.log(
+            `[VIDRIFT] Found ${subtitles.length} subtitles for TMDB ${tmdbId}`,
+          );
+        }
       }
     } catch (err: any) {
       console.warn(
@@ -93,18 +88,17 @@ export class VidriftScraper {
           ? `https://vidrift.in/api/source/tv/${tmdbId}/${season}/${episode}?source=${server}`
           : `https://vidrift.in/api/source/movie/${tmdbId}?source=${server}`;
 
-      const gotOptions: any = {
-        headers: this.makeHeaders(referer),
-        responseType: "json",
-        timeout: { request: 6000 },
-        retry: { limit: 0 },
-      };
-      if (proxyUrl) gotOptions.proxyUrl = proxyUrl;
-      if (signal) gotOptions.signal = signal;
-
       try {
-        const res = await gotScraping.get(url, gotOptions);
-        const data = res.body as any;
+        const res = await fetch(url, {
+          headers: this.makeHeaders(referer),
+          signal,
+        });
+
+        if (!res.ok) {
+          return null;
+        }
+
+        const data = (await res.json()) as any;
 
         if (!data || !data.success || !Array.isArray(data.streams)) {
           return null;
