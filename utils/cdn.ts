@@ -88,6 +88,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("nekostream.site") ||
       lower.includes("lostproject.club") ||
       lower.includes("cloudvideo.lat") ||
+      lower.includes("cloudbuzz.lol") ||
+      lower.includes("livedns.my") ||
+      lower.includes("watching.onl") ||
+      lower.includes("vidwish.live") ||
       lower.includes("anime2.filmu.in") ||
       lower.includes("hianime.filmu.in") ||
       lower.includes("rive.filmu.in") ||
@@ -98,14 +102,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://megaplay.buzz/";
       origin = "https://megaplay.buzz";
-      delete headers["x-forwarded-for"];
-      delete headers["x-real-ip"];
-    } else if (
-      lower.includes("vidwish.live") ||
-      lower.includes("watching.onl")
-    ) {
-      referer = "https://vidwish.live/";
-      origin = "https://vidwish.live";
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (

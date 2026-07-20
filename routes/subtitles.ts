@@ -84,6 +84,8 @@ export const SUBTITLE_ALLOWLIST = [
   "watching.onl",
   "megaplay.buzz",
   "cloudvideo.lat",
+  "livedns.my",
+  "cloudbuzz.lol",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -755,13 +757,14 @@ export function createSubtitleRouter(
         url.includes("lostproject.club") ||
         url.includes("nekostream.site") ||
         url.includes("megaplay.buzz") ||
-        url.includes("cloudvideo.lat")
+        url.includes("cloudvideo.lat") ||
+        url.includes("livedns.my") ||
+        url.includes("cloudbuzz.lol") ||
+        url.includes("watching.onl") ||
+        url.includes("vidwish.live")
       ) {
         referer = "https://megaplay.buzz/";
         origin = "https://megaplay.buzz";
-      } else if (url.includes("watching.onl") || url.includes("vidwish.live")) {
-        referer = "https://vidwish.live/";
-        origin = "https://vidwish.live";
       }
 
       const headers: Record<string, string> = {
