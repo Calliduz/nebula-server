@@ -87,7 +87,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("megaplay.buzz") ||
       lower.includes("nekostream.site") ||
       lower.includes("lostproject.club") ||
-      lower.includes("watching.onl") ||
+      lower.includes("cloudvideo.lat") ||
       lower.includes("anime2.filmu.in") ||
       lower.includes("hianime.filmu.in") ||
       lower.includes("rive.filmu.in") ||
@@ -101,7 +101,8 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (
-      lower.includes("vidwish.live")
+      lower.includes("vidwish.live") ||
+      lower.includes("watching.onl")
     ) {
       referer = "https://vidwish.live/";
       origin = "https://vidwish.live";

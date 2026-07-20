@@ -32,7 +32,6 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
 // ── SSRF allowlist ────────────────────────────────────────────────────────────
-// Expanded to include Videasy CDN domains (subtitle files served from their CDN)
 export const SUBTITLE_ALLOWLIST = [
   "vidlink.pro",
   "megafiles.store",
@@ -84,6 +83,7 @@ export const SUBTITLE_ALLOWLIST = [
   "vidwish.live",
   "watching.onl",
   "megaplay.buzz",
+  "cloudvideo.lat",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -467,7 +467,8 @@ export function createSubtitleRouter(
                 accept: "*/*",
                 "accept-language": "en-US,en;q=0.6",
                 referer,
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "user-agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
               },
               signal: AbortSignal.timeout(6000),
             });
@@ -546,8 +547,7 @@ export function createSubtitleRouter(
             kuroCache.mirrors
               .filter(
                 (m: any) =>
-                  typeof m.source === "string" &&
-                  m.source.startsWith("Kuro"),
+                  typeof m.source === "string" && m.source.startsWith("Kuro"),
               )
               .forEach((m: any) => {
                 m.subtitles?.forEach((s: any) => {
@@ -565,9 +565,7 @@ export function createSubtitleRouter(
               });
             return Array.from(subMap.values());
           } catch (err: any) {
-            console.warn(
-              `[SUBS] Kuro cache extraction failed: ${err.message}`,
-            );
+            console.warn(`[SUBS] Kuro cache extraction failed: ${err.message}`);
             return [];
           }
         })(),
@@ -625,9 +623,7 @@ export function createSubtitleRouter(
           ? peachifyResult.value
           : [];
       const kuroTrack =
-        kuroResult && kuroResult.status === "fulfilled"
-          ? kuroResult.value
-          : [];
+        kuroResult && kuroResult.status === "fulfilled" ? kuroResult.value : [];
 
       console.log(
         `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Kuro:${kuroTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
@@ -755,6 +751,17 @@ export function createSubtitleRouter(
       } else if (url.includes("videasy") || url.includes("goldweather.net")) {
         referer = "https://vidlink.pro/";
         origin = "https://vidlink.pro";
+      } else if (
+        url.includes("lostproject.club") ||
+        url.includes("nekostream.site") ||
+        url.includes("megaplay.buzz") ||
+        url.includes("cloudvideo.lat")
+      ) {
+        referer = "https://megaplay.buzz/";
+        origin = "https://megaplay.buzz";
+      } else if (url.includes("watching.onl") || url.includes("vidwish.live")) {
+        referer = "https://vidwish.live/";
+        origin = "https://vidwish.live";
       }
 
       const headers: Record<string, string> = {
