@@ -42,6 +42,7 @@ import { createVidnestRouter } from "./routes/vidnest.js";
 import { createVaplayerRouter } from "./routes/vaplayer.js";
 import { createVidriftRouter } from "./routes/vidrift.js";
 import { createPeachifyRouter } from "./routes/peachify.js";
+import { createKuroRouter } from "./routes/kuro.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
 import jschardet from "jschardet";
@@ -1287,6 +1288,7 @@ app.get("/api/stream", async (req, res) => {
           "videasy",
           "vidrift",
           "peachify",
+          "kuro",
           "vidnest",
           "filmu",
         ];
@@ -1843,6 +1845,9 @@ app.use(createVidriftRouter());
 
 // Peachify scraper route → routes/peachify.ts
 app.use(createPeachifyRouter());
+
+// Kuro scraper route → routes/kuro.ts
+app.use(createKuroRouter());
 
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {
@@ -2826,6 +2831,7 @@ app.get("/api/stream/availability", async (req, res) => {
       ...tmdbIds.map((id) => `${id}-videasy`),
       ...tmdbIds.map((id) => `${id}-vidrift`),
       ...tmdbIds.map((id) => `${id}-peachify`),
+      ...tmdbIds.map((id) => `${id}-kuro`),
       ...tmdbIds.map((id) => `${id}-vidnest`),
       ...tmdbIds.map((id) => `${id}-filmu`),
     ];
@@ -2843,6 +2849,7 @@ app.get("/api/stream/availability", async (req, res) => {
             String(s.tmdbId) === `${id}-videasy` ||
             String(s.tmdbId) === `${id}-vidrift` ||
             String(s.tmdbId) === `${id}-peachify` ||
+            String(s.tmdbId) === `${id}-kuro` ||
             String(s.tmdbId) === `${id}-vidnest` ||
             String(s.tmdbId) === `${id}-filmu`) &&
           (s.streamUrl || (s.mirrors && s.mirrors.length > 0)),
@@ -2855,6 +2862,7 @@ app.get("/api/stream/availability", async (req, res) => {
           String(d.tmdbId) === `${id}-videasy` ||
           String(d.tmdbId) === `${id}-vidrift` ||
           String(d.tmdbId) === `${id}-peachify` ||
+          String(d.tmdbId) === `${id}-kuro` ||
           String(d.tmdbId) === `${id}-vidnest` ||
           String(d.tmdbId) === `${id}-filmu`,
       );
@@ -2950,6 +2958,7 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
           `${tmdbId}-videasy`,
           `${tmdbId}-vidrift`,
           `${tmdbId}-peachify`,
+          `${tmdbId}-kuro`,
           `${tmdbId}-vidnest`,
           `${tmdbId}-filmu`,
         ],
@@ -3030,6 +3039,7 @@ app.post("/api/stream/report-dead", express.json(), async (req, res) => {
             `${tmdbId}-videasy`,
             `${tmdbId}-vidrift`,
             `${tmdbId}-peachify`,
+            `${tmdbId}-kuro`,
             `${tmdbId}-vidnest`,
             `${tmdbId}-filmu`,
           ],

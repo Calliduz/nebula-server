@@ -78,6 +78,12 @@ export const SUBTITLE_ALLOWLIST = [
   "wyzie.io",
   "sub.wyzie.io",
   "eat-peach.sbs",
+  "anime-scraper-v2.vercel.app",
+  "nekostream.site",
+  "lostproject.club",
+  "vidwish.live",
+  "watching.onl",
+  "megaplay.buzz",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -92,6 +98,7 @@ function sourcePriority(source: string): number {
   if (source === "Vidnest") return 7;
   if (source && source.startsWith("FilmU")) return 8;
   if (source === "Peachify") return 9;
+  if (source === "Kuro") return 9.5;
   if (source === "Wyzie") return 10;
   if (source === "OpenSubtitles") return 11;
   return 12;
@@ -524,6 +531,46 @@ export function createSubtitleRouter(
             return [];
           }
         })(),
+
+        // M — Kuro subtitles from StreamCache
+        (async () => {
+          try {
+            const kuroCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!kuroCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            kuroCache.mirrors
+              .filter(
+                (m: any) =>
+                  typeof m.source === "string" &&
+                  m.source.startsWith("Kuro"),
+              )
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `kuro-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: "Kuro",
+                    });
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Kuro cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
       ]);
 
       const [
@@ -538,6 +585,7 @@ export function createSubtitleRouter(
         wyzieResult,
         vidriftResult,
         peachifyResult,
+        kuroResult,
       ] = results;
 
       const openSubsTrack =
@@ -576,9 +624,13 @@ export function createSubtitleRouter(
         peachifyResult && peachifyResult.status === "fulfilled"
           ? peachifyResult.value
           : [];
+      const kuroTrack =
+        kuroResult && kuroResult.status === "fulfilled"
+          ? kuroResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Kuro:${kuroTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -602,16 +654,18 @@ export function createSubtitleRouter(
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(peachifyTrack.filter(isEnglish)),
+        ...dedup(kuroTrack.filter(isEnglish)),
         ...dedup(wyzieTrack.filter(isEnglish)),
-        ...dedup(vidrockTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vaplayerTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vidriftTrack.filter((s) => !isEnglish(s))),
-        ...dedup(videasyTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vidLinkTrack.filter((s) => !isEnglish(s))),
-        ...dedup(vidnestTrack.filter((s) => !isEnglish(s))),
-        ...dedup(filmuTrack.filter((s) => !isEnglish(s))),
-        ...dedup(peachifyTrack.filter((s) => !isEnglish(s))),
-        ...dedup(wyzieTrack.filter((s) => !isEnglish(s))),
+        ...dedup(vidrockTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(vaplayerTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(vidriftTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(videasyTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(vidLinkTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(vidnestTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(filmuTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(peachifyTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(kuroTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(wyzieTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(openSubsTrack),
       ];
 
