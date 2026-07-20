@@ -24,9 +24,9 @@ async function decryptAesGcm(encryptedData: string, keyHex: string): Promise<any
       throw new Error("Invalid encrypted data format");
     }
 
-    const iv = decodeBase64Url(parts[0]);
-    const ciphertext = decodeBase64Url(parts[1]);
-    const tag = decodeBase64Url(parts[2]);
+    const iv = decodeBase64Url(parts[0]!);
+    const ciphertext = decodeBase64Url(parts[1]!);
+    const tag = decodeBase64Url(parts[2]!);
 
     const keyBuffer = Buffer.from(keyHex, "hex");
 

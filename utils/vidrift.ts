@@ -54,10 +54,10 @@ export class VidriftScraper {
           ? `https://vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
           : `https://vidrift.in/api/source/subtitles/movie/${tmdbId}`;
 
-      const res = await fetch(subUrl, {
-        headers: this.makeHeaders(referer),
-        signal,
-      });
+      const reqInit1: RequestInit = { headers: this.makeHeaders(referer) };
+      if (signal) reqInit1.signal = signal;
+
+      const res = await fetch(subUrl, reqInit1);
 
       if (res.ok) {
         const subData = (await res.json()) as any;
@@ -89,10 +89,10 @@ export class VidriftScraper {
           : `https://vidrift.in/api/source/movie/${tmdbId}?source=${server}`;
 
       try {
-        const res = await fetch(url, {
-          headers: this.makeHeaders(referer),
-          signal,
-        });
+        const reqInit2: RequestInit = { headers: this.makeHeaders(referer) };
+        if (signal) reqInit2.signal = signal;
+
+        const res = await fetch(url, reqInit2);
 
         if (!res.ok) {
           return null;
