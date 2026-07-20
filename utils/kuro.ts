@@ -69,7 +69,6 @@ export class KuroScraper {
               : [];
 
         if (mediaList.length > 0) {
-          // Look for title match
           const targetClean = searchStr.toLowerCase();
           const match = mediaList.find((m: any) => {
             const rom = (m.title?.romaji || "").toLowerCase();
@@ -95,16 +94,16 @@ export class KuroScraper {
       console.warn(`[KURO] AniList ID resolution failed: ${err.message}`);
     }
 
-    // Fallback: return tmdbId
     return tmdbId ? String(tmdbId) : null;
   }
 
   /**
-   * Extracts streams and subtitles from a Kuro watch endpoint response payload
+   * Extracts streams and subtitles from a Kuro watch payload (Sub or Dub)
    */
   private static parseKuroPayload(
     data: any,
     providerName: string,
+    subDubType: "sub" | "dub",
   ): { streams: MirrorStream[]; subtitles: SubtitleStream[] } {
     if (!data) return { streams: [], subtitles: [] };
 
@@ -140,6 +139,7 @@ export class KuroScraper {
     });
 
     // 2. Extract streams
+    const subDubTag = subDubType.toUpperCase(); // SUB or DUB
     containers.forEach((c: any) => {
       const streamList = c.streams || c.sources;
       if (Array.isArray(streamList)) {
@@ -154,13 +154,20 @@ export class KuroScraper {
             s.isM3U8;
 
           const serverName = s.server || providerName.toUpperCase();
+          const defaultReferer =
+            serverName.toLowerCase().includes("vidwish") ||
+            providerName.toLowerCase().includes("vidwish")
+              ? "https://vidwish.live/"
+              : "https://megaplay.buzz/";
+
           streams.push({
             url: streamUrl,
-            source: `Kuro (${serverName})`,
+            source: `Kuro (${serverName} ${subDubTag})`,
             quality: s.quality ? `${s.quality}p` : "Auto",
             type: isHls ? "hls" : "mp4",
+            audio: subDubType === "dub" ? "English Dub" : "Japanese Sub",
             headers: {
-              Referer: s.referer || "https://megaplay.buzz/",
+              Referer: s.referer || defaultReferer,
               ...(s.headers || {}),
             },
             subtitles,
@@ -171,12 +178,17 @@ export class KuroScraper {
 
     // Fallback: direct m3u8 property
     if (streams.length === 0 && data.m3u8) {
+      const defaultReferer = providerName.toLowerCase().includes("vidwish")
+        ? "https://vidwish.live/"
+        : "https://megaplay.buzz/";
+
       streams.push({
         url: data.m3u8,
-        source: `Kuro (${providerName.toUpperCase()})`,
+        source: `Kuro (${providerName.toUpperCase()} ${subDubTag})`,
         quality: "Auto",
         type: "hls",
-        headers: { Referer: "https://megaplay.buzz/" },
+        audio: subDubType === "dub" ? "English Dub" : "Japanese Sub",
+        headers: { Referer: defaultReferer },
         subtitles,
       });
     }
@@ -204,31 +216,41 @@ export class KuroScraper {
       return [];
     }
 
-    // Query default endpoint + parallel provider endpoints
+    // Query default endpoint + parallel provider endpoints for BOTH sub and dub
     const providerList = ["default", ...PROVIDERS] as const;
+    const subDubTypes = ["sub", "dub"] as const;
 
-    const scrapePromises = providerList.map(async (provider) => {
-      const isDefault = provider === "default";
-      const watchUrl = isDefault
-        ? `${BASE_API}/default/${targetId}/sub/${episode}`
-        : `${BASE_API}/watch/${provider}/${targetId}/sub/${provider}-${episode}`;
+    const scrapePromises: Promise<MirrorStream[]>[] = [];
 
-      try {
-        const reqInit: RequestInit = { headers: this.makeHeaders() };
-        if (signal) reqInit.signal = signal;
+    providerList.forEach((provider) => {
+      subDubTypes.forEach((subDub) => {
+        scrapePromises.push(
+          (async (): Promise<MirrorStream[]> => {
+            const isDefault = provider === "default";
+            const watchUrl = isDefault
+              ? `${BASE_API}/default/${targetId}/${subDub}/${episode}`
+              : `${BASE_API}/watch/${provider}/${targetId}/${subDub}/${provider}-${episode}`;
 
-        const res = await fetch(watchUrl, reqInit);
-        if (!res.ok) return [];
+            try {
+              const reqInit: RequestInit = { headers: this.makeHeaders() };
+              if (signal) reqInit.signal = signal;
 
-        const data = (await res.json()) as any;
-        const { streams } = this.parseKuroPayload(data, provider);
-        return streams;
-      } catch (err: any) {
-        console.warn(
-          `[KURO] Provider ${provider} failed for AniList ID ${targetId}: ${err.message}`,
+              const res = await fetch(watchUrl, reqInit);
+              if (!res.ok) return [];
+
+              const data = (await res.json()) as any;
+              const { streams } = this.parseKuroPayload(
+                data,
+                provider,
+                subDub,
+              );
+              return streams;
+            } catch (err: any) {
+              return [];
+            }
+          })(),
         );
-        return [];
-      }
+      });
     });
 
     const results = await Promise.all(scrapePromises);
@@ -243,7 +265,7 @@ export class KuroScraper {
     });
 
     console.log(
-      `[KURO] Resolved ${dedupedMirrors.length} valid anime mirrors for TMDB ${tmdbId} (AniList ${targetId})`,
+      `[KURO] Resolved ${dedupedMirrors.length} valid anime sub/dub mirrors for TMDB ${tmdbId} (AniList ${targetId})`,
     );
     return dedupedMirrors;
   }

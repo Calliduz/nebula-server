@@ -69,6 +69,7 @@ export interface MirrorStream {
   headers?: Record<string, string> | undefined;
   type?: "hls" | "mp4" | "torrent";
   subtitles?: SubtitleStream[];
+  audio?: string;
 }
 
 export interface ScrapeResult {
