@@ -3333,9 +3333,7 @@ async function getFanartMetadata(
         ? { url: sortByLikes(data.showbackground)[0].url, cat: "show-bg" }
         : data.tvbackground?.length
           ? { url: sortByLikes(data.tvbackground)[0].url, cat: "tv-bg" }
-          : data.tvthumb?.length
-            ? { url: sortByLikes(data.tvthumb)[0].url, cat: "thumb" }
-            : null;
+          : null;
 
       if (selection) backgroundUrl = selection.url;
     } else {
@@ -3364,11 +3362,9 @@ async function getFanartMetadata(
 
       const selection = data.moviebackground?.length
         ? { url: sortByLikes(data.moviebackground)[0].url, cat: "movie-bg" }
-        : data.moviethumb?.length
-          ? { url: sortByLikes(data.moviethumb)[0].url, cat: "movie-thumb" }
-          : data.moviebanner?.length
-            ? { url: sortByLikes(data.moviebanner)[0].url, cat: "movie-banner" }
-            : null;
+        : data.hdmoviebackground?.length
+          ? { url: sortByLikes(data.hdmoviebackground)[0].url, cat: "hdmovie-bg" }
+          : null;
 
       if (selection) backgroundUrl = selection.url;
     }
