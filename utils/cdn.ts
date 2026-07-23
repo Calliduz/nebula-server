@@ -126,12 +126,13 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vidnest-1.workers.dev") ||
       lower.includes("vidnest-2.workers.dev") ||
       lower.includes("vidnest-3.workers.dev") ||
-      lower.includes("vudnest-4.workers.dev") ||
       lower.includes("vidnest-4.workers.dev") ||
+      lower.includes("vudnest-4.workers.dev") ||
       lower.includes("vidness-1.workers.dev") ||
       lower.includes("vidnestt.workers.dev") ||
       lower.includes("vidnests22-e71.workers.dev") ||
-      lower.includes("vidnees.workers.dev")
+      lower.includes("vidnees.workers.dev") ||
+      lower.includes("patient-flower-33aa")
     ) {
       referer = "https://vidnest.fun/";
       origin = "https://vidnest.fun";
@@ -148,20 +149,16 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://embed.filmu.in/";
       origin = isManifest ? "https://embed.filmu.in" : "null";
-    } else if (lower.includes("goodstream.cc")) {
-      referer = "https://flashstream.cc/";
-      origin = "https://flashstream.cc";
-      delete headers["x-forwarded-for"];
-      delete headers["x-real-ip"];
     } else if (
-      // goodstream.cc CDN segments resolve to letsgocdn*.shop
+      lower.includes("goodstream.cc") ||
+      lower.includes("tripplestream.online") ||
       lower.includes("letsgocdn") ||
-      lower.includes("technologyknowledge.site") ||
-      // Vidnest HollyMovieHD CDN
-      lower.includes("tripplestream.online")
+      lower.includes("technologyknowledge.site")
     ) {
       referer = "https://goodstream.cc/";
       origin = "https://goodstream.cc";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
     } else if (
       // Vidnest Videasy proxy
       lower.includes("tiktoks.animanga.fun")
@@ -170,13 +167,15 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       origin = "https://tiktoks.animanga.fun";
     } else if (
       lower.includes("upcloud.animanga.fun") ||
+      lower.includes("megacloud.animanga.fun") ||
       lower.includes("animanga.fun")
     ) {
       referer = "https://vidnest.fun/";
       origin = "https://vidnest.fun";
     } else if (
       // Vidnest AllMovies CDN
-      lower.includes("laika422mon.com")
+      lower.includes("laika422mon.com") ||
+      lower.includes("kriss424did.com")
     ) {
       referer = "https://vidnest.fun/";
       origin = "https://vidnest.fun";
@@ -184,6 +183,9 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       delete headers["x-real-ip"];
     } else if (
       // Vidnest MoviesAPI / KlikXXI CDN (aurorion family)
+      lower.includes("brionix.cyou") ||
+      lower.includes("pinepathcreativecollect.space") ||
+      lower.includes("halcyoncreative.site") ||
       lower.includes("aurorionmarketing.sbs") ||
       lower.includes("mindspireconsulting.sbs") ||
       lower.includes("aurorionacademy.site") ||
@@ -200,7 +202,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("mountainviewfinance") ||
       lower.includes("healthproshop") ||
       lower.includes("meadowlaneeducation") ||
-      lower.includes("kriss424did") ||
       lower.includes("lizer123") ||
       lower.includes("cf-master") ||
       lower.includes("/v4/") ||

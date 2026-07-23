@@ -1964,43 +1964,25 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
-  // Extract nested URL from proxy if it got wrapped incorrectly
-  if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
-    const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
+  // Extract nested URL from dead workers if wrapped
+  if (targetUrl.includes("workers.dev/mp4-proxy?url=")) {
+    const parts = targetUrl.split("workers.dev/mp4-proxy?url=");
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
     }
-  } else if (
-    targetUrl.includes(
-      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
-    )
-  ) {
-    const parts = targetUrl.split(
-      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
-    );
+  } else if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
+    const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
     }
   }
 
-  let isHakunaHost = false;
-  try {
-    isHakunaHost = new URL(targetUrl).hostname.includes("hakunaymatata.com");
-  } catch {}
-
-  if (
-    isHakunaHost &&
-    !targetUrl.includes("cacdn.hakunaymatata.com") &&
-    !targetUrl.includes("workers.dev")
-  ) {
-    targetUrl = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(targetUrl)}`;
-  } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
-    targetUrl = targetUrl.replace(
-      "dl.gemlelispe.workers.dev",
-      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
-    );
+  // Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
+  if (targetUrl.includes("hakunaymatata.com") && !targetUrl.includes("animanga.fun/proxy")) {
+    const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
+    targetUrl = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(targetUrl)}&headers=${encodeURIComponent(params.toString())}`;
   }
 
   // FilmU wormhole→box rewrite: wormhole.filmu.in/proxy/m3u8 returns 403;
@@ -2353,43 +2335,25 @@ app.get("/api/proxy/segment", async (req, res) => {
     }
   }
 
-  // Extract nested URL from proxy if it got wrapped incorrectly
-  if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
-    const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
+  // Extract nested URL from dead workers if wrapped
+  if (targetUrl.includes("workers.dev/mp4-proxy?url=")) {
+    const parts = targetUrl.split("workers.dev/mp4-proxy?url=");
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
     }
-  } else if (
-    targetUrl.includes(
-      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
-    )
-  ) {
-    const parts = targetUrl.split(
-      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
-    );
+  } else if (targetUrl.includes("dreadnought.47qzoobg8k.workers.dev/")) {
+    const parts = targetUrl.split("dreadnought.47qzoobg8k.workers.dev/");
     const innerUrl = decodeURIComponent(parts[1] || "");
     if (innerUrl.startsWith("http")) {
       targetUrl = innerUrl;
     }
   }
 
-  let isHakunaHost = false;
-  try {
-    isHakunaHost = new URL(targetUrl).hostname.includes("hakunaymatata.com");
-  } catch {}
-
-  if (
-    isHakunaHost &&
-    !targetUrl.includes("cacdn.hakunaymatata.com") &&
-    !targetUrl.includes("workers.dev")
-  ) {
-    targetUrl = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(targetUrl)}`;
-  } else if (targetUrl.includes("dl.gemlelispe.workers.dev")) {
-    targetUrl = targetUrl.replace(
-      "dl.gemlelispe.workers.dev",
-      "patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=",
-    );
+  // Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
+  if (targetUrl.includes("hakunaymatata.com") && !targetUrl.includes("animanga.fun/proxy")) {
+    const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
+    targetUrl = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(targetUrl)}&headers=${encodeURIComponent(params.toString())}`;
   }
 
   // FilmU wormhole→box rewrite: wormhole.filmu.in/proxy/m3u8 returns 403;

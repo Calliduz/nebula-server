@@ -34,14 +34,15 @@ export class VidnestScraper {
 
     const baseUrl = "https://new.vidnest.fun";
     const providers = [
-      "vidlink",
-      "moviesapi",
-      "moviebox",
-      "allmovies",
-      "klikxxi",
       "hollymoviehd",
-      "videasy",
+      "vidxyz",
+      "klikxxi",
+      "moviesapi",
+      "allmovies",
+      "vidlink",
       "movies5f",
+      "moviebox",
+      "videasy",
     ];
 
     const subUrl =
@@ -120,6 +121,13 @@ export class VidnestScraper {
       }
     }
 
+    const workerPool = [
+      "https://dawn-dream-9823.vidness-1.workers.dev",
+      "https://yellow-band-0602.vidnestt.workers.dev",
+      "https://restless-dew-1ec6.vidnests22-e71.workers.dev",
+      "https://patient-flower-33aa.vidnest-4.workers.dev",
+    ];
+
     const allStreams: MirrorStream[] = [];
 
     streamsRes.forEach((res, idx) => {
@@ -146,16 +154,17 @@ export class VidnestScraper {
         }
       }
 
-      // ── Normalise the response across all sub-provider schemas ────────────
-      // Schema A (moviebox):   { url: [ { link, resolution, type } ] }
-      // Schema B (allmovies, hollymoviehd, moviesapi): { streams: [ { url, quality, type } ] }
-      // Schema C (movies5f):   { code, data: { medias: [ { mediaUrl, definition } ] } }
-      // Schema D (klikxxi):    { sources: [ { url, quality, type } ], title, ... }
-      // Schema E (videasy):    { url: "<string>", headers: { Referer, ... } }
-      // Schema F (vidlink):    { data: { stream: { playlist, captions } }, headers, provider }
-
-      type NormEntry = { link: string; resolution: string; type: string };
+      type NormEntry = { link: string; resolution: string; type: "mp4" | "hls"; headers?: Record<string, string> };
       const normalised: NormEntry[] = [];
+
+      // Helper to infer stream type
+      const detectType = (urlStr: string, rawType?: string): "mp4" | "hls" => {
+        if (urlStr.includes(".m3u8") || urlStr.includes("/hls") || urlStr.includes("master.m3u8")) return "hls";
+        if (rawType === "direct" && urlStr.includes(".mp4")) return "mp4";
+        if (rawType === "mp4") return "mp4";
+        if (rawType === "hls") return "hls";
+        return urlStr.includes(".mp4") ? "mp4" : "hls";
+      };
 
       // Schema A — moviebox: url is an array of objects with { link }
       if (Array.isArray(streamData?.url)) {
@@ -163,8 +172,9 @@ export class VidnestScraper {
           if (u?.link) {
             normalised.push({
               link: u.link,
-              resolution: u.resolution || "Auto",
-              type: u.type || "hls",
+              resolution: u.resolution || u.lang || "Auto",
+              type: detectType(u.link, u.type),
+              headers: u.headers,
             });
           }
         }
@@ -176,8 +186,9 @@ export class VidnestScraper {
           if (s?.url) {
             normalised.push({
               link: s.url,
-              resolution: s.quality || "Auto",
-              type: s.type === "direct" ? "mp4" : "hls",
+              resolution: s.quality || s.language || "Auto",
+              type: detectType(s.url, s.type),
+              headers: s.headers,
             });
           }
         }
@@ -191,7 +202,8 @@ export class VidnestScraper {
             normalised.push({
               link: m.mediaUrl,
               resolution: m.definition || "Auto",
-              type: "mp4",
+              type: detectType(m.mediaUrl, "mp4"),
+              headers: m.headers,
             });
           }
         }
@@ -203,20 +215,22 @@ export class VidnestScraper {
             normalised.push({
               link: d.url,
               resolution: d.resolution ? `${d.resolution}p` : "Auto",
-              type: "mp4",
+              type: detectType(d.url, "mp4"),
+              headers: d.headers,
             });
           }
         }
       }
 
-      // Schema D — klikxxi: { sources: [{url, quality, type}], title, ... }
+      // Schema D — klikxxi / vidxyz: { sources: [{url, quality, type}], title, ... }
       if (Array.isArray(streamData?.sources)) {
         for (const s of streamData.sources as any[]) {
           if (s?.url) {
             normalised.push({
               link: s.url,
               resolution: s.quality || "Auto",
-              type: s.type === "mp4" ? "mp4" : "hls",
+              type: detectType(s.url, s.type),
+              headers: s.headers,
             });
           }
         }
@@ -230,23 +244,23 @@ export class VidnestScraper {
         normalised.push({
           link: streamData.url,
           resolution: "Auto",
-          type: "hls",
+          type: detectType(streamData.url, "hls"),
+          headers: streamData.headers,
         });
       }
 
       // Schema F — vidlink: { data: { stream: { playlist, qualities, captions } }, headers, provider }
       const vlStream = streamData?.data?.stream;
       if (vlStream) {
-        // playlist is the primary HLS manifest
         const playlist = vlStream?.playlist;
         if (typeof playlist === "string" && playlist.startsWith("http")) {
           normalised.push({
             link: playlist,
             resolution: "Auto",
-            type: "hls",
+            type: detectType(playlist, "hls"),
+            headers: streamData.headers || vlStream.headers,
           });
         }
-        // qualities object present for direct mp4 streams
         if (vlStream?.qualities && typeof vlStream.qualities === "object") {
           for (const [res, q] of Object.entries(vlStream.qualities)) {
             const url = (q as any)?.url;
@@ -254,24 +268,38 @@ export class VidnestScraper {
               normalised.push({
                 link: url,
                 resolution: `${res}p`,
-                type: (q as any)?.type === "mp4" ? "mp4" : "hls",
+                type: detectType(url, (q as any)?.type),
+                headers: streamData.headers || (q as any)?.headers,
               });
             }
           }
         }
-        // alternativeParts or sources array sometimes present
         if (Array.isArray(vlStream?.sources)) {
           for (const s of vlStream.sources as any[]) {
             if (s?.url) {
               normalised.push({
                 link: s.url,
                 resolution: s.quality || "Auto",
-                type: "hls",
+                type: detectType(s.url, s.type),
+                headers: s.headers,
               });
             }
           }
         }
       }
+
+      // Prioritize direct IP streams (e.g. 185.237.x.x, 203.188.x.x) over Cloudflare .txt manifests
+      normalised.sort((a, b) => {
+        const aIp = /https?:\/\/\d+\.\d+\.\d+\.\d+/.test(a.link);
+        const bIp = /https?:\/\/\d+\.\d+\.\d+\.\d+/.test(b.link);
+        if (aIp && !bIp) return -1;
+        if (!aIp && bIp) return 1;
+        const aTxt = a.link.includes(".txt") || a.link.includes("cf-master");
+        const bTxt = b.link.includes(".txt") || b.link.includes("cf-master");
+        if (aTxt && !bTxt) return 1;
+        if (!aTxt && bTxt) return -1;
+        return 0;
+      });
 
       const providerNameMapped =
         provider === "moviebox"
@@ -290,7 +318,9 @@ export class VidnestScraper {
                       ? "VidLink"
                       : provider === "movies5f"
                         ? "Movies5F"
-                        : provider;
+                        : provider === "vidxyz"
+                          ? "VidXYZ"
+                          : provider;
 
       if (normalised.length === 0) {
         console.log(`[VIDNEST] ❌ ${providerNameMapped} — no streams found`);
@@ -304,18 +334,27 @@ export class VidnestScraper {
       normalised.forEach((u) => {
         let link = u.link;
 
-        // Re-route hakunaymatata.com through Cloudflare worker proxy
-        let isHakunaBase = false;
-        try {
-          isHakunaBase = new URL(link).hostname.includes("hakunaymatata.com");
-        } catch {}
+        // 1. Unwrap dead Cloudflare Workers (workers.dev/mp4-proxy?url=) to extract real target URL
+        if (link.includes("workers.dev/mp4-proxy?url=")) {
+          const parts = link.split("workers.dev/mp4-proxy?url=");
+          if (parts[1]) {
+            try {
+              const decoded = decodeURIComponent(parts[1]);
+              if (decoded.startsWith("http")) link = decoded;
+            } catch {}
+          }
+        }
 
-        if (
-          isHakunaBase &&
-          !link.includes("cacdn.hakunaymatata.com") &&
-          !link.includes("workers.dev")
-        ) {
-          link = `https://patient-flower-33aa.vidnest-4.workers.dev/mp4-proxy?url=${encodeURIComponent(link)}`;
+        // 2. If hakunaymatata.com without proxy, attach megacloud proxy with vidrock referer
+        if (link.includes("hakunaymatata.com") && !link.includes("animanga.fun/proxy")) {
+          const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
+          link = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(link)}&headers=${encodeURIComponent(params.toString())}`;
+        } else if (u.headers && typeof u.headers === "object" && Object.keys(u.headers).length > 0) {
+          const params = new URLSearchParams();
+          for (const [k, v] of Object.entries(u.headers)) {
+            params.append(k, String(v));
+          }
+          link = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(link)}&headers=${encodeURIComponent(params.toString())}`;
         }
 
         const sourceSuffix =
@@ -324,7 +363,7 @@ export class VidnestScraper {
           url: link,
           source: `Vidnest${sourceSuffix} (${u.resolution})`,
           quality: u.resolution,
-          type: u.type === "mp4" ? "mp4" : "hls",
+          type: u.type,
           subtitles: subtitles,
         });
       });
