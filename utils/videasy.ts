@@ -527,6 +527,7 @@ async function scanProvider(
 }
 
 export const activeScans = new Set<string>();
+const inMemorySeedCache = new Map<string, { seed: string; expiresAt: number }>();
 
 export async function fetchVideasySources(
   title: string,
@@ -625,26 +626,39 @@ export async function fetchVideasySources(
 
   let seed = passedSeed || "";
   if (!seed) {
-    try {
-      const res = await fetchWithGotScraping(
-        seedUrl,
-        seedHeaders,
-        undefined,
-        "get",
-        undefined,
-        undefined,
-        false, // http2 = false
-      );
-      if (res && res.statusCode >= 200 && res.statusCode < 300 && res.body) {
-        const bodyJson = JSON.parse(res.body.toString());
-        seed = bodyJson.seed || "";
+    const cachedSeedObj = inMemorySeedCache.get(tmdbId);
+    if (cachedSeedObj && Date.now() < cachedSeedObj.expiresAt) {
+      seed = cachedSeedObj.seed;
+      console.log(`[VIDEASY] Using in-memory cached seed for ${tmdbId}`);
+    } else {
+      try {
+        const res = await fetchWithGotScraping(
+          seedUrl,
+          seedHeaders,
+          undefined,
+          "get",
+          undefined,
+          undefined,
+          false, // http2 = false
+        );
+        if (res && res.statusCode >= 200 && res.statusCode < 300 && res.body) {
+          const bodyJson = JSON.parse(res.body.toString());
+          seed = bodyJson.seed || "";
+          if (seed) {
+            const ttl = (bodyJson.ttlMs || 30000) - 5000;
+            inMemorySeedCache.set(tmdbId, {
+              seed,
+              expiresAt: Date.now() + Math.max(ttl, 10000),
+            });
+          }
+        }
+      } catch (err: any) {
+        const status = err.response?.statusCode || "unknown";
+        console.error(
+          `[VIDEASY] Failed to fetch seed. Status: ${status}. Error:`,
+          err.message,
+        );
       }
-    } catch (err: any) {
-      const status = err.response?.statusCode || "unknown";
-      console.error(
-        `[VIDEASY] Failed to fetch seed. Status: ${status}. Error:`,
-        err.message,
-      );
     }
   } else {
     console.log(`[VIDEASY] Using seed passed from client: ${seed}`);
