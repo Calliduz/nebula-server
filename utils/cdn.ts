@@ -234,6 +234,9 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("randomseg") ||
       lower.includes("stormfire66.com") ||
       lower.includes("vimeos.net") ||
+      lower.includes("paperoffer.site") ||
+      lower.includes("signtime.site") ||
+      lower.includes("speedracelight.com") ||
       lower.includes("/r2/") ||
       /i-cdn-\d+/.test(lower) ||
       /[a-z]{5}\d{3}[a-z]{3}\./.test(lower)
