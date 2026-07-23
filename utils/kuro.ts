@@ -239,11 +239,7 @@ export class KuroScraper {
               if (!res.ok) return [];
 
               const data = (await res.json()) as any;
-              const { streams } = this.parseKuroPayload(
-                data,
-                provider,
-                subDub,
-              );
+              const { streams } = this.parseKuroPayload(data, provider, subDub);
               return streams;
             } catch (err: any) {
               return [];

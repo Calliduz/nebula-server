@@ -2,7 +2,8 @@ import { gotScraping } from "got-scraping";
 import crypto from "crypto";
 import type { MirrorStream, SubtitleStream } from "./scraper.js";
 
-const KEY_HEX = "a8f2a1b5e9c470814f6b2c3a5d8e7f9c1a2b3c4d5e3f7a8b8cad1e2d0a4d5c5d";
+const KEY_HEX =
+  "a8f2a1b5e9c470814f6b2c3a5d8e7f9c1a2b3c4d5e3f7a8b8cad1e2d0a4d5c5d";
 const BASE_STREAM_API = "https://usa.eat-peach.sbs";
 const BASE_SUB_API = "https://uwu.eat-peach.sbs";
 
@@ -17,7 +18,10 @@ function decodeBase64Url(str: string): Uint8Array {
   return new Uint8Array(binary);
 }
 
-async function decryptAesGcm(encryptedData: string, keyHex: string): Promise<any> {
+async function decryptAesGcm(
+  encryptedData: string,
+  keyHex: string,
+): Promise<any> {
   try {
     const parts = encryptedData.split(".");
     if (parts.length !== 3) {
@@ -49,8 +53,8 @@ export class PeachifyScraper {
 
   private static makeHeaders() {
     return {
-      "Origin": "https://peachify.pro",
-      "Referer": "https://peachify.pro/",
+      Origin: "https://peachify.pro",
+      Referer: "https://peachify.pro/",
       "User-Agent": this.UA,
     };
   }
@@ -79,7 +83,7 @@ export class PeachifyScraper {
         headers: this.makeHeaders(),
         responseType: "json",
         signal,
-        timeout: { request: 5000 }
+        timeout: { request: 5000 },
       });
 
       if (Array.isArray(res.body)) {
@@ -92,12 +96,12 @@ export class PeachifyScraper {
             source: "Peachify",
           }));
         console.log(
-          `[PEACHIFY] Found ${subtitles.length} subtitles for TMDB ${tmdbId}`
+          `[PEACHIFY] Found ${subtitles.length} subtitles for TMDB ${tmdbId}`,
         );
       }
     } catch (err: any) {
       console.warn(
-        `[PEACHIFY] Subtitle fetch failed for TMDB ${tmdbId}: ${err.message}`
+        `[PEACHIFY] Subtitle fetch failed for TMDB ${tmdbId}: ${err.message}`,
       );
     }
 
@@ -113,7 +117,7 @@ export class PeachifyScraper {
           headers: this.makeHeaders(),
           responseType: "json",
           signal,
-          timeout: { request: 8000 }
+          timeout: { request: 8000 },
         });
 
         const body = res.body as any;
@@ -132,8 +136,11 @@ export class PeachifyScraper {
           if (!src.url) continue;
 
           // Normalize type/format
-          const type = src.url.includes(".m3u8") || src.type?.includes("mpegurl") ? "hls" : "mp4";
-          
+          const type =
+            src.url.includes(".m3u8") || src.type?.includes("mpegurl")
+              ? "hls"
+              : "mp4";
+
           providerStreams.push({
             url: src.url,
             source: `Peachify (${provider.toUpperCase()})`,
@@ -147,7 +154,7 @@ export class PeachifyScraper {
         return providerStreams;
       } catch (err: any) {
         console.warn(
-          `[PEACHIFY] Failed to fetch server ${provider} for TMDB ${tmdbId}: ${err.message}`
+          `[PEACHIFY] Failed to fetch server ${provider} for TMDB ${tmdbId}: ${err.message}`,
         );
         return [];
       }

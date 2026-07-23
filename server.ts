@@ -1980,7 +1980,10 @@ app.get("/api/proxy/stream", async (req, res) => {
   }
 
   // Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
-  if (targetUrl.includes("hakunaymatata.com") && !targetUrl.includes("animanga.fun/proxy")) {
+  if (
+    targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("animanga.fun/proxy")
+  ) {
     const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
     targetUrl = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(targetUrl)}&headers=${encodeURIComponent(params.toString())}`;
   }
@@ -2351,7 +2354,10 @@ app.get("/api/proxy/segment", async (req, res) => {
   }
 
   // Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
-  if (targetUrl.includes("hakunaymatata.com") && !targetUrl.includes("animanga.fun/proxy")) {
+  if (
+    targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("animanga.fun/proxy")
+  ) {
     const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
     targetUrl = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(targetUrl)}&headers=${encodeURIComponent(params.toString())}`;
   }
@@ -3287,7 +3293,10 @@ async function getFanartMetadata(
       const selection = data.moviebackground?.length
         ? { url: sortByLikes(data.moviebackground)[0].url, cat: "movie-bg" }
         : data.hdmoviebackground?.length
-          ? { url: sortByLikes(data.hdmoviebackground)[0].url, cat: "hdmovie-bg" }
+          ? {
+              url: sortByLikes(data.hdmoviebackground)[0].url,
+              cat: "hdmovie-bg",
+            }
           : null;
 
       if (selection) backgroundUrl = selection.url;

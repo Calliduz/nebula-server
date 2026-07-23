@@ -154,12 +154,22 @@ export class VidnestScraper {
         }
       }
 
-      type NormEntry = { link: string; resolution: string; type: "mp4" | "hls"; headers?: Record<string, string> };
+      type NormEntry = {
+        link: string;
+        resolution: string;
+        type: "mp4" | "hls";
+        headers?: Record<string, string>;
+      };
       const normalised: NormEntry[] = [];
 
       // Helper to infer stream type
       const detectType = (urlStr: string, rawType?: string): "mp4" | "hls" => {
-        if (urlStr.includes(".m3u8") || urlStr.includes("/hls") || urlStr.includes("master.m3u8")) return "hls";
+        if (
+          urlStr.includes(".m3u8") ||
+          urlStr.includes("/hls") ||
+          urlStr.includes("master.m3u8")
+        )
+          return "hls";
         if (rawType === "direct" && urlStr.includes(".mp4")) return "mp4";
         if (rawType === "mp4") return "mp4";
         if (rawType === "hls") return "hls";
@@ -346,10 +356,19 @@ export class VidnestScraper {
         }
 
         // 2. If hakunaymatata.com without proxy, attach megacloud proxy with vidrock referer
-        if (link.includes("hakunaymatata.com") && !link.includes("animanga.fun/proxy")) {
-          const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
+        if (
+          link.includes("hakunaymatata.com") &&
+          !link.includes("animanga.fun/proxy")
+        ) {
+          const params = new URLSearchParams({
+            Referer: "https://vidrock.ru/",
+          });
           link = `https://megacloud.animanga.fun/proxy?url=${encodeURIComponent(link)}&headers=${encodeURIComponent(params.toString())}`;
-        } else if (u.headers && typeof u.headers === "object" && Object.keys(u.headers).length > 0) {
+        } else if (
+          u.headers &&
+          typeof u.headers === "object" &&
+          Object.keys(u.headers).length > 0
+        ) {
           const params = new URLSearchParams();
           for (const [k, v] of Object.entries(u.headers)) {
             params.append(k, String(v));

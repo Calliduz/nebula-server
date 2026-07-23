@@ -116,9 +116,12 @@ export function createPeachifyRouter(): Router {
 
             if (existingRecord && existingRecord.mirrors) {
               // Merge: keep non-Peachify mirrors, replace/add Peachify ones
-              const nonPeachifyMirrors = (existingRecord.mirrors as any[]).filter(
+              const nonPeachifyMirrors = (
+                existingRecord.mirrors as any[]
+              ).filter(
                 (m: any) =>
-                  typeof m.source !== "string" || !m.source.startsWith("Peachify"),
+                  typeof m.source !== "string" ||
+                  !m.source.startsWith("Peachify"),
               );
               const mergedMirrors = [...nonPeachifyMirrors, ...mirrors];
 
