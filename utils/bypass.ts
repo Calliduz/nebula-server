@@ -49,6 +49,7 @@ export async function fetchWithCycleTLS(
 
   if (
     url.includes("wingsdatabase.com") ||
+    url.includes("speedracelight.com") ||
     url.includes("laika422mon.com") ||
     url.includes("aurorion")
   ) {

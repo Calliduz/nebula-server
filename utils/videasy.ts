@@ -199,7 +199,7 @@ async function fetchProviderStreams(
   sources: any[];
   subtitles: any[];
 }> {
-  const url = `https://api.wingsdatabase.com/${prov.path}/sources-with-title`;
+  const url = `https://api.speedracelight.com/${prov.path}/sources-with-title`;
   const params: Record<string, string> = {
     title: encodeURIComponent(title),
     mediaType,
@@ -606,7 +606,7 @@ export async function fetchVideasySources(
     ).catch(() => null);
   }
 
-  const seedUrl = `https://api.wingsdatabase.com/seed?mediaId=${tmdbId}`;
+  const seedUrl = `https://api.speedracelight.com/seed?mediaId=${tmdbId}`;
   const seedHeaders = {
     accept: "*/*",
     "accept-language": "en-US,en;q=0.5",
