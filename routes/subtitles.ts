@@ -71,6 +71,7 @@ export const SUBTITLE_ALLOWLIST = [
   "streamdata.vaplayer.ru",
   // Vidrift domains
   "vidrift.in",
+  "embed.vidrift.in",
   "vdrk.site",
   "cache.vdrk.site",
   // Wyzie domains
@@ -457,12 +458,12 @@ export function createSubtitleRouter(
           try {
             const subUrl =
               kind === "tv"
-                ? `https://vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
-                : `https://vidrift.in/api/source/subtitles/movie/${tmdbId}`;
+                ? `https://embed.vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
+                : `https://embed.vidrift.in/api/source/subtitles/movie/${tmdbId}`;
             const referer =
               kind === "tv"
-                ? `https://vidrift.in/embed/tv/${tmdbId}/${season}/${episode}`
-                : `https://vidrift.in/embed/movie/${tmdbId}`;
+                ? `https://embed.vidrift.in/embed/tv/${tmdbId}/${season}/${episode}`
+                : `https://embed.vidrift.in/embed/movie/${tmdbId}`;
 
             const response = await fetch(subUrl, {
               headers: {

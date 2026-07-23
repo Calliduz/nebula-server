@@ -34,8 +34,8 @@ export class VidriftScraper {
 
     const referer =
       kind === "tv"
-        ? `https://vidrift.in/embed/tv/${tmdbId}/${season}/${episode}`
-        : `https://vidrift.in/embed/movie/${tmdbId}`;
+        ? `https://embed.vidrift.in/embed/tv/${tmdbId}/${season}/${episode}`
+        : `https://embed.vidrift.in/embed/movie/${tmdbId}`;
 
     const servers = ["embed", "notorrent", "1embed"] as const;
     const serverDisplayNames: Record<string, string> = {
@@ -51,8 +51,8 @@ export class VidriftScraper {
     try {
       const subUrl =
         kind === "tv"
-          ? `https://vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
-          : `https://vidrift.in/api/source/subtitles/movie/${tmdbId}`;
+          ? `https://embed.vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
+          : `https://embed.vidrift.in/api/source/subtitles/movie/${tmdbId}`;
 
       const reqInit1: RequestInit = { headers: this.makeHeaders(referer) };
       if (signal) reqInit1.signal = signal;
@@ -85,8 +85,8 @@ export class VidriftScraper {
     const scrapePromises = servers.map(async (server) => {
       let url =
         kind === "tv"
-          ? `https://vidrift.in/api/source/tv/${tmdbId}/${season}/${episode}?source=${server}`
-          : `https://vidrift.in/api/source/movie/${tmdbId}?source=${server}`;
+          ? `https://embed.vidrift.in/api/source/tv/${tmdbId}/${season}/${episode}?source=${server}`
+          : `https://embed.vidrift.in/api/source/movie/${tmdbId}?source=${server}`;
 
       try {
         const reqInit2: RequestInit = { headers: this.makeHeaders(referer) };

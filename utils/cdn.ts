@@ -278,7 +278,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("profitablelaunchsystem.website") ||
       /\.website/i.test(lower)
     ) {
-      referer = "https://vidrift.in/";
+      referer = "https://embed.vidrift.in/";
       origin = null;
     } else if (
       lower.includes("onlinecoursecreator.site") ||
