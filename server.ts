@@ -43,6 +43,8 @@ import { createVaplayerRouter } from "./routes/vaplayer.js";
 import { createVidriftRouter } from "./routes/vidrift.js";
 import { createPeachifyRouter } from "./routes/peachify.js";
 import { createKuroRouter } from "./routes/kuro.js";
+import { createHdgHarTvRouter } from "./routes/hdghartv.js";
+import { HdgHarTvScraper } from "./utils/hdghartv.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
 import jschardet from "jschardet";
@@ -1291,6 +1293,7 @@ app.get("/api/stream", async (req, res) => {
           "kuro",
           "vidnest",
           "filmu",
+          "hdghartv",
         ];
         const now = new Date();
         await Promise.all(
@@ -1446,6 +1449,28 @@ app.get("/api/stream", async (req, res) => {
             }
           } catch (e: any) {
             console.error(`[STREAM] Vidnest failed:`, e.message);
+          }
+        }
+
+        // ── Phase E: HDGharTV Provider Fallback ───────────────────────────
+        if (mirrors.length === 0 && process.env.HDGHARTV_ENABLED !== "false") {
+          console.log(`[STREAM] Phase E: Checking HDGharTV providers...`);
+          try {
+            const hdghartvMirrors = await HdgHarTvScraper.getStream({
+              tmdbId: tmdbId.toString(),
+              type: kind as any,
+              season,
+              episode,
+              title,
+            });
+            if (hdghartvMirrors && hdghartvMirrors.length > 0) {
+              console.log(
+                `[STREAM] HDGharTV HIT ✔ (Found ${hdghartvMirrors.length} mirrors)`,
+              );
+              mirrors.push(...hdghartvMirrors);
+            }
+          } catch (e: any) {
+            console.error(`[STREAM] HDGharTV failed:`, e.message);
           }
         }
 
@@ -1856,6 +1881,9 @@ app.use(createPeachifyRouter());
 
 // Kuro scraper route → routes/kuro.ts
 app.use(createKuroRouter());
+
+// HDGharTV scraper route → routes/hdghartv.ts
+app.use(createHdgHarTvRouter());
 
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {

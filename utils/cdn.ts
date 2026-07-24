@@ -271,6 +271,14 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://vidrock.ru/";
       origin = "https://vidrock.ru";
     } else if (
+      lower.includes("streamraiwind.stream") ||
+      lower.includes("hdghartv.cc")
+    ) {
+      referer = "https://hdghartv.cc/";
+      origin = "https://hdghartv.cc";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
+    } else if (
       lower.includes("vodvidl.site") ||
       lower.includes("vidlink.pro") ||
       lower.includes("nightbreeze") ||
