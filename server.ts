@@ -1964,6 +1964,18 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
+  // Re-attach extra query parameters (like ?e=token) that Express parsed as separate req.query keys
+  const extraQueryParams: Record<string, string> = {};
+  for (const [key, val] of Object.entries(req.query)) {
+    if (key !== "url" && key !== "nebula_proxy" && typeof val === "string") {
+      extraQueryParams[key] = val;
+    }
+  }
+  const extraQueryString = new URLSearchParams(extraQueryParams).toString();
+  if (extraQueryString) {
+    targetUrl += (targetUrl.includes("?") ? "&" : "?") + extraQueryString;
+  }
+
   // Extract nested URL from dead workers if wrapped
   if (targetUrl.includes("workers.dev/mp4-proxy?url=")) {
     const parts = targetUrl.split("workers.dev/mp4-proxy?url=");
@@ -2336,6 +2348,18 @@ app.get("/api/proxy/segment", async (req, res) => {
     } catch {
       return res.status(400).send("Invalid url encoding");
     }
+  }
+
+  // Re-attach extra query parameters (like ?e=token) that Express parsed as separate req.query keys
+  const extraQueryParams: Record<string, string> = {};
+  for (const [key, val] of Object.entries(req.query)) {
+    if (key !== "url" && key !== "nebula_proxy" && typeof val === "string") {
+      extraQueryParams[key] = val;
+    }
+  }
+  const extraQueryString = new URLSearchParams(extraQueryParams).toString();
+  if (extraQueryString) {
+    targetUrl += (targetUrl.includes("?") ? "&" : "?") + extraQueryString;
   }
 
   // Extract nested URL from dead workers if wrapped
