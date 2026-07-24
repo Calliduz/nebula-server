@@ -98,7 +98,9 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("streamzone1.site") ||
       lower.includes("mewstream.buzz") ||
       lower.includes("zapora.buzz") ||
-      lower.includes("glimmeron.click")
+      lower.includes("glimmeron.click") ||
+      lower.includes("kotocdn.site") ||
+      lower.includes("anivideo.sbs")
     ) {
       referer = "https://megaplay.buzz/";
       origin = "https://megaplay.buzz";
