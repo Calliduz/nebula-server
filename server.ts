@@ -1490,10 +1490,18 @@ app.get("/api/stream", async (req, res) => {
 
           allSubtitles.push(...subMap.values());
 
-          // Sort to prioritize English and VidLink source
+          // Sort to prioritize English and selected mirror source
+          const selectedSource = (mirrors[0]?.source || "").toLowerCase();
+          const isSelectedSourceSub = (s: any) => {
+            if (!s || !s.source) return false;
+            const subSrc = s.source.toLowerCase();
+            if (selectedSource.includes(subSrc) || subSrc.includes(selectedSource)) return true;
+            return false;
+          };
+
           allSubtitles.sort((a, b) => {
-            const aIsVidLink = a.source === "VidLink";
-            const bIsVidLink = b.source === "VidLink";
+            const aIsSel = isSelectedSourceSub(a);
+            const bIsSel = isSelectedSourceSub(b);
             const aIsEng =
               a.languageName?.toLowerCase().includes("english") ||
               a.lang?.toLowerCase().startsWith("en");
@@ -1501,17 +1509,17 @@ app.get("/api/stream", async (req, res) => {
               b.languageName?.toLowerCase().includes("english") ||
               b.lang?.toLowerCase().startsWith("en");
 
-            // English + VidLink is highest priority
-            if (aIsEng && aIsVidLink && !(bIsEng && bIsVidLink)) return -1;
-            if (!(aIsEng && aIsVidLink) && bIsEng && bIsVidLink) return 1;
+            // English + Selected source is highest priority
+            if (aIsEng && aIsSel && !(bIsEng && bIsSel)) return -1;
+            if (!(aIsEng && aIsSel) && bIsEng && bIsSel) return 1;
 
             // Then just English
             if (aIsEng && !bIsEng) return -1;
             if (!aIsEng && bIsEng) return 1;
 
-            // Then VidLink (for other languages)
-            if (aIsVidLink && !bIsVidLink) return -1;
-            if (!aIsVidLink && bIsVidLink) return 1;
+            // Then Selected source (for other languages)
+            if (aIsSel && !bIsSel) return -1;
+            if (!aIsSel && bIsSel) return 1;
 
             return 0;
           });
