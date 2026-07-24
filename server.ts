@@ -2423,7 +2423,9 @@ app.get("/api/proxy/segment", async (req, res) => {
 
   const startTime = Date.now();
   const passHeaders: any = {};
-  if (req.headers.range) passHeaders.range = req.headers.range;
+  if (req.headers.range && !targetUrl.includes("animanga.fun")) {
+    passHeaders.range = req.headers.range;
+  }
 
   const isVidLink =
     targetUrl.includes("vodvidl.site") || targetUrl.includes("vidlink.pro");
