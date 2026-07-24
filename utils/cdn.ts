@@ -236,7 +236,9 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("vimeos.net") ||
       lower.includes("paperoffer.site") ||
       lower.includes("signtime.site") ||
+      lower.includes("checknews") ||
       lower.includes("speedracelight.com") ||
+      lower.includes("/vd/") ||
       lower.includes("/r2/") ||
       /i-cdn-\d+/.test(lower) ||
       /[a-z]{5}\d{3}[a-z]{3}\./.test(lower)
