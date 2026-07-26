@@ -1,6 +1,7 @@
 import axios from "axios";
 import crypto from "crypto";
-import type { MirrorStream } from "./scraper.js";
+import type { MirrorStream, SubtitleStream } from "./scraper.js";
+import { getLanguageName } from "./subtitles.js";
 
 const BASE_URL = "https://netnaija.film";
 const UA =
@@ -60,6 +61,56 @@ export class NetNaijaScraper {
   }
 
   /**
+   * Fetches multi-language captions/subtitles for a given subject stream
+   */
+  private static async getCaptions(
+    format: string,
+    id: string,
+    subjectId: string | number,
+    detailPath: string,
+    token: string,
+  ): Promise<SubtitleStream[]> {
+    try {
+      const clientToken = this.kp();
+      const captionUrl = `https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/caption?format=${encodeURIComponent(format)}&id=${encodeURIComponent(id)}&subjectId=${encodeURIComponent(subjectId)}&detailPath=${encodeURIComponent(detailPath)}`;
+
+      const res = await axios.get(captionUrl, {
+        headers: {
+          accept: "application/json",
+          "x-client-token": clientToken,
+          authorization: `Bearer ${token}`,
+          cookie: `token=${token}; netnaija_i18n_lang=en`,
+          origin: BASE_URL,
+          referer: `${BASE_URL}/`,
+          "user-agent": UA,
+        },
+        timeout: 5000,
+      });
+
+      const captions = res.data?.data?.captions;
+      if (!Array.isArray(captions) || captions.length === 0) {
+        return [];
+      }
+
+      return captions
+        .filter((c: any) => c && c.url)
+        .map((c: any) => {
+          const lang = (c.lan || "en").toLowerCase();
+          const langName = c.lanName || getLanguageName(lang) || "English";
+          return {
+            url: c.url,
+            lang,
+            languageName: langName,
+            source: "Vesper",
+          };
+        });
+    } catch (err: any) {
+      console.warn(`[Vesper/NetNaija] Failed to fetch captions: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Resolves TMDB title if title is not passed directly
    */
   private static async getTmdbTitle(
@@ -78,7 +129,7 @@ export class NetNaijaScraper {
   }
 
   /**
-   * Main entry point to scrape video stream mirrors
+   * Main entry point to scrape video stream mirrors & subtitles
    */
   public static async getStream(
     options: NetNaijaOptions,
@@ -194,6 +245,19 @@ export class NetNaijaScraper {
         return [];
       }
 
+      // Step 3: Fetch subtitles/captions
+      let subtitles: SubtitleStream[] = [];
+      const primaryStream = streamsData[0];
+      if (primaryStream && primaryStream.id) {
+        subtitles = await this.getCaptions(
+          primaryStream.format || "MP4",
+          primaryStream.id,
+          matchedItem.subjectId,
+          matchedItem.detailPath,
+          token,
+        );
+      }
+
       const mirrors: MirrorStream[] = [];
       for (const s of streamsData) {
         if (!s.url) continue;
@@ -211,11 +275,12 @@ export class NetNaijaScraper {
             Origin: BASE_URL,
             "User-Agent": UA,
           },
+          subtitles,
         });
       }
 
       console.log(
-        `[Vesper/NetNaija] ✅ Found ${mirrors.length} mirrors for TMDB ${numericTmdbId}`,
+        `[Vesper/NetNaija] ✅ Found ${mirrors.length} mirrors and ${subtitles.length} subtitles for TMDB ${numericTmdbId}`,
       );
       return mirrors;
     } catch (err: any) {

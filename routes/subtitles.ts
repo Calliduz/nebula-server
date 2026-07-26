@@ -98,6 +98,7 @@ function sourcePriority(source: string): number {
   if (source === "Vidrift") return 4;
   if (source === "Videasy") return 5;
   if (source === "VidLink") return 6;
+  if (source === "Vesper" || source === "NetNaija") return 6.5;
   if (source === "Vidnest") return 7;
   if (source && source.startsWith("FilmU")) return 8;
   if (source === "Peachify") return 9;
@@ -572,6 +573,46 @@ export function createSubtitleRouter(
             return [];
           }
         })(),
+
+        // N — Vesper (NetNaija) subtitles from StreamCache
+        (async () => {
+          try {
+            const vesperCache = await StreamCache.findOne({
+              tmdbId: tmdbId.toString(),
+              type: kind,
+              season,
+              episode,
+            });
+            if (!vesperCache?.mirrors?.length) return [];
+            const subMap = new Map<string, any>();
+            vesperCache.mirrors
+              .filter(
+                (m: any) =>
+                  typeof m.source === "string" &&
+                  (m.source.startsWith("Vesper") || m.source.startsWith("NetNaija")),
+              )
+              .forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !subMap.has(s.url)) {
+                    subMap.set(s.url, {
+                      id: `vesper-${s.lang || "unk"}-${subMap.size}`,
+                      url: s.url,
+                      lang: s.lang || "unk",
+                      languageName:
+                        s.languageName || s.label || s.lang || "Unknown",
+                      source: "Vesper",
+                    });
+                  }
+                });
+              });
+            return Array.from(subMap.values());
+          } catch (err: any) {
+            console.warn(
+              `[SUBS] Vesper cache extraction failed: ${err.message}`,
+            );
+            return [];
+          }
+        })(),
       ]);
 
       const [
@@ -587,6 +628,7 @@ export function createSubtitleRouter(
         vidriftResult,
         peachifyResult,
         kuroResult,
+        vesperResult,
       ] = results;
 
       const openSubsTrack =
@@ -627,9 +669,13 @@ export function createSubtitleRouter(
           : [];
       const kuroTrack =
         kuroResult && kuroResult.status === "fulfilled" ? kuroResult.value : [];
+      const vesperTrack =
+        vesperResult && vesperResult.status === "fulfilled"
+          ? vesperResult.value
+          : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Kuro:${kuroTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} Vesper:${vesperTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Kuro:${kuroTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -650,6 +696,7 @@ export function createSubtitleRouter(
         ...dedup(vidriftTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
+        ...dedup(vesperTrack.filter(isEnglish)),
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(peachifyTrack.filter(isEnglish)),
@@ -660,6 +707,7 @@ export function createSubtitleRouter(
         ...dedup(vidriftTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(vesperTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vidnestTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(peachifyTrack.filter((s: any) => !isEnglish(s))),
@@ -736,6 +784,13 @@ export function createSubtitleRouter(
       let origin: string | undefined;
 
       if (
+        url.includes("netnaija") ||
+        url.includes("cacdn.hakunaymatata.com") ||
+        url.includes("aoneroom.com")
+      ) {
+        referer = "https://netnaija.film/";
+        origin = "https://netnaija.film";
+      } else if (
         url.includes("vidlink") ||
         url.includes("megafiles") ||
         url.includes("storm.vodvidl.site")

@@ -166,14 +166,24 @@ export function createNetnaijaRouter(): Router {
 
 function buildResponseObject(mirrors: any[]): Record<string, any> {
   const responseData: Record<string, any> = {};
+  let globalSubtitles: any[] = [];
+
   mirrors.forEach((m: any) => {
+    if (Array.isArray(m.subtitles) && m.subtitles.length > 0 && globalSubtitles.length === 0) {
+      globalSubtitles = m.subtitles;
+    }
     responseData[m.source] = {
       url: m.url,
       type: m.type || "mp4",
       quality: m.quality || "Auto",
       source: m.source,
       headers: m.headers || {},
+      subtitles: m.subtitles || [],
     };
   });
+
+  if (globalSubtitles.length > 0) {
+    responseData.subtitles = globalSubtitles;
+  }
   return responseData;
 }
