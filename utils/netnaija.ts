@@ -55,7 +55,9 @@ export class NetNaijaScraper {
       }
       return null;
     } catch (err: any) {
-      console.warn(`[Vesper/NetNaija] Failed to get guest token: ${err.message}`);
+      console.warn(
+        `[Vesper/NetNaija] Failed to get guest token: ${err.message}`,
+      );
       return null;
     }
   }
@@ -105,7 +107,9 @@ export class NetNaijaScraper {
           };
         });
     } catch (err: any) {
-      console.warn(`[Vesper/NetNaija] Failed to fetch captions: ${err.message}`);
+      console.warn(
+        `[Vesper/NetNaija] Failed to fetch captions: ${err.message}`,
+      );
       return [];
     }
   }
@@ -157,7 +161,9 @@ export class NetNaijaScraper {
 
       const token = await this.getGuestToken();
       if (!token) {
-        console.warn(`[Vesper/NetNaija] Unable to obtain guest authentication token`);
+        console.warn(
+          `[Vesper/NetNaija] Unable to obtain guest authentication token`,
+        );
         return [];
       }
 
@@ -199,7 +205,9 @@ export class NetNaijaScraper {
         const itemTitle = (item.title || item.name || "").toLowerCase().trim();
         return (
           item.subjectType === targetType &&
-          (itemTitle === cleanSearch || itemTitle.includes(cleanSearch) || cleanSearch.includes(itemTitle))
+          (itemTitle === cleanSearch ||
+            itemTitle.includes(cleanSearch) ||
+            cleanSearch.includes(itemTitle))
         );
       });
 
@@ -261,10 +269,8 @@ export class NetNaijaScraper {
       const mirrors: MirrorStream[] = [];
       for (const s of streamsData) {
         if (!s.url) continue;
-        const resLabel = s.resolutions
-          ? `${s.resolutions}p`
-          : "HD";
-        
+        const resLabel = s.resolutions ? `${s.resolutions}p` : "HD";
+
         mirrors.push({
           url: s.url,
           quality: resLabel,

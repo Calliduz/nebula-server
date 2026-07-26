@@ -63,7 +63,8 @@ export function createNetnaijaRouter(): Router {
       ) {
         const netnaijaMirrors = (cachedRecord.mirrors as any[]).filter(
           (m: any) =>
-            typeof m.source === "string" && (m.source.startsWith("Vesper") || m.source.startsWith("NetNaija")),
+            typeof m.source === "string" &&
+            (m.source.startsWith("Vesper") || m.source.startsWith("NetNaija")),
         );
 
         if (
@@ -169,7 +170,11 @@ function buildResponseObject(mirrors: any[]): Record<string, any> {
   let globalSubtitles: any[] = [];
 
   mirrors.forEach((m: any) => {
-    if (Array.isArray(m.subtitles) && m.subtitles.length > 0 && globalSubtitles.length === 0) {
+    if (
+      Array.isArray(m.subtitles) &&
+      m.subtitles.length > 0 &&
+      globalSubtitles.length === 0
+    ) {
       globalSubtitles = m.subtitles;
     }
     responseData[m.source] = {

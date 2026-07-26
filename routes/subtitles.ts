@@ -589,7 +589,8 @@ export function createSubtitleRouter(
               .filter(
                 (m: any) =>
                   typeof m.source === "string" &&
-                  (m.source.startsWith("Vesper") || m.source.startsWith("NetNaija")),
+                  (m.source.startsWith("Vesper") ||
+                    m.source.startsWith("NetNaija")),
               )
               .forEach((m: any) => {
                 m.subtitles?.forEach((s: any) => {
