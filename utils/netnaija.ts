@@ -199,24 +199,44 @@ export class NetNaijaScraper {
 
       // Match target subjectType: 1 = movie, 2 = TV series
       const targetType = kind === "movie" ? 1 : 2;
-      const cleanSearch = searchTitle.toLowerCase().trim();
 
-      let matchedItem = searchItems.find((item: any) => {
-        const itemTitle = (item.title || item.name || "").toLowerCase().trim();
-        return (
-          item.subjectType === targetType &&
-          (itemTitle === cleanSearch ||
-            itemTitle.includes(cleanSearch) ||
-            cleanSearch.includes(itemTitle))
-        );
+      const normalize = (str: string) =>
+        str
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+      const normSearch = normalize(searchTitle);
+      const searchWords = normSearch.split(" ").filter((w) => w.length > 1);
+
+      const matchedItem = searchItems.find((item: any) => {
+        if (item.subjectType !== targetType) return false;
+
+        const itemTitle = item.title || item.name || "";
+        const normItem = normalize(itemTitle);
+
+        // 1. Exact or substring match
+        if (
+          normItem === normSearch ||
+          normItem.includes(normSearch) ||
+          normSearch.includes(normItem)
+        ) {
+          return true;
+        }
+
+        // 2. Word overlap match (at least 75% of search query words present in item title)
+        if (searchWords.length > 0) {
+          const itemWordSet = new Set(normItem.split(" "));
+          const matchedWords = searchWords.filter((w) => itemWordSet.has(w));
+          const matchRatio = matchedWords.length / searchWords.length;
+          if (matchRatio >= 0.75) {
+            return true;
+          }
+        }
+
+        return false;
       });
-
-      if (!matchedItem) {
-        // Fallback to first item matching subjectType if title fuzzy match fails
-        matchedItem = searchItems.find(
-          (item: any) => item.subjectType === targetType,
-        );
-      }
 
       if (!matchedItem || !matchedItem.subjectId || !matchedItem.detailPath) {
         console.log(

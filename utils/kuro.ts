@@ -37,64 +37,207 @@ export class KuroScraper {
   }
 
   /**
-   * Resolves AniList ID from Kuro search (/search?query=...)
+   * Resolves AniList ID and target episode from Kuro search (/search?query=...)
    */
-  private static async resolveAnilistId(
+  public static async resolveAnilistTarget(
     title?: string,
     tmdbId?: string,
+    kind: "movie" | "tv" = "tv",
+    season: number = 1,
+    episode: number = 1,
     signal?: AbortSignal,
-  ): Promise<string | null> {
-    if (!title && !tmdbId) return null;
+  ): Promise<{ targetId: string | null; targetEpisode: number }> {
+    if (!title && !tmdbId) return { targetId: null, targetEpisode: episode };
 
-    const searchStr = title ? this.cleanTitle(title) : tmdbId;
-    if (!searchStr) return tmdbId ? String(tmdbId) : null;
+    const cleanBase = title ? this.cleanTitle(title) : tmdbId;
+    if (!cleanBase)
+      return {
+        targetId: tmdbId ? String(tmdbId) : null,
+        targetEpisode: episode,
+      };
 
-    try {
-      const reqInit: RequestInit = { headers: this.makeHeaders() };
-      if (signal) reqInit.signal = signal;
+    const ordinal =
+      season === 1
+        ? "1st"
+        : season === 2
+          ? "2nd"
+          : season === 3
+            ? "3rd"
+            : `${season}th`;
 
-      const res = await fetch(
-        `${BASE_API}/search?query=${encodeURIComponent(searchStr)}&page=1&per_page=10`,
-        reqInit,
-      );
-
-      if (res.ok) {
-        const data = (await res.json()) as any;
-        const mediaList = Array.isArray(data.media)
-          ? data.media
-          : Array.isArray(data.results)
-            ? data.results
-            : Array.isArray(data.data)
-              ? data.data
-              : [];
-
-        if (mediaList.length > 0) {
-          const targetClean = searchStr.toLowerCase();
-          const match = mediaList.find((m: any) => {
-            const rom = (m.title?.romaji || "").toLowerCase();
-            const eng = (m.title?.english || "").toLowerCase();
-            return (
-              rom.includes(targetClean) ||
-              targetClean.includes(rom) ||
-              (eng && (eng.includes(targetClean) || targetClean.includes(eng)))
-            );
-          });
-
-          const selected = match || mediaList[0];
-          const foundId = selected.id || selected.anilistId;
-          if (foundId) {
-            console.log(
-              `[KURO] AniList ID resolved for "${searchStr}": ${foundId} (${selected.title?.english || selected.title?.romaji})`,
-            );
-            return String(foundId);
-          }
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[KURO] AniList ID resolution failed: ${err.message}`);
+    const queries: string[] = [];
+    if (kind === "tv" && season > 1) {
+      queries.push(`${cleanBase} Season ${season}`);
+      queries.push(`${cleanBase} ${ordinal} Season`);
+      queries.push(cleanBase);
+    } else {
+      queries.push(cleanBase);
     }
 
-    return tmdbId ? String(tmdbId) : null;
+    const baseLower = cleanBase.toLowerCase();
+    let selectedMedia: any = null;
+
+    for (const q of queries) {
+      try {
+        const reqInit: RequestInit = { headers: this.makeHeaders() };
+        if (signal) reqInit.signal = signal;
+
+        const res = await fetch(
+          `${BASE_API}/search?query=${encodeURIComponent(q)}&page=1&per_page=10`,
+          reqInit,
+        );
+
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          const mediaList = Array.isArray(data.media)
+            ? data.media
+            : Array.isArray(data.results)
+              ? data.results
+              : Array.isArray(data.data)
+                ? data.data
+                : [];
+
+          if (mediaList.length > 0) {
+            const relevantMedia = mediaList.filter((m: any) => {
+              const eng = (m.title?.english || "").toLowerCase();
+              const rom = (m.title?.romaji || "").toLowerCase();
+              return (
+                eng.includes(baseLower) ||
+                rom.includes(baseLower) ||
+                baseLower.includes(eng) ||
+                baseLower.includes(rom)
+              );
+            });
+
+            const candidates =
+              relevantMedia.length > 0 ? relevantMedia : mediaList;
+            let match: any = null;
+
+            if (kind === "tv") {
+              if (season > 1) {
+                const sRegex = new RegExp(
+                  `Season\\s*${season}|${season}(st|nd|rd|th)\\s*Season|Part\\s*${season}`,
+                  "i",
+                );
+                match = candidates.find((m: any) => {
+                  const eng = m.title?.english || "";
+                  const rom = m.title?.romaji || "";
+                  return (
+                    (m.format === "TV" ||
+                      m.format === "ONA" ||
+                      m.format === "TV_SHORT") &&
+                    (sRegex.test(eng) || sRegex.test(rom))
+                  );
+                });
+              } else if (season === 1) {
+                match = candidates.find((m: any) => {
+                  const eng = m.title?.english || "";
+                  const rom = m.title?.romaji || "";
+                  const isOtherSeason =
+                    /Season\s*[2-9]|\d+(nd|rd|th)\s*Season/i.test(eng) ||
+                    /Season\s*[2-9]|\d+(nd|rd|th)\s*Season/i.test(rom);
+                  return (
+                    (m.format === "TV" ||
+                      m.format === "ONA" ||
+                      m.format === "TV_SHORT") &&
+                    !isOtherSeason
+                  );
+                });
+              }
+            }
+
+            if (!match && q.includes("Season")) {
+              match = candidates.find(
+                (m: any) =>
+                  m.format === "TV" ||
+                  m.format === "ONA" ||
+                  m.format === "TV_SHORT",
+              );
+            }
+
+            if (!match && q !== cleanBase) continue;
+            if (!match)
+              match =
+                candidates.find(
+                  (m: any) => m.format === "TV" || m.format === "ONA",
+                ) || candidates[0];
+
+            if (match) {
+              selectedMedia = match;
+              break;
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn(
+          `[KURO] AniList ID resolution error for "${q}": ${err.message}`,
+        );
+      }
+    }
+
+    if (!selectedMedia) {
+      return {
+        targetId: tmdbId ? String(tmdbId) : null,
+        targetEpisode: episode,
+      };
+    }
+
+    let targetId = String(selectedMedia.id || selectedMedia.anilistId);
+    let targetEpisode = episode;
+
+    // Episode Overflow Handling specifically scoped for Campfire Cooking (or TMDB consolidated S1)
+    const isCampfireCooking = /campfire\s*cooking/i.test(title || "");
+    if (
+      kind === "tv" &&
+      season === 1 &&
+      isCampfireCooking &&
+      selectedMedia.episodes &&
+      episode > selectedMedia.episodes
+    ) {
+      const overflowEp = episode - selectedMedia.episodes;
+      try {
+        const reqInit: RequestInit = { headers: this.makeHeaders() };
+        if (signal) reqInit.signal = signal;
+
+        const s2Res = await fetch(
+          `${BASE_API}/search?query=${encodeURIComponent(`${cleanBase} Season 2`)}&page=1&per_page=5`,
+          reqInit,
+        );
+
+        if (s2Res.ok) {
+          const s2Data = (await s2Res.json()) as any;
+          const s2List = s2Data.media || s2Data.results || [];
+          const s2Match =
+            s2List.find((m: any) => {
+              const eng = m.title?.english || "";
+              const rom = m.title?.romaji || "";
+              return (
+                (m.format === "TV" || m.format === "ONA") &&
+                (/Season\s*2|2nd\s*Season/i.test(eng) ||
+                  /Season\s*2|2nd\s*Season/i.test(rom))
+              );
+            }) || s2List[0];
+
+          if (s2Match) {
+            targetId = String(s2Match.id || s2Match.anilistId);
+            targetEpisode = overflowEp;
+            console.log(
+              `[KURO OVERFLOW] Mapped TMDB S1 E${episode} -> Season 2 AniList ID ${targetId} (${s2Match.title?.english || s2Match.title?.romaji}), Episode ${targetEpisode}`,
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn(
+          `[KURO OVERFLOW] Error fetching Season 2 overflow: ${err.message}`,
+        );
+      }
+    }
+
+    console.log(
+      `[KURO] AniList target resolved for "${title || tmdbId}" (S${season}E${episode}): ID=${targetId}, Ep=${targetEpisode} (${selectedMedia.title?.english || selectedMedia.title?.romaji})`,
+    );
+
+    return { targetId, targetEpisode };
   }
 
   /**
@@ -210,7 +353,14 @@ export class KuroScraper {
       `[KURO] Scraping anime streams for TMDB/ID ${tmdbId} title="${title || ""}" S${season}E${episode}`,
     );
 
-    const targetId = await this.resolveAnilistId(title, tmdbId, signal);
+    const { targetId, targetEpisode } = await this.resolveAnilistTarget(
+      title,
+      tmdbId,
+      kind,
+      season,
+      episode,
+      signal,
+    );
     if (!targetId) {
       console.warn(`[KURO] Could not resolve AniList target ID for ${tmdbId}`);
       return [];
@@ -228,8 +378,8 @@ export class KuroScraper {
           (async (): Promise<MirrorStream[]> => {
             const isDefault = provider === "default";
             const watchUrl = isDefault
-              ? `${BASE_API}/default/${targetId}/${subDub}/${episode}`
-              : `${BASE_API}/watch/${provider}/${targetId}/${subDub}/${provider}-${episode}`;
+              ? `${BASE_API}/default/${targetId}/${subDub}/${targetEpisode}`
+              : `${BASE_API}/watch/${provider}/${targetId}/${subDub}/${provider}-${targetEpisode}`;
 
             try {
               const reqInit: RequestInit = { headers: this.makeHeaders() };
