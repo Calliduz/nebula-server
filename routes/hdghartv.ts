@@ -18,6 +18,7 @@ function buildResponseObject(mirrors: any[]) {
       url: m.url,
       type: m.type || "hls",
       quality: m.quality || "1080p",
+      audio: m.audio || "English",
       headers: m.headers || {
         Referer: "https://hdghartv.cc/",
         Origin: "https://hdghartv.cc",

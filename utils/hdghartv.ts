@@ -117,6 +117,7 @@ export class HdgHarTvScraper {
                   : "480p",
               type: "hls",
               source: `HDGharTV (${quality})`,
+              audio: "English",
               headers: {
                 Referer: `${BASE_URL}/`,
                 Origin: BASE_URL,
@@ -164,6 +165,7 @@ export class HdgHarTvScraper {
                   : "480p",
               type: "hls",
               source: `HDGharTV (${quality})`,
+              audio: "English",
               headers: {
                 Referer: `${BASE_URL}/`,
                 Origin: BASE_URL,
