@@ -44,6 +44,7 @@ import { createVidriftRouter } from "./routes/vidrift.js";
 import { createPeachifyRouter } from "./routes/peachify.js";
 import { createKuroRouter } from "./routes/kuro.js";
 import { createHdgHarTvRouter } from "./routes/hdghartv.js";
+import { createNetnaijaRouter } from "./routes/netnaija.js";
 import { HdgHarTvScraper } from "./utils/hdghartv.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
@@ -1294,6 +1295,7 @@ app.get("/api/stream", async (req, res) => {
           "vidnest",
           "filmu",
           "hdghartv",
+          "netnaija",
         ];
         const now = new Date();
         await Promise.all(
@@ -1888,6 +1890,9 @@ app.use(createKuroRouter());
 
 // HDGharTV scraper route → routes/hdghartv.ts
 app.use(createHdgHarTvRouter());
+
+// NetNaija/Vesper scraper route → routes/netnaija.ts
+app.use(createNetnaijaRouter());
 
 // Endpoint: Stop stream heartbeat (call when player closes/user leaves)
 app.get("/api/stream/stop", (req, res) => {

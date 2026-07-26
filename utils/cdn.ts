@@ -304,6 +304,13 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://nextgencloudfabric.com/";
       origin = "https://nextgencloudfabric.com";
+    } else if (
+      lower.includes("hakunaymatata.com") ||
+      lower.includes("aoneroom.com") ||
+      lower.includes("netnaija.film")
+    ) {
+      referer = "https://netnaija.film/";
+      origin = "https://netnaija.film";
     }
   }
 
