@@ -25,7 +25,8 @@ export class HdgHarTvScraper {
    */
   static async getStream(options: HdgHarTvOptions): Promise<MirrorStream[]> {
     const { tmdbId, type, season = 1, episode = 1 } = options;
-    const numericTmdbId = typeof tmdbId === "string" ? parseInt(tmdbId, 10) : tmdbId;
+    const numericTmdbId =
+      typeof tmdbId === "string" ? parseInt(tmdbId, 10) : tmdbId;
 
     try {
       // Step 1: Fetch title using TMDB API or title query if title not passed
@@ -35,11 +36,15 @@ export class HdgHarTvScraper {
       }
 
       if (!searchTitle) {
-        console.warn(`[HDGharTV Scraper] Could not determine title for TMDB ID: ${tmdbId}`);
+        console.warn(
+          `[HDGharTV Scraper] Could not determine title for TMDB ID: ${tmdbId}`,
+        );
         return [];
       }
 
-      console.log(`[HDGharTV Scraper] Searching for "${searchTitle}" (TMDB: ${numericTmdbId})...`);
+      console.log(
+        `[HDGharTV Scraper] Searching for "${searchTitle}" (TMDB: ${numericTmdbId})...`,
+      );
 
       // Step 2: Search HDGharTV API
       const searchUrl = `${BASE_URL}/api/search?q=${encodeURIComponent(searchTitle)}`;
@@ -55,32 +60,39 @@ export class HdgHarTvScraper {
       const searchData = searchRes.data;
       if (!searchData) return [];
 
-      const targetCategory = type === "movie" ? searchData.movies : searchData.series;
+      const targetCategory =
+        type === "movie" ? searchData.movies : searchData.series;
       if (!Array.isArray(targetCategory) || targetCategory.length === 0) {
-        console.log(`[HDGharTV Scraper] No ${type} items found for "${searchTitle}"`);
+        console.log(
+          `[HDGharTV Scraper] No ${type} items found for "${searchTitle}"`,
+        );
         return [];
       }
 
       // Step 3: Match by tmdbId or title
       let matchedItem = targetCategory.find(
-        (item: any) => item.tmdbId && Number(item.tmdbId) === numericTmdbId
+        (item: any) => item.tmdbId && Number(item.tmdbId) === numericTmdbId,
       );
 
       if (!matchedItem) {
         const cleanSearch = searchTitle.toLowerCase().trim();
         matchedItem = targetCategory.find(
           (item: any) =>
-            item.title && item.title.toLowerCase().trim() === cleanSearch
+            item.title && item.title.toLowerCase().trim() === cleanSearch,
         );
       }
 
       if (!matchedItem) {
-        console.log(`[HDGharTV Scraper] Match failed for TMDB ${numericTmdbId} in search results`);
+        console.log(
+          `[HDGharTV Scraper] Match failed for TMDB ${numericTmdbId} in search results`,
+        );
         return [];
       }
 
       const contentId = matchedItem._id;
-      console.log(`[HDGharTV Scraper] Found ${type} match: ${matchedItem.title} (_id: ${contentId})`);
+      console.log(
+        `[HDGharTV Scraper] Found ${type} match: ${matchedItem.title} (_id: ${contentId})`,
+      );
 
       // Step 4: Fetch details & streams
       const mirrors: MirrorStream[] = [];
@@ -98,7 +110,11 @@ export class HdgHarTvScraper {
             const quality = link.quality || "HD";
             mirrors.push({
               url: link.url,
-              quality: quality.toLowerCase().includes("1080") ? "1080p" : quality.toLowerCase().includes("720") ? "720p" : "480p",
+              quality: quality.toLowerCase().includes("1080")
+                ? "1080p"
+                : quality.toLowerCase().includes("720")
+                  ? "720p"
+                  : "480p",
               type: "hls",
               source: `HDGharTV (${quality})`,
               headers: {
@@ -117,17 +133,21 @@ export class HdgHarTvScraper {
         });
 
         const seasons = detailRes.data?.seasons || [];
-        const seasonObj = seasons.find((s: any) => Number(s.seasonNumber) === Number(season));
+        const seasonObj = seasons.find(
+          (s: any) => Number(s.seasonNumber) === Number(season),
+        );
         if (!seasonObj) {
           console.log(`[HDGharTV Scraper] Season ${season} not found`);
           return [];
         }
 
         const episodeObj = (seasonObj.episodes || []).find(
-          (ep: any) => Number(ep.episodeNumber) === Number(episode)
+          (ep: any) => Number(ep.episodeNumber) === Number(episode),
         );
         if (!episodeObj) {
-          console.log(`[HDGharTV Scraper] Episode S${season}E${episode} not found`);
+          console.log(
+            `[HDGharTV Scraper] Episode S${season}E${episode} not found`,
+          );
           return [];
         }
 
@@ -137,7 +157,11 @@ export class HdgHarTvScraper {
             const quality = link.quality || "HD";
             mirrors.push({
               url: link.url,
-              quality: quality.toLowerCase().includes("1080") ? "1080p" : quality.toLowerCase().includes("720") ? "720p" : "480p",
+              quality: quality.toLowerCase().includes("1080")
+                ? "1080p"
+                : quality.toLowerCase().includes("720")
+                  ? "720p"
+                  : "480p",
               type: "hls",
               source: `HDGharTV (${quality})`,
               headers: {
@@ -149,10 +173,15 @@ export class HdgHarTvScraper {
         }
       }
 
-      console.log(`[HDGharTV Scraper] ✅ Found ${mirrors.length} mirrors for TMDB ${numericTmdbId}`);
+      console.log(
+        `[HDGharTV Scraper] ✅ Found ${mirrors.length} mirrors for TMDB ${numericTmdbId}`,
+      );
       return mirrors;
     } catch (err: any) {
-      console.error(`[HDGharTV Scraper] Error fetching stream for TMDB ${tmdbId}:`, err.message);
+      console.error(
+        `[HDGharTV Scraper] Error fetching stream for TMDB ${tmdbId}:`,
+        err.message,
+      );
       return [];
     }
   }
@@ -160,9 +189,13 @@ export class HdgHarTvScraper {
   /**
    * Helper to fetch title from TMDB if not provided
    */
-  private static async getTmdbTitle(tmdbId: number, type: "movie" | "tv"): Promise<string | undefined> {
+  private static async getTmdbTitle(
+    tmdbId: number,
+    type: "movie" | "tv",
+  ): Promise<string | undefined> {
     try {
-      const tmdbApiKey = process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
+      const tmdbApiKey =
+        process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
       const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${tmdbApiKey}`;
       const res = await axios.get(url, { timeout: 5000 });
       return res.data?.title || res.data?.name || undefined;

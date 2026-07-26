@@ -1520,7 +1520,11 @@ app.get("/api/stream", async (req, res) => {
           const isSelectedSourceSub = (s: any) => {
             if (!s || !s.source) return false;
             const subSrc = s.source.toLowerCase();
-            if (selectedSource.includes(subSrc) || subSrc.includes(selectedSource)) return true;
+            if (
+              selectedSource.includes(subSrc) ||
+              subSrc.includes(selectedSource)
+            )
+              return true;
             return false;
           };
 

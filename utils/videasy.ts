@@ -527,7 +527,10 @@ async function scanProvider(
 }
 
 export const activeScans = new Set<string>();
-const inMemorySeedCache = new Map<string, { seed: string; expiresAt: number }>();
+const inMemorySeedCache = new Map<
+  string,
+  { seed: string; expiresAt: number }
+>();
 
 export async function fetchVideasySources(
   title: string,

@@ -43,7 +43,9 @@ export function createHdgHarTvRouter(): Router {
    */
   router.get("/api/hdghartv", async (req: Request, res: Response) => {
     if (process.env.HDGHARTV_ENABLED === "false") {
-      return res.status(503).json({ error: "HDGharTV provider is currently disabled." });
+      return res
+        .status(503)
+        .json({ error: "HDGharTV provider is currently disabled." });
     }
 
     const tmdbId = req.query.tmdbId as string;
@@ -57,14 +59,18 @@ export function createHdgHarTvRouter(): Router {
     }
 
     if (type === "tv" && (!seasonStr || !episodeStr)) {
-      return res.status(400).json({ error: "Missing season or episode for TV show" });
+      return res
+        .status(400)
+        .json({ error: "Missing season or episode for TV show" });
     }
 
     const season = type === "tv" ? parseInt(seasonStr, 10) : 1;
     const episode = type === "tv" ? parseInt(episodeStr, 10) : 1;
 
     if (isNaN(season) || isNaN(episode)) {
-      return res.status(400).json({ error: "Invalid season or episode (must be integers)" });
+      return res
+        .status(400)
+        .json({ error: "Invalid season or episode (must be integers)" });
     }
 
     try {
@@ -80,18 +86,24 @@ export function createHdgHarTvRouter(): Router {
             episode,
           }).catch(() => null);
 
-      if (cachedRecord && cachedRecord.mirrors && cachedRecord.mirrors.length > 0) {
+      if (
+        cachedRecord &&
+        cachedRecord.mirrors &&
+        cachedRecord.mirrors.length > 0
+      ) {
         const hdghartvMirrors = (cachedRecord.mirrors as any[]).filter(
           (m: any) =>
-            typeof m.source === "string" && m.source.toLowerCase().includes("hdghartv")
+            typeof m.source === "string" &&
+            m.source.toLowerCase().includes("hdghartv"),
         );
 
         if (
           hdghartvMirrors.length > 0 &&
-          (!cachedRecord.streamExpiresAt || new Date() < cachedRecord.streamExpiresAt)
+          (!cachedRecord.streamExpiresAt ||
+            new Date() < cachedRecord.streamExpiresAt)
         ) {
           console.log(
-            `[HDGHARTV] Cache HIT ✔ for ${tmdbId} S${season}E${episode} (${hdghartvMirrors.length} mirrors)`
+            `[HDGHARTV] Cache HIT ✔ for ${tmdbId} S${season}E${episode} (${hdghartvMirrors.length} mirrors)`,
           );
           return res.json(buildResponseObject(hdghartvMirrors));
         }
@@ -119,16 +131,21 @@ export function createHdgHarTvRouter(): Router {
             $addToSet: { mirrors: { $each: mirrors } },
             $set: { streamExpiresAt: cacheExpires },
           },
-          { upsert: true }
+          { upsert: true },
         );
       } catch (cacheErr: any) {
-        console.warn("[HDGHARTV] Failed to write to StreamCache:", cacheErr.message);
+        console.warn(
+          "[HDGHARTV] Failed to write to StreamCache:",
+          cacheErr.message,
+        );
       }
 
       return res.json(buildResponseObject(mirrors));
     } catch (err: any) {
       console.error(`[HDGHARTV] Router error for TMDB ${tmdbId}:`, err.message);
-      return res.status(500).json({ error: "Internal server error fetching HDGharTV streams" });
+      return res
+        .status(500)
+        .json({ error: "Internal server error fetching HDGharTV streams" });
     }
   });
 
