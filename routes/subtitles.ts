@@ -102,10 +102,10 @@ function sourcePriority(source: string): number {
   if (source === "Vidnest") return 7;
   if (source && source.startsWith("FilmU")) return 8;
   if (source === "Peachify") return 9;
-  if (source === "Kuro") return 9.5;
   if (source === "Wyzie") return 10;
   if (source === "OpenSubtitles") return 11;
-  return 12;
+  if (source === "Kuro") return 12;
+  return 13;
 }
 
 function isEnglish(s: any): boolean {
@@ -701,8 +701,9 @@ export function createSubtitleRouter(
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
         ...dedup(peachifyTrack.filter(isEnglish)),
-        ...dedup(kuroTrack.filter(isEnglish)),
         ...dedup(wyzieTrack.filter(isEnglish)),
+        ...dedup(openSubsTrack.filter(isEnglish)),
+        ...dedup(kuroTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vaplayerTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vidriftTrack.filter((s: any) => !isEnglish(s))),
@@ -712,9 +713,9 @@ export function createSubtitleRouter(
         ...dedup(vidnestTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(peachifyTrack.filter((s: any) => !isEnglish(s))),
-        ...dedup(kuroTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(wyzieTrack.filter((s: any) => !isEnglish(s))),
-        ...dedup(openSubsTrack),
+        ...dedup(openSubsTrack.filter((s: any) => !isEnglish(s))),
+        ...dedup(kuroTrack.filter((s: any) => !isEnglish(s))),
       ];
 
       // Final sort: English first, then by source priority within each language tier
