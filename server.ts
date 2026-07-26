@@ -706,7 +706,15 @@ app.get("/api/download/stream-file", async (req, res) => {
       Accept: "*/*",
     };
 
-    if (lowerUrl.includes("cacdn.hakunaymatata.com")) {
+    if (
+      lowerUrl.includes("bcdnxw.hakunaymatata.com") ||
+      lowerUrl.includes("sacdn.hakunaymatata.com") ||
+      lowerUrl.includes("netnaija") ||
+      lowerUrl.includes("aoneroom.com")
+    ) {
+      headers.Referer = "https://netnaija.film/";
+      headers.Origin = "https://netnaija.film";
+    } else if (lowerUrl.includes("cacdn.hakunaymatata.com")) {
       headers.Referer = "https://vidlink.pro/";
       headers.Origin = "https://vidlink.pro";
     } else if (
@@ -2036,9 +2044,13 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
   }
 
-  // Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
+  // VidRock Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
   if (
     targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("bcdnxw.hakunaymatata.com") &&
+    !targetUrl.includes("sacdn.hakunaymatata.com") &&
+    !targetUrl.includes("netnaija") &&
+    !targetUrl.includes("aoneroom.com") &&
     !targetUrl.includes("animanga.fun/proxy")
   ) {
     const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });
@@ -2422,9 +2434,13 @@ app.get("/api/proxy/segment", async (req, res) => {
     }
   }
 
-  // Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
+  // VidRock Hakunaymatata links require Referer: https://vidrock.ru/ (proxy via megacloud.animanga.fun)
   if (
     targetUrl.includes("hakunaymatata.com") &&
+    !targetUrl.includes("bcdnxw.hakunaymatata.com") &&
+    !targetUrl.includes("sacdn.hakunaymatata.com") &&
+    !targetUrl.includes("netnaija") &&
+    !targetUrl.includes("aoneroom.com") &&
     !targetUrl.includes("animanga.fun/proxy")
   ) {
     const params = new URLSearchParams({ Referer: "https://vidrock.ru/" });

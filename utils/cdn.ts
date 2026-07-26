@@ -251,6 +251,15 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       delete headers["x-forwarded-for"];
       delete headers["x-real-ip"];
     } else if (
+      lower.includes("bcdnxw.hakunaymatata.com") ||
+      lower.includes("sacdn.hakunaymatata.com") ||
+      lower.includes("aoneroom.com") ||
+      lower.includes("netnaija.film") ||
+      lower.includes("netnaija")
+    ) {
+      referer = "https://netnaija.film/";
+      origin = "https://netnaija.film";
+    } else if (
       /stor+m\.site/.test(lower) ||
       lower.includes("vdrk.site") ||
       lower.includes("vidrock.ru") ||
@@ -304,13 +313,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://nextgencloudfabric.com/";
       origin = "https://nextgencloudfabric.com";
-    } else if (
-      lower.includes("hakunaymatata.com") ||
-      lower.includes("aoneroom.com") ||
-      lower.includes("netnaija.film")
-    ) {
-      referer = "https://netnaija.film/";
-      origin = "https://netnaija.film";
     }
   }
 
