@@ -680,6 +680,8 @@ app.get("/api/download/stream-file", async (req, res) => {
 
   if (
     isHakunaHost &&
+    !targetUrl.includes("bcdnxw.hakunaymatata.com") &&
+    !targetUrl.includes("sacdn.hakunaymatata.com") &&
     !targetUrl.includes("cacdn.hakunaymatata.com") &&
     !targetUrl.includes("workers.dev")
   ) {
