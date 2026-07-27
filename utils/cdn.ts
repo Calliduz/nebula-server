@@ -305,14 +305,19 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       referer = "https://embed.vidrift.in/";
       origin = null;
     } else if (
+      lower.includes("smartbusinessframework.site") ||
       lower.includes("onlinecoursecreator.site") ||
       lower.includes("startupfundinglab.site") ||
       lower.includes("digitalassetlaunchpad.site") ||
       lower.includes("dataanalyticsacademy.site") ||
-      /\.site\/[a-z0-9]{9}\/(pl|playlist|content)/i.test(lower)
+      lower.includes("nextgencloudfabric") ||
+      lower.includes("vaplayer") ||
+      /\.site\/[a-z0-9]{5,}\//i.test(lower)
     ) {
       referer = "https://nextgencloudfabric.com/";
       origin = "https://nextgencloudfabric.com";
+      delete headers["x-forwarded-for"];
+      delete headers["x-real-ip"];
     }
   }
 
