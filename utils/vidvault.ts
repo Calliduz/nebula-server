@@ -108,7 +108,7 @@ export interface VidVaultDownload {
   quality: string;
   size: string;
   direct_url: string;
-  source: "VidVault";
+  source: string;
   format: "mp4" | "mkv"; // mp4 = no embedded subs; mkv = embedded subs
   subtitles: VidVaultCaption[]; // populated for mp4 entries only
   type: "movie" | "tv";
@@ -262,7 +262,7 @@ export async function fetchVidVaultDownloads(
       quality,
       size: String(sizeStr),
       direct_url,
-      source: "VidVault",
+      source: "Titan",
       format: "mp4",
       subtitles: captions,
       type: kind,
@@ -312,7 +312,7 @@ export async function fetchVidVaultDownloads(
           quality: String(mkvQuality),
           size: String(sizeStr),
           direct_url,
-          source: "VidVault",
+          source: "Titan",
           format: "mkv",
           subtitles: [],
           type: kind,
@@ -347,7 +347,7 @@ export async function fetchVidVaultDownloads(
         quality: String(mkvQuality),
         size: String(mkvSizeStr),
         direct_url,
-        source: "VidVault",
+        source: "Titan",
         format: "mkv",
         subtitles: [],
         type: kind,

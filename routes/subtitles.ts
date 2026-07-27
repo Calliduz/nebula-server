@@ -92,13 +92,14 @@ export const SUBTITLE_ALLOWLIST = [
 // ── Source priority sort helpers ──────────────────────────────────────────────
 
 function sourcePriority(source: string): number {
-  if (source === "VidVault") return 1;
+  if (source === "VidVault" || source === "Titan") return 1;
   if (source === "VidRock") return 2;
   if (source === "Vaplayer") return 3;
   if (source === "Vidrift") return 4;
   if (source === "Videasy") return 5;
   if (source === "VidLink") return 6;
-  if (source === "Vesper" || source === "NetNaija") return 6.5;
+  if (source === "Vesper" || source === "NetNaija" || source === "Vortex")
+    return 6.5;
   if (source === "Vidnest") return 7;
   if (source && source.startsWith("FilmU")) return 8;
   if (source === "Peachify") return 9;

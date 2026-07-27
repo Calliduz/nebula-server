@@ -45,6 +45,7 @@ import { createPeachifyRouter } from "./routes/peachify.js";
 import { createKuroRouter } from "./routes/kuro.js";
 import { createHdgHarTvRouter } from "./routes/hdghartv.js";
 import { createNetnaijaRouter } from "./routes/netnaija.js";
+import { NetNaijaScraper } from "./utils/netnaija.js";
 import { HdgHarTvScraper } from "./utils/hdghartv.js";
 import { cdnHeaders } from "./utils/cdn.js";
 
@@ -1156,15 +1157,29 @@ app.get("/api/download/direct", async (req, res) => {
   const cacheKey = `direct-downloads-${tmdbId}-${kind}`;
 
   try {
-    const cached = await TmdbCache.findOne({
-      key: cacheKey,
-      expiresAt: { $gt: new Date() },
-    });
-    if (cached) {
+    const force = req.query.force === "1" || req.query.nocache === "1";
+    const cached = force
+      ? null
+      : await TmdbCache.findOne({
+          key: cacheKey,
+          expiresAt: { $gt: new Date() },
+        });
+    if (
+      cached &&
+      Array.isArray(cached.data) &&
+      cached.data.length > 0 &&
+      !cached.data.some(
+        (d: any) => d.source === "VidVault" || d.source === "NetNaija Direct",
+      )
+    ) {
       return res.json({ directDownloads: cached.data });
     }
 
-    const directDownloads = await fetchVidVaultDownloads(kind, tmdbId);
+    const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
+      fetchVidVaultDownloads(kind, tmdbId).catch(() => []),
+      NetNaijaScraper.getDirectDownloads({ tmdbId, kind }).catch(() => []),
+    ]);
+    const directDownloads = [...vidVaultDownloads, ...netNaijaDownloads];
 
     // Only cache if we got actual links
     if (directDownloads.length > 0) {
@@ -1203,20 +1218,34 @@ app.get("/api/download/episode/direct", async (req, res) => {
   const cacheKey = `direct-downloads-episode-${tmdbId}-${season}-${episode}`;
 
   try {
-    const cached = await TmdbCache.findOne({
-      key: cacheKey,
-      expiresAt: { $gt: new Date() },
-    });
-    if (cached) {
+    const force = req.query.force === "1" || req.query.nocache === "1";
+    const cached = force
+      ? null
+      : await TmdbCache.findOne({
+          key: cacheKey,
+          expiresAt: { $gt: new Date() },
+        });
+    if (
+      cached &&
+      Array.isArray(cached.data) &&
+      cached.data.length > 0 &&
+      !cached.data.some(
+        (d: any) => d.source === "VidVault" || d.source === "NetNaija Direct",
+      )
+    ) {
       return res.json({ directDownloads: cached.data });
     }
 
-    const directDownloads = await fetchVidVaultDownloads(
-      "tv",
-      tmdbId,
-      season,
-      episode,
-    );
+    const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
+      fetchVidVaultDownloads("tv", tmdbId, season, episode).catch(() => []),
+      NetNaijaScraper.getDirectDownloads({
+        tmdbId,
+        kind: "tv",
+        season,
+        episode,
+      }).catch(() => []),
+    ]);
+    const directDownloads = [...vidVaultDownloads, ...netNaijaDownloads];
 
     // Only cache if we got actual links
     if (directDownloads.length > 0) {

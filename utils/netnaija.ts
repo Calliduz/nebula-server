@@ -2,6 +2,7 @@ import axios from "axios";
 import crypto from "crypto";
 import type { MirrorStream, SubtitleStream } from "./scraper.js";
 import { getLanguageName } from "./subtitles.js";
+import { parseAndFormatSize, getMediaTitleAndYear } from "./vidvault.js";
 
 const BASE_URL = "https://netnaija.film";
 const UA =
@@ -300,11 +301,13 @@ export class NetNaijaScraper {
 
       // Select primary candidate (top score, English preferred)
       const primaryCandidate = candidates[0];
+      if (!primaryCandidate) return [];
       const itemsToFetch = [primaryCandidate];
 
       // Include extra dub candidates matching the title (e.g. Tagalog/Filipino)
       const extraDubs = candidates.filter(
         (c: any) =>
+          c &&
           c.audio !== primaryCandidate.audio &&
           c.score >= primaryCandidate.score - 20,
       );
@@ -323,23 +326,53 @@ export class NetNaijaScraper {
         const itemAudio = candidate.audio;
 
         const playUrl = `${BASE_URL}/wefeed-h5api-bff/subject/play?subjectId=${item.subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(item.detailPath)}`;
-        const playHeaders = {
+        const downloadUrl = `${BASE_URL}/wefeed-h5api-bff/subject/download?subjectId=${item.subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(item.detailPath)}`;
+        const reqHeaders = {
           ...authHeaders,
           cookie: `token=${token}; netnaija_token="${token}"; netnaija_i18n_lang=en`,
           referer: `${BASE_URL}/videoPlayPage/${item.detailPath}?type=/${kind}/detail`,
         };
 
         try {
-          const playRes = await axios.get(playUrl, {
-            headers: playHeaders,
-            timeout: 7000,
-          });
+          const [playResResult, downloadResResult] = await Promise.allSettled([
+            axios.get(playUrl, { headers: reqHeaders, timeout: 7000 }),
+            axios.get(downloadUrl, { headers: reqHeaders, timeout: 7000 }),
+          ]);
 
-          const streamsData = playRes.data?.data?.streams;
-          if (!Array.isArray(streamsData) || streamsData.length === 0) continue;
+          const playRes =
+            playResResult.status === "fulfilled" ? playResResult.value : null;
+          const downloadRes =
+            downloadResResult.status === "fulfilled"
+              ? downloadResResult.value
+              : null;
 
           let subtitles: SubtitleStream[] = [];
-          if (streamsData[0]?.id) {
+
+          // 1. Try captions directly from download API response if present
+          const captionsData = downloadRes?.data?.data?.captions;
+          if (Array.isArray(captionsData) && captionsData.length > 0) {
+            subtitles = captionsData
+              .filter((c: any) => c && c.url)
+              .map((c: any) => {
+                const lang = (c.lan || "en").toLowerCase();
+                const langName =
+                  c.lanName || getLanguageName(lang) || "English";
+                return {
+                  url: c.url,
+                  lang,
+                  languageName: langName,
+                  source: "Vesper",
+                };
+              });
+          }
+
+          // 2. Fallback to getCaptions if captions empty
+          const streamsData = playRes?.data?.data?.streams;
+          if (
+            subtitles.length === 0 &&
+            Array.isArray(streamsData) &&
+            streamsData[0]?.id
+          ) {
             subtitles = await this.getCaptions(
               streamsData[0].format || "MP4",
               streamsData[0].id,
@@ -349,23 +382,52 @@ export class NetNaijaScraper {
             );
           }
 
-          for (const s of streamsData) {
-            if (!s.url) continue;
-            const resLabel = s.resolutions ? `${s.resolutions}p` : "HD";
+          // 3. Process play streams
+          if (Array.isArray(streamsData)) {
+            for (const s of streamsData) {
+              if (!s.url) continue;
+              const resLabel = s.resolutions ? `${s.resolutions}p` : "HD";
 
-            mirrors.push({
-              url: s.url,
-              quality: resLabel,
-              type: "mp4",
-              source: `Vesper (${resLabel})`,
-              audio: itemAudio,
-              headers: {
-                Referer: `${BASE_URL}/`,
-                Origin: BASE_URL,
-                "User-Agent": UA,
-              },
-              subtitles,
-            });
+              mirrors.push({
+                url: s.url,
+                quality: resLabel,
+                type: "mp4",
+                source: `Vesper (${resLabel})`,
+                audio: itemAudio,
+                headers: {
+                  Referer: `${BASE_URL}/`,
+                  Origin: BASE_URL,
+                  "User-Agent": UA,
+                },
+                subtitles,
+              });
+            }
+          }
+
+          // 4. Process direct downloads from download API
+          const downloadsData = downloadRes?.data?.data?.downloads;
+          if (Array.isArray(downloadsData)) {
+            for (const d of downloadsData) {
+              if (!d.url || d.vipLocked) continue;
+              const resLabel = d.resolution ? `${d.resolution}p` : "HD";
+
+              // Avoid duplicate mirror if exact URL is already in mirrors
+              if (mirrors.some((m) => m.url === d.url)) continue;
+
+              mirrors.push({
+                url: d.url,
+                quality: resLabel,
+                type: "mp4",
+                source: `Vesper Direct (${resLabel})`,
+                audio: itemAudio,
+                headers: {
+                  Referer: `${BASE_URL}/`,
+                  Origin: BASE_URL,
+                  "User-Agent": UA,
+                },
+                subtitles,
+              });
+            }
           }
         } catch (err: any) {
           console.warn(
@@ -383,6 +445,222 @@ export class NetNaijaScraper {
         `[Vesper/NetNaija] Error fetching streams for TMDB ${tmdbId}:`,
         err.message,
       );
+      return [];
+    }
+  }
+
+  /**
+   * Fetches direct download sources formatted for the download endpoints
+   */
+  public static async getDirectDownloads(
+    options: NetNaijaOptions,
+  ): Promise<any[]> {
+    const { tmdbId, kind, season = 1, episode = 1 } = options;
+    const numericTmdbId =
+      typeof tmdbId === "string" ? parseInt(tmdbId, 10) : tmdbId;
+
+    try {
+      let searchTitle = options.title;
+      let targetYear: string | undefined;
+
+      if (numericTmdbId) {
+        const mediaInfo = await getMediaTitleAndYear(
+          String(numericTmdbId),
+          kind,
+        );
+        if (!searchTitle) searchTitle = mediaInfo.title;
+        targetYear = mediaInfo.year;
+      }
+
+      if (!searchTitle) return [];
+
+      const token = await this.getGuestToken();
+      if (!token) return [];
+
+      const clientToken = this.kp();
+      const authHeaders = {
+        accept: "application/json",
+        "content-type": "application/json",
+        "x-client-info": JSON.stringify({ timezone: "Asia/Singapore" }),
+        "x-client-token": clientToken,
+        authorization: `Bearer ${token}`,
+        cookie: `token=${token}; netnaija_i18n_lang=en`,
+        "x-request-lang": "en",
+        "user-agent": UA,
+        referer: `${BASE_URL}/en/search-result?keyword=${encodeURIComponent(searchTitle)}`,
+      };
+
+      const searchRes = await axios.post(
+        `${BASE_URL}/wefeed-h5api-bff/subject/search`,
+        { keyword: searchTitle, page: 1, perPage: 10 },
+        { headers: authHeaders, timeout: 7000 },
+      );
+
+      const searchItems = searchRes.data?.data?.items;
+      if (!Array.isArray(searchItems) || searchItems.length === 0) return [];
+
+      const targetType = kind === "movie" ? 1 : 2;
+      const normalize = (str: string) =>
+        str
+          .toLowerCase()
+          .replace(/\[.*?\]|\(.*?\)/g, "")
+          .replace(/[^a-z0-9\s]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+      const normSearch = normalize(searchTitle);
+      const searchWords = normSearch.split(" ").filter((w) => w.length > 1);
+
+      const candidates = searchItems
+        .filter(
+          (item: any) =>
+            item &&
+            item.subjectType === targetType &&
+            item.subjectId &&
+            item.detailPath,
+        )
+        .map((item: any) => {
+          const itemTitle = item.title || item.name || "";
+          const normItemClean = normalize(itemTitle);
+          const audio = this.getAudioFromItem(item);
+          const itemYear = item.releaseDate
+            ? item.releaseDate.substring(0, 4)
+            : "";
+
+          let isMatch = false;
+          let score = 0;
+
+          if (normItemClean === normSearch) {
+            isMatch = true;
+            score = 100;
+          } else if (
+            normItemClean.includes(normSearch) ||
+            normSearch.includes(normItemClean)
+          ) {
+            isMatch = true;
+            score = 50;
+          } else if (searchWords.length > 0) {
+            const itemWordSet = new Set(normItemClean.split(" "));
+            const matchedWords = searchWords.filter((w) => itemWordSet.has(w));
+            const matchRatio = matchedWords.length / searchWords.length;
+            if (matchRatio >= 0.75) {
+              isMatch = true;
+              score = 30;
+            }
+          }
+
+          if (isMatch) {
+            if (audio === "English") score += 10;
+            if (targetYear && itemYear === targetYear) score += 40;
+          }
+
+          return { item, audio, score, isMatch };
+        })
+        .filter((c: any) => c.isMatch)
+        .sort((a: any, b: any) => b.score - a.score);
+
+      if (candidates.length === 0 || !candidates[0]) return [];
+      const candidate = candidates[0].item;
+
+      const se = kind === "tv" ? season : 0;
+      const ep = kind === "tv" ? episode : 0;
+
+      const downloadUrl = `${BASE_URL}/wefeed-h5api-bff/subject/download?subjectId=${candidate.subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(candidate.detailPath)}`;
+      const playUrl = `${BASE_URL}/wefeed-h5api-bff/subject/play?subjectId=${candidate.subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(candidate.detailPath)}`;
+
+      const downloadHeaders = {
+        ...authHeaders,
+        cookie: `token=${token}; netnaija_token="${token}"; netnaija_i18n_lang=en`,
+        referer: `${BASE_URL}/videoPlayPage/${candidate.detailPath}?type=/${kind}/detail`,
+      };
+
+      const [downloadResResult, playResResult] = await Promise.allSettled([
+        axios.get(downloadUrl, { headers: downloadHeaders, timeout: 7000 }),
+        axios.get(playUrl, { headers: downloadHeaders, timeout: 7000 }),
+      ]);
+
+      const downloadRes =
+        downloadResResult.status === "fulfilled" ? downloadResResult.value : null;
+      const playRes =
+        playResResult.status === "fulfilled" ? playResResult.value : null;
+
+      const downloadsData = downloadRes?.data?.data?.downloads;
+      const streamsData = playRes?.data?.data?.streams;
+      const captionsData = downloadRes?.data?.data?.captions;
+
+      const mp4FileName =
+        kind === "movie"
+          ? `${searchTitle}${targetYear ? ` (${targetYear})` : ""}.mp4`
+          : `${searchTitle} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")}.mp4`;
+
+      const subtitles = Array.isArray(captionsData)
+        ? captionsData
+            .filter((c: any) => c && c.url)
+            .map((c: any) => {
+              const subExt = c.url.split("?")[0].split(".").pop() || "srt";
+              const subFileName =
+                kind === "movie"
+                  ? `${searchTitle} - ${c.lanName || c.lan}.${subExt}`
+                  : `${searchTitle} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")} - ${c.lanName || c.lan}.${subExt}`;
+              return {
+                lan: String(c.lan ?? "und"),
+                lanName: String(c.lanName ?? "Unknown"),
+                url: `/api/download/stream-file?url=${encodeURIComponent(c.url)}&name=${encodeURIComponent(subFileName)}`,
+              };
+            })
+        : [];
+
+      const results: any[] = [];
+      const addedQualities = new Set<string>();
+
+      // 1. Add direct download items
+      if (Array.isArray(downloadsData)) {
+        for (const d of downloadsData) {
+          if (!d.url || d.vipLocked) continue;
+          const resLabel = d.resolution ? `${d.resolution}p` : "HD";
+          const sizeStr = parseAndFormatSize(d.size);
+          addedQualities.add(resLabel);
+
+          results.push({
+            title: candidate.title || searchTitle,
+            quality: resLabel,
+            size: sizeStr,
+            direct_url: `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`,
+            source: "Vortex",
+            format: "mp4",
+            subtitles,
+            type: kind,
+            ...(kind === "tv" ? { season, episode } : {}),
+          });
+        }
+      }
+
+      // 2. Add unlocked play streams (e.g. 1080p) if missing from download items
+      if (Array.isArray(streamsData)) {
+        for (const s of streamsData) {
+          if (!s.url) continue;
+          const resLabel = s.resolutions ? `${s.resolutions}p` : "HD";
+          if (addedQualities.has(resLabel)) continue;
+          addedQualities.add(resLabel);
+          const sizeStr = parseAndFormatSize(s.size);
+
+          results.push({
+            title: candidate.title || searchTitle,
+            quality: resLabel,
+            size: sizeStr,
+            direct_url: `/api/download/stream-file?url=${encodeURIComponent(s.url)}&name=${encodeURIComponent(mp4FileName)}`,
+            source: "Vortex",
+            format: "mp4",
+            subtitles,
+            type: kind,
+            ...(kind === "tv" ? { season, episode } : {}),
+          });
+        }
+      }
+
+      return results;
+    } catch (err: any) {
+      console.warn(`[Vortex] Direct download fetch error: ${err.message}`);
       return [];
     }
   }
