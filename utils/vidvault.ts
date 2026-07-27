@@ -263,7 +263,12 @@ export async function fetchVidVaultDownloads(
       else quality = "1080p";
     }
 
-    const direct_url = `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`;
+    const itemMp4FileName =
+      kind === "movie"
+        ? `${mediaInfo.title}${yearStr} [${quality}].mp4`
+        : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")} [${quality}].mp4`;
+
+    const direct_url = `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(itemMp4FileName)}`;
 
     const entry: VidVaultDownload = {
       title: "",
@@ -281,12 +286,6 @@ export async function fetchVidVaultDownloads(
   }
 
   // ── Extract MKV downloads (mkvData, mkvV2Data, mkvV3Data) ─────────────────
-  const yearSuffixMkv = mediaInfo.year ? ` (${mediaInfo.year})` : "";
-  const mkvFileName =
-    kind === "movie"
-      ? `${mediaInfo.title}${yearSuffixMkv}.mkv`
-      : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")}.mkv`;
-
   const mkvKeys = ["mkvData", "mkvV2Data", "mkvV3Data"] as const;
   for (const key of mkvKeys) {
     const mkvObj = data?.[key];
@@ -315,7 +314,12 @@ export async function fetchVidVaultDownloads(
           else mkvQuality = "1080p";
         }
 
-        const direct_url = `/api/download/stream-file?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(mkvFileName)}`;
+        const itemMkvFileName =
+          kind === "movie"
+            ? `${mediaInfo.title}${yearStr} [${mkvQuality}].mkv`
+            : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")} [${mkvQuality}].mkv`;
+
+        const direct_url = `/api/download/stream-file?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(itemMkvFileName)}`;
 
         const mkvEntry: VidVaultDownload = {
           title: "",
@@ -351,7 +355,12 @@ export async function fetchVidVaultDownloads(
         else mkvQuality = "1080p";
       }
 
-      const direct_url = `/api/download/stream-file?url=${encodeURIComponent(mkvObj.url)}&name=${encodeURIComponent(mkvFileName)}`;
+      const itemMkvFileName =
+        kind === "movie"
+          ? `${mediaInfo.title}${yearStr} [${mkvQuality}].mkv`
+          : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")} [${mkvQuality}].mkv`;
+
+      const direct_url = `/api/download/stream-file?url=${encodeURIComponent(mkvObj.url)}&name=${encodeURIComponent(itemMkvFileName)}`;
 
       const mkvEntry: VidVaultDownload = {
         title: "",

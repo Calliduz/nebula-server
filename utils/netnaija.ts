@@ -627,11 +627,16 @@ export class NetNaijaScraper {
           const sizeStr = parseAndFormatSize(d.size);
           addedQualities.add(resLabel);
 
+          const itemMp4FileName =
+            kind === "movie"
+              ? `${titleName}${yearSuffix} [${resLabel}].mp4`
+              : `${titleName} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")} [${resLabel}].mp4`;
+
           results.push({
             title: titleName,
             quality: resLabel,
             size: sizeStr,
-            direct_url: `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`,
+            direct_url: `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(itemMp4FileName)}`,
             source: "Vortex",
             format: "mp4",
             subtitles,
@@ -650,11 +655,16 @@ export class NetNaijaScraper {
           addedQualities.add(resLabel);
           const sizeStr = parseAndFormatSize(s.size);
 
+          const itemMp4FileName =
+            kind === "movie"
+              ? `${titleName}${yearSuffix} [${resLabel}].mp4`
+              : `${titleName} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")} [${resLabel}].mp4`;
+
           results.push({
             title: titleName,
             quality: resLabel,
             size: sizeStr,
-            direct_url: `/api/download/stream-file?url=${encodeURIComponent(s.url)}&name=${encodeURIComponent(mp4FileName)}`,
+            direct_url: `/api/download/stream-file?url=${encodeURIComponent(s.url)}&name=${encodeURIComponent(itemMp4FileName)}`,
             source: "Vortex",
             format: "mp4",
             subtitles,

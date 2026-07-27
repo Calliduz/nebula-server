@@ -695,9 +695,10 @@ app.get("/api/download/stream-file", async (req, res) => {
 
   try {
     // Set headers to trigger a file download in the browser with friendly filename
+    const cleanFilename = filename.replace(/[\r\n"]/g, "_");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${encodeURIComponent(filename)}"`,
+      `attachment; filename="${cleanFilename}"; filename*=UTF-8''${encodeURIComponent(cleanFilename)}`,
     );
     res.setHeader("Content-Type", "application/octet-stream");
 
