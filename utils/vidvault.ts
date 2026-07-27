@@ -59,13 +59,14 @@ export async function getMediaTitleAndYear(
   }
 
   try {
-    const res = await axios.get(
-      `https://api.themoviedb.org/3/${type}/${tmdbId}`,
-      {
-        headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
-        timeout: 5000,
-      },
-    );
+    const isV4 = TMDB_API_KEY.startsWith("eyJ");
+    const tmdbUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}${isV4 ? "" : `?api_key=${TMDB_API_KEY}`}`;
+    const headers = isV4 ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {};
+
+    const res = await axios.get(tmdbUrl, {
+      headers,
+      timeout: 5000,
+    });
     const data = res.data;
     const title =
       type === "movie"
@@ -217,9 +218,10 @@ export async function fetchVidVaultDownloads(
     .filter((c: any) => c?.url?.startsWith("http"))
     .map((c: any) => {
       const subExt = c.url.split("?")[0].split(".").pop() || "srt";
+      const yearStr = mediaInfo.year ? ` (${mediaInfo.year})` : "";
       const subFileName =
         kind === "movie"
-          ? `${mediaInfo.title} (${mediaInfo.year}) - ${c.lanName}.${subExt}`
+          ? `${mediaInfo.title}${yearStr} - ${c.lanName}.${subExt}`
           : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")} - ${c.lanName}.${subExt}`;
 
       const subUrl = `/api/download/stream-file?url=${encodeURIComponent(c.url)}&name=${encodeURIComponent(subFileName)}`;
@@ -233,26 +235,26 @@ export async function fetchVidVaultDownloads(
 
   // ── Extract MP4 downloads ──────────────────────────────────────────────────
   const downloads: any[] = data?.mp4Data?.downloadInfo?.data?.downloads ?? [];
+  const yearStr = mediaInfo.year ? ` (${mediaInfo.year})` : "";
   const mp4FileName =
     kind === "movie"
-      ? `${mediaInfo.title} (${mediaInfo.year}).mp4`
+      ? `${mediaInfo.title}${yearStr}.mp4`
       : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")}.mp4`;
 
   for (const d of downloads) {
     if (!d.url || !d.url.startsWith("http")) continue;
-    const rawQuality = String(
-      d.quality ?? d.definition ?? d.label ?? "HD",
-    ).trim();
+    const rawQuality = d.resolution
+      ? `${d.resolution}p`
+      : String(d.quality ?? d.definition ?? d.label ?? "HD").trim();
     const sizeBytes = parseSizeToBytes(d.filesize ?? d.size);
     const sizeStr = parseAndFormatSize(d.filesize ?? d.size);
 
     let quality = rawQuality;
     if (/^hd$/i.test(rawQuality) && sizeBytes > 0) {
-      if (sizeBytes < 200 * 1024 * 1024) quality = "360p";
-      else if (sizeBytes < 400 * 1024 * 1024) quality = "480p";
-      else if (sizeBytes < 750 * 1024 * 1024) quality = "720p";
-      else if (sizeBytes < 2000 * 1024 * 1024) quality = "1080p";
-      else quality = "4K";
+      if (sizeBytes < 350 * 1024 * 1024) quality = "360p";
+      else if (sizeBytes < 700 * 1024 * 1024) quality = "480p";
+      else if (sizeBytes < 1500 * 1024 * 1024) quality = "720p";
+      else quality = "1080p";
     }
 
     const direct_url = `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`;
@@ -273,9 +275,10 @@ export async function fetchVidVaultDownloads(
   }
 
   // ── Extract MKV downloads (mkvData, mkvV2Data, mkvV3Data) ─────────────────
+  const yearSuffixMkv = mediaInfo.year ? ` (${mediaInfo.year})` : "";
   const mkvFileName =
     kind === "movie"
-      ? `${mediaInfo.title} (${mediaInfo.year}).mkv`
+      ? `${mediaInfo.title}${yearSuffixMkv}.mkv`
       : `${mediaInfo.title} S${(season ?? 1).toString().padStart(2, "0")}E${(episode ?? 1).toString().padStart(2, "0")}.mkv`;
 
   const mkvKeys = ["mkvData", "mkvV2Data", "mkvV3Data"] as const;
@@ -294,15 +297,16 @@ export async function fetchVidVaultDownloads(
         const sizeBytes = parseSizeToBytes(file.size);
         const sizeStr = parseAndFormatSize(file.size);
 
-        let mkvQuality = String(file.quality ?? mkvObj.quality ?? "HD")
-          .replace(/\s*\(mkv\)/gi, "")
-          .trim();
+        let mkvQuality = file.resolution
+          ? `${file.resolution}p`
+          : String(file.quality ?? mkvObj.quality ?? "HD")
+              .replace(/\s*\(mkv\)/gi, "")
+              .trim();
         if (/^hd$/i.test(mkvQuality) && sizeBytes > 0) {
-          if (sizeBytes < 200 * 1024 * 1024) mkvQuality = "360p";
-          else if (sizeBytes < 400 * 1024 * 1024) mkvQuality = "480p";
-          else if (sizeBytes < 750 * 1024 * 1024) mkvQuality = "720p";
-          else if (sizeBytes < 2000 * 1024 * 1024) mkvQuality = "1080p";
-          else mkvQuality = "4K";
+          if (sizeBytes < 350 * 1024 * 1024) mkvQuality = "360p";
+          else if (sizeBytes < 700 * 1024 * 1024) mkvQuality = "480p";
+          else if (sizeBytes < 1500 * 1024 * 1024) mkvQuality = "720p";
+          else mkvQuality = "1080p";
         }
 
         const direct_url = `/api/download/stream-file?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(mkvFileName)}`;
@@ -325,19 +329,20 @@ export async function fetchVidVaultDownloads(
       typeof mkvObj.url === "string" &&
       mkvObj.url.startsWith("http")
     ) {
-      const rawMkvQuality = String(mkvObj.quality ?? "HD")
-        .replace(/\s*\(mkv\)/gi, "")
-        .trim();
+      const rawMkvQuality = mkvObj.resolution
+        ? `${mkvObj.resolution}p`
+        : String(mkvObj.quality ?? "HD")
+            .replace(/\s*\(mkv\)/gi, "")
+            .trim();
       const sizeBytes = parseSizeToBytes(mkvObj.size);
       const mkvSizeStr = parseAndFormatSize(mkvObj.size);
 
       let mkvQuality = rawMkvQuality;
       if (/^hd$/i.test(rawMkvQuality) && sizeBytes > 0) {
-        if (sizeBytes < 200 * 1024 * 1024) mkvQuality = "360p";
-        else if (sizeBytes < 400 * 1024 * 1024) mkvQuality = "480p";
-        else if (sizeBytes < 750 * 1024 * 1024) mkvQuality = "720p";
-        else if (sizeBytes < 2000 * 1024 * 1024) mkvQuality = "1080p";
-        else mkvQuality = "4K";
+        if (sizeBytes < 350 * 1024 * 1024) mkvQuality = "360p";
+        else if (sizeBytes < 700 * 1024 * 1024) mkvQuality = "480p";
+        else if (sizeBytes < 1500 * 1024 * 1024) mkvQuality = "720p";
+        else mkvQuality = "1080p";
       }
 
       const direct_url = `/api/download/stream-file?url=${encodeURIComponent(mkvObj.url)}&name=${encodeURIComponent(mkvFileName)}`;

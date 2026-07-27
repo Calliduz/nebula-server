@@ -588,10 +588,16 @@ export class NetNaijaScraper {
       const streamsData = playRes?.data?.data?.streams;
       const captionsData = downloadRes?.data?.data?.captions;
 
+      const titleName =
+        searchTitle && searchTitle !== "Media"
+          ? searchTitle
+          : candidate.title || "Media";
+      const yearSuffix = targetYear ? ` (${targetYear})` : "";
+
       const mp4FileName =
         kind === "movie"
-          ? `${searchTitle}${targetYear ? ` (${targetYear})` : ""}.mp4`
-          : `${searchTitle} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")}.mp4`;
+          ? `${titleName}${yearSuffix}.mp4`
+          : `${titleName} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")}.mp4`;
 
       const subtitles = Array.isArray(captionsData)
         ? captionsData
@@ -600,8 +606,8 @@ export class NetNaijaScraper {
               const subExt = c.url.split("?")[0].split(".").pop() || "srt";
               const subFileName =
                 kind === "movie"
-                  ? `${searchTitle} - ${c.lanName || c.lan}.${subExt}`
-                  : `${searchTitle} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")} - ${c.lanName || c.lan}.${subExt}`;
+                  ? `${titleName} - ${c.lanName || c.lan}.${subExt}`
+                  : `${titleName} S${season.toString().padStart(2, "0")}E${episode.toString().padStart(2, "0")} - ${c.lanName || c.lan}.${subExt}`;
               return {
                 lan: String(c.lan ?? "und"),
                 lanName: String(c.lanName ?? "Unknown"),
@@ -622,7 +628,7 @@ export class NetNaijaScraper {
           addedQualities.add(resLabel);
 
           results.push({
-            title: candidate.title || searchTitle,
+            title: titleName,
             quality: resLabel,
             size: sizeStr,
             direct_url: `/api/download/stream-file?url=${encodeURIComponent(d.url)}&name=${encodeURIComponent(mp4FileName)}`,
@@ -645,7 +651,7 @@ export class NetNaijaScraper {
           const sizeStr = parseAndFormatSize(s.size);
 
           results.push({
-            title: candidate.title || searchTitle,
+            title: titleName,
             quality: resLabel,
             size: sizeStr,
             direct_url: `/api/download/stream-file?url=${encodeURIComponent(s.url)}&name=${encodeURIComponent(mp4FileName)}`,
