@@ -53,7 +53,9 @@ export async function getMediaTitleAndYear(
       key: cacheKey,
       expiresAt: { $gt: new Date() },
     });
-    if (cached) return cached.data;
+    if (cached && cached.data && cached.data.title && cached.data.title !== "Media") {
+      return cached.data;
+    }
   } catch (e) {
     console.warn(`[TMDB] Cache read failed for title-year lookup:`, e);
   }
@@ -164,11 +166,15 @@ export async function fetchVidVaultDownloads(
   tmdbId: string,
   season?: number,
   episode?: number,
+  passedTitle?: string,
 ): Promise<VidVaultDownload[]> {
   const token = await fetchVidVaultToken();
   if (!token) return [];
 
   const mediaInfo = await getMediaTitleAndYear(tmdbId, kind);
+  if ((!mediaInfo.title || mediaInfo.title === "Media") && passedTitle) {
+    mediaInfo.title = passedTitle;
+  }
 
   const requestBody: Record<string, any> =
     kind === "movie"

@@ -1159,6 +1159,7 @@ app.get("/api/download/direct", async (req, res) => {
   const cacheKey = `direct-downloads-${tmdbId}-${kind}`;
 
   try {
+    const titleParam = req.query.title as string | undefined;
     const force = req.query.force === "1" || req.query.nocache === "1";
     const cached = force
       ? null
@@ -1171,15 +1172,18 @@ app.get("/api/download/direct", async (req, res) => {
       Array.isArray(cached.data) &&
       cached.data.length > 0 &&
       !cached.data.some(
-        (d: any) => d.source === "VidVault" || d.source === "NetNaija Direct",
+        (d: any) =>
+          d.source === "VidVault" ||
+          d.source === "NetNaija Direct" ||
+          (d.direct_url && d.direct_url.includes("name=Media")),
       )
     ) {
       return res.json({ directDownloads: cached.data });
     }
 
     const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
-      fetchVidVaultDownloads(kind, tmdbId).catch(() => []),
-      NetNaijaScraper.getDirectDownloads({ tmdbId, kind }).catch(() => []),
+      fetchVidVaultDownloads(kind, tmdbId, undefined, undefined, titleParam).catch(() => []),
+      NetNaijaScraper.getDirectDownloads({ tmdbId, kind, title: titleParam }).catch(() => []),
     ]);
     const directDownloads = [...vidVaultDownloads, ...netNaijaDownloads];
 
@@ -1220,6 +1224,7 @@ app.get("/api/download/episode/direct", async (req, res) => {
   const cacheKey = `direct-downloads-episode-${tmdbId}-${season}-${episode}`;
 
   try {
+    const titleParam = req.query.title as string | undefined;
     const force = req.query.force === "1" || req.query.nocache === "1";
     const cached = force
       ? null
@@ -1232,19 +1237,23 @@ app.get("/api/download/episode/direct", async (req, res) => {
       Array.isArray(cached.data) &&
       cached.data.length > 0 &&
       !cached.data.some(
-        (d: any) => d.source === "VidVault" || d.source === "NetNaija Direct",
+        (d: any) =>
+          d.source === "VidVault" ||
+          d.source === "NetNaija Direct" ||
+          (d.direct_url && d.direct_url.includes("name=Media")),
       )
     ) {
       return res.json({ directDownloads: cached.data });
     }
 
     const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
-      fetchVidVaultDownloads("tv", tmdbId, season, episode).catch(() => []),
+      fetchVidVaultDownloads("tv", tmdbId, season, episode, titleParam).catch(() => []),
       NetNaijaScraper.getDirectDownloads({
         tmdbId,
         kind: "tv",
         season,
         episode,
+        title: titleParam,
       }).catch(() => []),
     ]);
     const directDownloads = [...vidVaultDownloads, ...netNaijaDownloads];
