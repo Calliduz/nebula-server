@@ -115,21 +115,49 @@ export class NetNaijaScraper {
   }
 
   /**
-   * Resolves TMDB title if title is not passed directly
+   * Resolves TMDB details (title and release year) if details are not passed directly
    */
-  private static async getTmdbTitle(
+  private static async getTmdbDetails(
     tmdbId: number,
     type: "movie" | "tv",
-  ): Promise<string | undefined> {
+  ): Promise<{ title?: string; year?: string }> {
     try {
       const tmdbApiKey =
         process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
       const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${tmdbApiKey}`;
       const res = await axios.get(url, { timeout: 5000 });
-      return res.data?.title || res.data?.name || undefined;
+      const title = res.data?.title || res.data?.name || undefined;
+      const releaseDate =
+        res.data?.release_date || res.data?.first_air_date || "";
+      const year = releaseDate ? releaseDate.substring(0, 4) : undefined;
+      return { title, year };
     } catch {
-      return undefined;
+      return {};
     }
+  }
+
+  /**
+   * Helper to detect audio language from NetNaija item corner tag or title brackets
+   */
+  private static getAudioFromItem(item: any): string {
+    const corner = (item.corner || "").trim();
+    const title = (item.title || item.name || "").trim();
+
+    if (
+      corner.toLowerCase() === "tagalog" ||
+      title.toLowerCase().includes("[tagalog]")
+    ) {
+      return "Filipino";
+    }
+    if (corner) return corner;
+
+    const dubMatch = title.match(/\[([A-Za-z\s]+)\]/);
+    if (dubMatch && dubMatch[1]) {
+      const d = dubMatch[1].trim();
+      if (d.toLowerCase() === "tagalog") return "Filipino";
+      return d;
+    }
+    return "English";
   }
 
   /**
@@ -144,8 +172,12 @@ export class NetNaijaScraper {
 
     try {
       let searchTitle = options.title;
-      if (!searchTitle && numericTmdbId) {
-        searchTitle = await this.getTmdbTitle(numericTmdbId, kind);
+      let targetYear: string | undefined;
+
+      if (numericTmdbId) {
+        const tmdbDetails = await this.getTmdbDetails(numericTmdbId, kind);
+        if (!searchTitle) searchTitle = tmdbDetails.title;
+        targetYear = tmdbDetails.year;
       }
 
       if (!searchTitle) {
@@ -156,7 +188,7 @@ export class NetNaijaScraper {
       }
 
       console.log(
-        `[Vesper/NetNaija] Searching for "${searchTitle}" (TMDB ${numericTmdbId}, ${kind})...`,
+        `[Vesper/NetNaija] Searching for "${searchTitle}" (TMDB ${numericTmdbId}, ${kind}${targetYear ? `, ${targetYear}` : ""})...`,
       );
 
       const token = await this.getGuestToken();
@@ -203,6 +235,7 @@ export class NetNaijaScraper {
       const normalize = (str: string) =>
         str
           .toLowerCase()
+          .replace(/\[.*?\]|\(.*?\)/g, "")
           .replace(/[^a-z0-9\s]/g, "")
           .replace(/\s+/g, " ")
           .trim();
@@ -210,103 +243,139 @@ export class NetNaijaScraper {
       const normSearch = normalize(searchTitle);
       const searchWords = normSearch.split(" ").filter((w) => w.length > 1);
 
-      const matchedItem = searchItems.find((item: any) => {
-        if (item.subjectType !== targetType) return false;
+      const candidates = searchItems
+        .filter(
+          (item: any) =>
+            item &&
+            item.subjectType === targetType &&
+            item.subjectId &&
+            item.detailPath,
+        )
+        .map((item: any) => {
+          const itemTitle = item.title || item.name || "";
+          const normItemClean = normalize(itemTitle);
+          const audio = this.getAudioFromItem(item);
+          const itemYear = item.releaseDate
+            ? item.releaseDate.substring(0, 4)
+            : "";
 
-        const itemTitle = item.title || item.name || "";
-        const normItem = normalize(itemTitle);
+          let isMatch = false;
+          let score = 0;
 
-        // 1. Exact or substring match
-        if (
-          normItem === normSearch ||
-          normItem.includes(normSearch) ||
-          normSearch.includes(normItem)
-        ) {
-          return true;
-        }
-
-        // 2. Word overlap match (at least 75% of search query words present in item title)
-        if (searchWords.length > 0) {
-          const itemWordSet = new Set(normItem.split(" "));
-          const matchedWords = searchWords.filter((w) => itemWordSet.has(w));
-          const matchRatio = matchedWords.length / searchWords.length;
-          if (matchRatio >= 0.75) {
-            return true;
+          if (normItemClean === normSearch) {
+            isMatch = true;
+            score = 100;
+          } else if (
+            normItemClean.includes(normSearch) ||
+            normSearch.includes(normItemClean)
+          ) {
+            isMatch = true;
+            score = 50;
+          } else if (searchWords.length > 0) {
+            const itemWordSet = new Set(normItemClean.split(" "));
+            const matchedWords = searchWords.filter((w) => itemWordSet.has(w));
+            const matchRatio = matchedWords.length / searchWords.length;
+            if (matchRatio >= 0.75) {
+              isMatch = true;
+              score = 30;
+            }
           }
-        }
 
-        return false;
-      });
+          if (isMatch) {
+            if (audio === "English") score += 10;
+            if (targetYear && itemYear === targetYear) score += 40;
+          }
 
-      if (!matchedItem || !matchedItem.subjectId || !matchedItem.detailPath) {
+          return { item, audio, score, isMatch };
+        })
+        .filter((c: any) => c.isMatch)
+        .sort((a: any, b: any) => b.score - a.score);
+
+      if (candidates.length === 0) {
         console.log(
           `[Vesper/NetNaija] Match failed for TMDB ${numericTmdbId} ("${searchTitle}")`,
         );
         return [];
       }
 
+      // Select primary candidate (top score, English preferred)
+      const primaryCandidate = candidates[0];
+      const itemsToFetch = [primaryCandidate];
+
+      // Include extra dub candidates matching the title (e.g. Tagalog/Filipino)
+      const extraDubs = candidates.filter(
+        (c: any) =>
+          c.audio !== primaryCandidate.audio &&
+          c.score >= primaryCandidate.score - 20,
+      );
+      itemsToFetch.push(...extraDubs);
+
       console.log(
-        `[Vesper/NetNaija] Found match: "${matchedItem.title || matchedItem.name}" (subjectId: ${matchedItem.subjectId}, detailPath: ${matchedItem.detailPath})`,
+        `[Vesper/NetNaija] Selected primary item: "${primaryCandidate.item.title}" (${primaryCandidate.audio}), plus ${extraDubs.length} dub variants`,
       );
 
-      // Step 2: Fetch play streams
+      const mirrors: MirrorStream[] = [];
       const se = kind === "tv" ? season : 0;
       const ep = kind === "tv" ? episode : 0;
-      const playUrl = `${BASE_URL}/wefeed-h5api-bff/subject/play?subjectId=${matchedItem.subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(matchedItem.detailPath)}`;
 
-      const playHeaders = {
-        ...authHeaders,
-        cookie: `token=${token}; netnaija_token="${token}"; netnaija_i18n_lang=en`,
-        referer: `${BASE_URL}/videoPlayPage/${matchedItem.detailPath}?type=/${kind}/detail`,
-      };
+      for (const candidate of itemsToFetch) {
+        const item = candidate.item;
+        const itemAudio = candidate.audio;
 
-      const playRes = await axios.get(playUrl, {
-        headers: playHeaders,
-        timeout: 7000,
-      });
+        const playUrl = `${BASE_URL}/wefeed-h5api-bff/subject/play?subjectId=${item.subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(item.detailPath)}`;
+        const playHeaders = {
+          ...authHeaders,
+          cookie: `token=${token}; netnaija_token="${token}"; netnaija_i18n_lang=en`,
+          referer: `${BASE_URL}/videoPlayPage/${item.detailPath}?type=/${kind}/detail`,
+        };
 
-      const streamsData = playRes.data?.data?.streams;
-      if (!Array.isArray(streamsData) || streamsData.length === 0) {
-        console.log(
-          `[Vesper/NetNaija] No active streams in play response for TMDB ${numericTmdbId}`,
-        );
-        return [];
-      }
+        try {
+          const playRes = await axios.get(playUrl, {
+            headers: playHeaders,
+            timeout: 7000,
+          });
 
-      // Step 3: Fetch subtitles/captions
-      let subtitles: SubtitleStream[] = [];
-      const primaryStream = streamsData[0];
-      if (primaryStream && primaryStream.id) {
-        subtitles = await this.getCaptions(
-          primaryStream.format || "MP4",
-          primaryStream.id,
-          matchedItem.subjectId,
-          matchedItem.detailPath,
-          token,
-        );
-      }
+          const streamsData = playRes.data?.data?.streams;
+          if (!Array.isArray(streamsData) || streamsData.length === 0) continue;
 
-      const mirrors: MirrorStream[] = [];
-      for (const s of streamsData) {
-        if (!s.url) continue;
-        const resLabel = s.resolutions ? `${s.resolutions}p` : "HD";
+          let subtitles: SubtitleStream[] = [];
+          if (streamsData[0]?.id) {
+            subtitles = await this.getCaptions(
+              streamsData[0].format || "MP4",
+              streamsData[0].id,
+              item.subjectId,
+              item.detailPath,
+              token,
+            );
+          }
 
-        mirrors.push({
-          url: s.url,
-          quality: resLabel,
-          type: "mp4",
-          source: `Vesper (${resLabel})`,
-          headers: {
-            Referer: `${BASE_URL}/`,
-            Origin: BASE_URL,
-            "User-Agent": UA,
-          },
-          subtitles,
-        });
+          for (const s of streamsData) {
+            if (!s.url) continue;
+            const resLabel = s.resolutions ? `${s.resolutions}p` : "HD";
+
+            mirrors.push({
+              url: s.url,
+              quality: resLabel,
+              type: "mp4",
+              source: `Vesper (${resLabel})`,
+              audio: itemAudio,
+              headers: {
+                Referer: `${BASE_URL}/`,
+                Origin: BASE_URL,
+                "User-Agent": UA,
+              },
+              subtitles,
+            });
+          }
+        } catch (err: any) {
+          console.warn(
+            `[Vesper/NetNaija] Failed fetching streams for ${item.title}: ${err.message}`,
+          );
+        }
       }
 
       console.log(
-        `[Vesper/NetNaija] ✅ Found ${mirrors.length} mirrors and ${subtitles.length} subtitles for TMDB ${numericTmdbId}`,
+        `[Vesper/NetNaija] ✅ Found ${mirrors.length} mirrors for TMDB ${numericTmdbId}`,
       );
       return mirrors;
     } catch (err: any) {

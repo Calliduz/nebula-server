@@ -578,7 +578,7 @@ export function createSubtitleRouter(
         (async () => {
           try {
             const vesperCache = await StreamCache.findOne({
-              tmdbId: tmdbId.toString(),
+              tmdbId: { $in: [tmdbId.toString(), `${tmdbId}-netnaija`] },
               type: kind,
               season,
               episode,

@@ -169,7 +169,7 @@ function buildResponseObject(mirrors: any[]): Record<string, any> {
   const responseData: Record<string, any> = {};
   let globalSubtitles: any[] = [];
 
-  mirrors.forEach((m: any) => {
+  mirrors.forEach((m: any, index: number) => {
     if (
       Array.isArray(m.subtitles) &&
       m.subtitles.length > 0 &&
@@ -177,11 +177,22 @@ function buildResponseObject(mirrors: any[]): Record<string, any> {
     ) {
       globalSubtitles = m.subtitles;
     }
-    responseData[m.source] = {
+
+    const audio = m.audio || "English";
+    const baseSource = m.source || "Vesper";
+    const audioTag = audio !== "English" ? ` [${audio}]` : "";
+
+    let key = `${baseSource}${audioTag}`;
+    if (responseData[key]) {
+      key = `${baseSource}${audioTag} (${index + 1})`;
+    }
+
+    responseData[key] = {
       url: m.url,
       type: m.type || "mp4",
       quality: m.quality || "Auto",
-      source: m.source,
+      source: key,
+      audio,
       headers: m.headers || {},
       subtitles: m.subtitles || [],
     };
