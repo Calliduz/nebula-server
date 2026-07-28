@@ -3205,15 +3205,33 @@ app.get("/api/image", async (req, res) => {
   try {
     const isFanart = url.includes("fanart.tv");
     const agent = isFanart ? undefined : getSharedHardenedAgent();
-    const response = await axios.get(url, {
-      responseType: "stream",
-      timeout: isFanart ? 3000 : 10000,
-      headers: {
-        "User-Agent": UA,
-        ...(isFanart ? { Referer: "https://fanart.tv/" } : {}),
-      },
-      ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
-    });
+
+    let response;
+    try {
+      response = await axios.get(url, {
+        responseType: "stream",
+        timeout: isFanart ? 3500 : 10000,
+        headers: {
+          "User-Agent": UA,
+          ...(isFanart ? { Referer: "https://fanart.tv/" } : {}),
+        },
+        ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
+      });
+    } catch (primaryErr) {
+      if (url.includes("assets.fanart.tv")) {
+        const altUrl = url.replace("assets.fanart.tv", "images.fanart.tv");
+        response = await axios.get(altUrl, {
+          responseType: "stream",
+          timeout: 3500,
+          headers: {
+            "User-Agent": UA,
+            Referer: "https://fanart.tv/",
+          },
+        });
+      } else {
+        throw primaryErr;
+      }
+    }
 
     // Pass along content type
     const contentType = response.headers["content-type"];
@@ -3277,7 +3295,6 @@ async function getFanartMetadata(
     () => null,
   );
   if (cached && cached.logoFetchedAt) {
-    // If it was fetched more than 24h ago, we might want to retry if logo was null
     const wasEmpty = !cached.logoUrl;
     const isOld =
       Date.now() - new Date(cached.logoFetchedAt).getTime() >
@@ -3286,7 +3303,6 @@ async function getFanartMetadata(
     if (!wasEmpty || !isOld) {
       return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
     }
-    console.log(`[FANART] Retrying empty/old cache for ${tmdbId}`);
   }
 
   try {
