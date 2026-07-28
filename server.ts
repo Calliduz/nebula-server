@@ -3202,13 +3202,16 @@ app.get("/api/image", async (req, res) => {
   }
 
   try {
-    const agent = getSharedHardenedAgent();
+    const isFanart = url.includes("fanart.tv");
+    const agent = isFanart ? undefined : getSharedHardenedAgent();
     const response = await axios.get(url, {
       responseType: "stream",
-      timeout: 10000,
-      headers: { "User-Agent": UA },
-      httpAgent: agent,
-      httpsAgent: agent,
+      timeout: isFanart ? 3000 : 10000,
+      headers: {
+        "User-Agent": UA,
+        ...(isFanart ? { Referer: "https://fanart.tv/" } : {}),
+      },
+      ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
     });
 
     // Pass along content type
@@ -3220,7 +3223,7 @@ app.get("/api/image", async (req, res) => {
 
     response.data.pipe(res);
   } catch (e: any) {
-    res.status(500).send("Image proxy failed");
+    res.status(404).send("Image proxy failed");
   }
 });
 
@@ -3344,30 +3347,37 @@ async function getFanartMetadata(
           (parseInt(a.likes || a.vote_count) || 0),
       );
 
-    // LAST RESORT FALLBACK: TMDB Images (if Fanart has nothing)
-    if (
-      !data.hdtvlogo &&
-      !data.clearlogo &&
-      !data.hdmovielogo &&
-      !data.movielogo
-    ) {
-      console.log(
-        `[FANART] No logo on Fanart for ${tmdbId}, trying TMDB fallback...`,
-      );
+    // TMDB Logo & Backdrop Fallback helper (handles both v3 and v4 TMDB keys)
+    const getTmdbArt = async (): Promise<{ logo: string | null; backdrop: string | null }> => {
       try {
-        const tmdbImgUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}/images?include_image_language=en,null`;
-        const tmdbRes = await axios.get(tmdbImgUrl, {
-          headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
-        });
-        const tmdbLogos = sortByLikes(tmdbRes.data.logos || []);
-        if (tmdbLogos.length > 0) {
-          hdLogo = `https://image.tmdb.org/t/p/original${tmdbLogos[0].file_path}`;
-          console.log(`[FANART] Found TMDB logo fallback: ${hdLogo}`);
+        const isV4Token = TMDB_API_KEY.length > 40;
+        const tmdbImgUrl = `https://api.themoviedb.org/3/${type === "tv" ? "tv" : "movie"}/${tmdbId}/images?include_image_language=en,null${isV4Token ? "" : `&api_key=${TMDB_API_KEY}`}`;
+        const headers = isV4Token ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {};
+        const tmdbRes = await axios.get(tmdbImgUrl, { headers, timeout: 5000 });
+        let logo: string | null = null;
+        let backdrop: string | null = null;
+
+        const logos = tmdbRes.data?.logos || [];
+        if (logos.length > 0) {
+          const bestTmdbLogo = logos.sort(
+            (a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0),
+          )[0];
+          logo = `https://image.tmdb.org/t/p/original${bestTmdbLogo.file_path}`;
         }
+
+        const backdrops = tmdbRes.data?.backdrops || [];
+        if (backdrops.length > 0) {
+          const bestBackdrop = backdrops.sort(
+            (a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0),
+          )[0];
+          backdrop = `https://image.tmdb.org/t/p/original${bestBackdrop.file_path}`;
+        }
+
+        return { logo, backdrop };
       } catch (e) {
-        console.error(`[FANART] TMDB fallback failed for ${tmdbId}`);
+        return { logo: null, backdrop: null };
       }
-    }
+    };
 
     if (type === "tv") {
       const hdtvlogo = sortByLikes(data.hdtvlogo || []);
@@ -3430,6 +3440,17 @@ async function getFanartMetadata(
       if (selection) backgroundUrl = selection.url;
     }
 
+    // Always fetch TMDB art if logo or backdrop is missing or points to fanart.tv CDN
+    if (!hdLogo || hdLogo.includes("fanart.tv") || !backgroundUrl || backgroundUrl.includes("fanart.tv")) {
+      const tmdbArt = await getTmdbArt();
+      if ((!hdLogo || hdLogo.includes("fanart.tv")) && tmdbArt.logo) {
+        hdLogo = tmdbArt.logo;
+      }
+      if ((!backgroundUrl || backgroundUrl.includes("fanart.tv")) && tmdbArt.backdrop) {
+        backgroundUrl = tmdbArt.backdrop;
+      }
+    }
+
     // Save to Cache with Type (30-day TTL for stale art cleanup)
     await MetadataCache.findOneAndUpdate(
       { tmdbId, type },
@@ -3442,26 +3463,6 @@ async function getFanartMetadata(
       },
       { upsert: true },
     ).catch(() => null);
-
-    // Final Fallback: If Fanart failed, try TMDB's own image registry for logos
-    if (!hdLogo) {
-      try {
-        const tmdbLogoUrl = `https://api.themoviedb.org/3/${type === "tv" ? "tv" : "movie"}/${tmdbId}/images?include_image_language=en,null`;
-        const tmdbRes = await axios.get(tmdbLogoUrl, {
-          headers: { Authorization: `Bearer ${TMDB_API_KEY}` },
-        });
-        const logos = tmdbRes.data?.logos || [];
-        if (logos.length > 0) {
-          // Sort by vote count or width
-          const bestTmdbLogo = logos.sort(
-            (a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0),
-          )[0];
-          hdLogo = `https://image.tmdb.org/t/p/original${bestTmdbLogo.file_path}`;
-        }
-      } catch (tmdbErr) {
-        // Silently fail TMDB fallback
-      }
-    }
 
     return { logoUrl: hdLogo, backgroundUrl };
   } catch (e: any) {
