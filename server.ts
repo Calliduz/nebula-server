@@ -3295,12 +3295,13 @@ async function getFanartMetadata(
     () => null,
   );
   if (cached && cached.logoFetchedAt) {
+    const hasDeadFanartUrl = cached.logoUrl?.includes("assets.fanart.tv") || cached.backgroundUrl?.includes("assets.fanart.tv");
     const wasEmpty = !cached.logoUrl;
     const isOld =
       Date.now() - new Date(cached.logoFetchedAt).getTime() >
       1000 * 60 * 60 * 24;
 
-    if (!wasEmpty || !isOld) {
+    if (!wasEmpty && !isOld && !hasDeadFanartUrl) {
       return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
     }
   }
@@ -3315,54 +3316,6 @@ async function getFanartMetadata(
 
     const endpoint = type === "tv" ? "tv" : "movies";
     const fanartUrl = `https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`;
-
-    console.log(
-      `[FANART] Fetching for ${type}: ${finalId} -> ${fanartUrl.replace(FANART_API_KEY!, "***")}`,
-    );
-    let raw = await fetch(fanartUrl);
-
-    if (!raw.ok) {
-      console.warn(`[FANART] API returned ${raw.status} for ${finalId}`);
-      // Fallback: If TVDB failed or returned 404, try TMDB ID directly as some TV entries exist under TMDB ID on Fanart
-      if (type === "tv" && finalId !== tmdbId) {
-        const tmdbFanartUrl = `https://webservice.fanart.tv/v3/tv/${tmdbId}?api_key=${FANART_API_KEY}`;
-        console.log(`[FANART] Falling back to TMDB ID: ${tmdbId}`);
-        raw = await fetch(tmdbFanartUrl);
-      }
-
-      if (!raw.ok) return { logoUrl: null, backgroundUrl: null };
-    }
-
-    let data: any = {};
-    try {
-      data = await raw.json();
-    } catch (err) {
-      console.error(`[FANART] Failed to parse JSON for ${finalId}`);
-      return { logoUrl: null, backgroundUrl: null };
-    }
-
-    // Secondary Fallback for Movies: IMDB ID
-    if (type === "movie" && !data.hdmovielogo && !data.movielogo) {
-      const imdbId = await getIMDBId(tmdbId);
-      if (imdbId) {
-        const imdbUrl = `https://webservice.fanart.tv/v3/movies/${imdbId}?api_key=${FANART_API_KEY}`;
-        const imdbRaw = await fetch(imdbUrl);
-        const imdbData = await imdbRaw.json();
-        if (imdbData.hdmovielogo || imdbData.movielogo) {
-          data = imdbData;
-        }
-      }
-    }
-
-    let hdLogo = null;
-    let backgroundUrl = null;
-
-    const sortByLikes = (arr: any[] = []) =>
-      [...arr].sort(
-        (a, b) =>
-          (parseInt(b.likes || b.vote_count) || 0) -
-          (parseInt(a.likes || a.vote_count) || 0),
-      );
 
     // TMDB Logo & Backdrop Fallback helper (handles both v3 and v4 TMDB keys)
     const getTmdbArt = async (): Promise<{ logo: string | null; backdrop: string | null }> => {
@@ -3395,6 +3348,55 @@ async function getFanartMetadata(
         return { logo: null, backdrop: null };
       }
     };
+
+    console.log(
+      `[FANART] Fetching for ${type}: ${finalId} -> ${fanartUrl.replace(FANART_API_KEY!, "***")}`,
+    );
+    let raw = await fetch(fanartUrl);
+
+    if (!raw.ok) {
+      console.warn(`[FANART] API returned ${raw.status} for ${finalId}`);
+      // Fallback: If TVDB failed or returned 404, try TMDB ID directly as some TV entries exist under TMDB ID on Fanart
+      if (type === "tv" && finalId !== tmdbId) {
+        const tmdbFanartUrl = `https://webservice.fanart.tv/v3/tv/${tmdbId}?api_key=${FANART_API_KEY}`;
+        console.log(`[FANART] Falling back to TMDB ID: ${tmdbId}`);
+        raw = await fetch(tmdbFanartUrl);
+      }
+    }
+
+    let data: any = {};
+    if (raw.ok) {
+      try {
+        data = await raw.json();
+      } catch (err) {
+        console.error(`[FANART] Failed to parse JSON for ${finalId}`);
+      }
+    }
+
+    // Secondary Fallback for Movies: IMDB ID
+    if (type === "movie" && !data.hdmovielogo && !data.movielogo) {
+      const imdbId = await getIMDBId(tmdbId);
+      if (imdbId) {
+        const imdbUrl = `https://webservice.fanart.tv/v3/movies/${imdbId}?api_key=${FANART_API_KEY}`;
+        const imdbRaw = await fetch(imdbUrl);
+        const imdbData = await imdbRaw.json();
+        if (imdbData.hdmovielogo || imdbData.movielogo) {
+          data = imdbData;
+        }
+      }
+    }
+
+    let hdLogo = null;
+    let backgroundUrl = null;
+
+    const sortByLikes = (arr: any[] = []) =>
+      [...arr].sort(
+        (a, b) =>
+          (parseInt(b.likes || b.vote_count) || 0) -
+          (parseInt(a.likes || a.vote_count) || 0),
+      );
+
+
 
     if (type === "tv") {
       const hdtvlogo = sortByLikes(data.hdtvlogo || []);
