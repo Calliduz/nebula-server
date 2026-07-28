@@ -3495,6 +3495,43 @@ import { decryptVidrock } from "./utils/vidrock_decrypt.js";
 // @ts-ignore
 import { fetchVideasySources, activeScans } from "./utils/videasy.js";
 
+function getVidrockAudioHelper(name: string, rawLanguage?: string): string {
+  if (rawLanguage && rawLanguage.trim()) return rawLanguage.trim();
+  const clean = name.replace(/^VidRock[\s-]*/i, "").replace(/^\((.*)\)$/, "$1").trim();
+  const lower = clean.toLowerCase();
+  if (lower === "sol") return "Hindi";
+  if (lower.includes("hindi")) return lower.includes("sub") ? "Hindi Subbed" : "Hindi";
+  if (lower === "cosmos") return "Tamil";
+  if (lower === "comet") return "Telugu";
+  if (lower === "bengali") return "Bengali";
+  if (["nova", "atlas", "orion", "astra", "lyra", "luna", "helios", "vega"].includes(lower)) return "English";
+  return "English";
+}
+
+function getVidrockFlagHelper(name: string, rawFlag?: string, audio?: string): string {
+  if (rawFlag) {
+    const f = rawFlag.toLowerCase().trim();
+    if (f === "ind" || f === "in") return "in";
+    if (f === "us" || f === "en" || f === "eng") return "us";
+    return f;
+  }
+  const audioStr = (audio || "").toLowerCase();
+  if (
+    audioStr.includes("hindi") ||
+    audioStr.includes("tamil") ||
+    audioStr.includes("telugu") ||
+    audioStr.includes("bengali")
+  ) {
+    return "in";
+  }
+  const clean = name.replace(/^VidRock[\s-]*/i, "").replace(/^\((.*)\)$/, "$1").trim();
+  const lower = clean.toLowerCase();
+  if (["sol", "cosmos", "comet", "bengali", "hindi", "hindi subbed"].includes(lower)) {
+    return "in";
+  }
+  return "us";
+}
+
 app.get("/api/vidrock", async (req, res) => {
   const tmdbId = req.query.tmdbId as string;
   const type = req.query.type as "movie" | "tv";
@@ -3550,6 +3587,8 @@ app.get("/api/vidrock", async (req, res) => {
           responseData[m.source] = {
             url: m.url,
             type: m.type || "hls",
+            audio: m.audio || getVidrockAudioHelper(m.source),
+            flag: getVidrockFlagHelper(m.source, m.flag, m.audio),
           };
         });
         return res.json(responseData);
@@ -3600,10 +3639,14 @@ app.get("/api/vidrock", async (req, res) => {
                 err.message,
               );
             }
+            const audio = getVidrockAudioHelper(name, v.language || v.audio);
+            const flag = getVidrockFlagHelper(name, v.flag, audio);
             return {
               source: name.startsWith("VidRock") ? name : `VidRock (${name})`,
               url: decryptedUrl,
               type: v.type || "hls",
+              audio,
+              flag,
             };
           })
           .filter((s) => s.url);
@@ -3641,6 +3684,8 @@ app.get("/api/vidrock", async (req, res) => {
           responseData[m.source] = {
             url: m.url,
             type: m.type,
+            audio: m.audio,
+            flag: m.flag,
           };
         });
 
