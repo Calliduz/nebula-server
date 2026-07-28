@@ -53,7 +53,12 @@ export async function getMediaTitleAndYear(
       key: cacheKey,
       expiresAt: { $gt: new Date() },
     });
-    if (cached && cached.data && cached.data.title && cached.data.title !== "Media") {
+    if (
+      cached &&
+      cached.data &&
+      cached.data.title &&
+      cached.data.title !== "Media"
+    ) {
       return cached.data;
     }
   } catch (e) {

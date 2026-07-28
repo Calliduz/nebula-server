@@ -1183,8 +1183,18 @@ app.get("/api/download/direct", async (req, res) => {
     }
 
     const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
-      fetchVidVaultDownloads(kind, tmdbId, undefined, undefined, titleParam).catch(() => []),
-      NetNaijaScraper.getDirectDownloads({ tmdbId, kind, title: titleParam }).catch(() => []),
+      fetchVidVaultDownloads(
+        kind,
+        tmdbId,
+        undefined,
+        undefined,
+        titleParam,
+      ).catch(() => []),
+      NetNaijaScraper.getDirectDownloads({
+        tmdbId,
+        kind,
+        title: titleParam,
+      }).catch(() => []),
     ]);
     const directDownloads = [...vidVaultDownloads, ...netNaijaDownloads];
 
@@ -1248,7 +1258,9 @@ app.get("/api/download/episode/direct", async (req, res) => {
     }
 
     const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
-      fetchVidVaultDownloads("tv", tmdbId, season, episode, titleParam).catch(() => []),
+      fetchVidVaultDownloads("tv", tmdbId, season, episode, titleParam).catch(
+        () => [],
+      ),
       NetNaijaScraper.getDirectDownloads({
         tmdbId,
         kind: "tv",
@@ -3295,7 +3307,9 @@ async function getFanartMetadata(
     () => null,
   );
   if (cached && cached.logoFetchedAt) {
-    const hasDeadFanartUrl = cached.logoUrl?.includes("assets.fanart.tv") || cached.backgroundUrl?.includes("assets.fanart.tv");
+    const hasDeadFanartUrl =
+      cached.logoUrl?.includes("assets.fanart.tv") ||
+      cached.backgroundUrl?.includes("assets.fanart.tv");
     const wasEmpty = !cached.logoUrl;
     const isOld =
       Date.now() - new Date(cached.logoFetchedAt).getTime() >
@@ -3318,11 +3332,16 @@ async function getFanartMetadata(
     const fanartUrl = `https://webservice.fanart.tv/v3/${endpoint}/${finalId}?api_key=${FANART_API_KEY}`;
 
     // TMDB Logo & Backdrop Fallback helper (handles both v3 and v4 TMDB keys)
-    const getTmdbArt = async (): Promise<{ logo: string | null; backdrop: string | null }> => {
+    const getTmdbArt = async (): Promise<{
+      logo: string | null;
+      backdrop: string | null;
+    }> => {
       try {
         const isV4Token = TMDB_API_KEY.length > 40;
         const tmdbImgUrl = `https://api.themoviedb.org/3/${type === "tv" ? "tv" : "movie"}/${tmdbId}/images?include_image_language=en,null${isV4Token ? "" : `&api_key=${TMDB_API_KEY}`}`;
-        const headers = isV4Token ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {};
+        const headers = isV4Token
+          ? { Authorization: `Bearer ${TMDB_API_KEY}` }
+          : {};
         const tmdbRes = await axios.get(tmdbImgUrl, { headers, timeout: 5000 });
         let logo: string | null = null;
         let backdrop: string | null = null;
@@ -3396,8 +3415,6 @@ async function getFanartMetadata(
           (parseInt(a.likes || a.vote_count) || 0),
       );
 
-
-
     if (type === "tv") {
       const hdtvlogo = sortByLikes(data.hdtvlogo || []);
       const clearlogo = sortByLikes(data.clearlogo || []);
@@ -3460,12 +3477,20 @@ async function getFanartMetadata(
     }
 
     // Always fetch TMDB art if logo or backdrop is missing or points to fanart.tv CDN
-    if (!hdLogo || hdLogo.includes("fanart.tv") || !backgroundUrl || backgroundUrl.includes("fanart.tv")) {
+    if (
+      !hdLogo ||
+      hdLogo.includes("fanart.tv") ||
+      !backgroundUrl ||
+      backgroundUrl.includes("fanart.tv")
+    ) {
       const tmdbArt = await getTmdbArt();
       if ((!hdLogo || hdLogo.includes("fanart.tv")) && tmdbArt.logo) {
         hdLogo = tmdbArt.logo;
       }
-      if ((!backgroundUrl || backgroundUrl.includes("fanart.tv")) && tmdbArt.backdrop) {
+      if (
+        (!backgroundUrl || backgroundUrl.includes("fanart.tv")) &&
+        tmdbArt.backdrop
+      ) {
         backgroundUrl = tmdbArt.backdrop;
       }
     }
@@ -3497,18 +3522,38 @@ import { fetchVideasySources, activeScans } from "./utils/videasy.js";
 
 function getVidrockAudioHelper(name: string, rawLanguage?: string): string {
   if (rawLanguage && rawLanguage.trim()) return rawLanguage.trim();
-  const clean = name.replace(/^VidRock[\s-]*/i, "").replace(/^\((.*)\)$/, "$1").trim();
+  const clean = name
+    .replace(/^VidRock[\s-]*/i, "")
+    .replace(/^\((.*)\)$/, "$1")
+    .trim();
   const lower = clean.toLowerCase();
   if (lower === "sol") return "Hindi";
-  if (lower.includes("hindi")) return lower.includes("sub") ? "Hindi Subbed" : "Hindi";
+  if (lower.includes("hindi"))
+    return lower.includes("sub") ? "Hindi Subbed" : "Hindi";
   if (lower === "cosmos") return "Tamil";
   if (lower === "comet") return "Telugu";
   if (lower === "bengali") return "Bengali";
-  if (["nova", "atlas", "orion", "astra", "lyra", "luna", "helios", "vega"].includes(lower)) return "English";
+  if (
+    [
+      "nova",
+      "atlas",
+      "orion",
+      "astra",
+      "lyra",
+      "luna",
+      "helios",
+      "vega",
+    ].includes(lower)
+  )
+    return "English";
   return "English";
 }
 
-function getVidrockFlagHelper(name: string, rawFlag?: string, audio?: string): string {
+function getVidrockFlagHelper(
+  name: string,
+  rawFlag?: string,
+  audio?: string,
+): string {
   if (rawFlag) {
     const f = rawFlag.toLowerCase().trim();
     if (f === "ind" || f === "in") return "in";
@@ -3524,9 +3569,16 @@ function getVidrockFlagHelper(name: string, rawFlag?: string, audio?: string): s
   ) {
     return "in";
   }
-  const clean = name.replace(/^VidRock[\s-]*/i, "").replace(/^\((.*)\)$/, "$1").trim();
+  const clean = name
+    .replace(/^VidRock[\s-]*/i, "")
+    .replace(/^\((.*)\)$/, "$1")
+    .trim();
   const lower = clean.toLowerCase();
-  if (["sol", "cosmos", "comet", "bengali", "hindi", "hindi subbed"].includes(lower)) {
+  if (
+    ["sol", "cosmos", "comet", "bengali", "hindi", "hindi subbed"].includes(
+      lower,
+    )
+  ) {
     return "in";
   }
   return "us";

@@ -580,7 +580,9 @@ export class NetNaijaScraper {
       ]);
 
       const downloadRes =
-        downloadResResult.status === "fulfilled" ? downloadResResult.value : null;
+        downloadResResult.status === "fulfilled"
+          ? downloadResResult.value
+          : null;
       const playRes =
         playResResult.status === "fulfilled" ? playResResult.value : null;
 
