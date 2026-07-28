@@ -3178,6 +3178,7 @@ const IMAGE_PROXY_ALLOWLIST = [
   "image.tmdb.org",
   "media.themoviedb.org",
   "assets.fanart.tv",
+  "images.fanart.tv",
   "webservice.fanart.tv",
   "picsum.photos",
 ];
