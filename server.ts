@@ -1863,6 +1863,16 @@ app.get("/api/tmdb-proxy", async (req, res) => {
         expiresAt: { $gt: new Date() },
       });
       if (cached) {
+        const remainingSec = Math.max(
+          1,
+          Math.floor(
+            (new Date(cached.expiresAt).getTime() - Date.now()) / 1000,
+          ),
+        );
+        res.setHeader(
+          "Cache-Control",
+          `public, max-age=${remainingSec}, s-maxage=${remainingSec}`,
+        );
         return res.json(cached.data);
       }
     }
