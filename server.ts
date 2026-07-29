@@ -3307,15 +3307,12 @@ async function getFanartMetadata(
     () => null,
   );
   if (cached && cached.logoFetchedAt) {
-    const hasDeadFanartUrl =
-      cached.logoUrl?.includes("assets.fanart.tv") ||
-      cached.backgroundUrl?.includes("assets.fanart.tv");
     const wasEmpty = !cached.logoUrl;
     const isOld =
       Date.now() - new Date(cached.logoFetchedAt).getTime() >
       1000 * 60 * 60 * 24;
 
-    if (!wasEmpty && !isOld && !hasDeadFanartUrl) {
+    if (!wasEmpty && !isOld) {
       return { logoUrl: cached.logoUrl, backgroundUrl: cached.backgroundUrl };
     }
   }
@@ -3476,21 +3473,13 @@ async function getFanartMetadata(
       if (selection) backgroundUrl = selection.url;
     }
 
-    // Always fetch TMDB art if logo or backdrop is missing or points to fanart.tv CDN
-    if (
-      !hdLogo ||
-      hdLogo.includes("fanart.tv") ||
-      !backgroundUrl ||
-      backgroundUrl.includes("fanart.tv")
-    ) {
+    // Fallback: only fetch TMDB art if Fanart.tv returned nothing for logo or backdrop
+    if (!hdLogo || !backgroundUrl) {
       const tmdbArt = await getTmdbArt();
-      if ((!hdLogo || hdLogo.includes("fanart.tv")) && tmdbArt.logo) {
+      if (!hdLogo && tmdbArt.logo) {
         hdLogo = tmdbArt.logo;
       }
-      if (
-        (!backgroundUrl || backgroundUrl.includes("fanart.tv")) &&
-        tmdbArt.backdrop
-      ) {
+      if (!backgroundUrl && tmdbArt.backdrop) {
         backgroundUrl = tmdbArt.backdrop;
       }
     }
