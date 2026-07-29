@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import axios from "axios";
@@ -365,6 +366,9 @@ function fetchVidLinkRaw(
 
 const app = express();
 app.set("trust proxy", 1);
+
+// Enable response compression for JSON payloads > 1KB (Gzip/Brotli)
+app.use(compression({ threshold: 1024 }));
 
 // ── Security Middleware ──────────────────────────────────────────────────────
 
