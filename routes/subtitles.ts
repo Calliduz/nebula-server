@@ -176,7 +176,37 @@ export function createSubtitleRouter(
         });
         if (cached && cached.subtitles?.length > 0) {
           console.log(`[SUBS] Cache HIT for ${tmdbId} S${season}E${episode}`);
-          return res.json({ subtitles: cached.subtitles });
+          const cachedUrls = new Set(cached.subtitles.map((s: any) => s.url));
+          const extraSubs: any[] = [];
+          try {
+            const streamDocs = await StreamCache.find({
+              $or: [
+                { tmdbId: tmdbId.toString() },
+                { tmdbId: `${tmdbId}-videasy` },
+                { tmdbId: `${tmdbId}-vidlink` },
+              ],
+              type: kind,
+              season,
+              episode,
+            });
+            streamDocs.forEach((doc: any) => {
+              doc.mirrors?.forEach((m: any) => {
+                m.subtitles?.forEach((s: any) => {
+                  if (s?.url && !cachedUrls.has(s.url)) {
+                    cachedUrls.add(s.url);
+                    extraSubs.push({
+                      id: `${m.source || "provider"}-${s.lang || s.language || "unk"}-${extraSubs.length}`,
+                      url: s.url,
+                      lang: s.lang || s.language || "unk",
+                      languageName: s.label || s.languageName || s.lang || "Unknown",
+                      source: m.source || "Provider",
+                    });
+                  }
+                });
+              });
+            });
+          } catch (e) {}
+          return res.json({ subtitles: [...cached.subtitles, ...extraSubs] });
         }
       } else {
         console.log(
