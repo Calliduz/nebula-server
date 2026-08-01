@@ -103,7 +103,7 @@ export class CineSrcScraper {
 
       const queryArray =
         kind === "tv"
-          ? [kind, tmdbId, season ? Number(season) : 1, episode ? Number(episode) : 1]
+          ? [kind, tmdbId, String(season || 1), String(episode || 1)]
           : [kind, tmdbId, null, null];
 
       const xCsQ = Buffer.from(JSON.stringify(queryArray)).toString("base64").replace(/=+$/, "");
@@ -135,7 +135,7 @@ export class CineSrcScraper {
 
       const routerStateTree =
         kind === "tv"
-          ? `%5B%22%22%2C%7B%22children%22%3A%5B%22embed%22%2C%7B%22children%22%3A%5B%5B%22type%22%2C%22tv%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%5B%22id%22%2C%22${tmdbId}%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2C%22%3Fs%3D${season || 1}%26e%3D${episode || 1}%22%2C%22refresh%22%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D`
+          ? `%5B%22%22%2C%7B%22children%22%3A%5B%22embed%22%2C%7B%22children%22%3A%5B%5B%22type%22%2C%22tv%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%5B%22id%22%2C%22${tmdbId}%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D`
           : `%5B%22%22%2C%7B%22children%22%3A%5B%22embed%22%2C%7B%22children%22%3A%5B%5B%22type%22%2C%22movie%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%5B%22id%22%2C%22${tmdbId}%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D`;
 
       // Step 1b: Action 1 POST
@@ -153,6 +153,23 @@ export class CineSrcScraper {
         signal: signal,
       });
       updateCookies(action1Res);
+
+      if (kind === "tv") {
+        const tvActionRes = await fetch(embedUrl, {
+          method: "POST",
+          headers: {
+            ...baseHeaders,
+            Cookie: getCookieHeader(),
+            Accept: "text/x-component",
+            "content-type": "text/plain;charset=UTF-8",
+            "next-action": "603b49a6d9b932fbc1f55c39fd8f9343341e3617ce",
+            "next-router-state-tree": routerStateTree,
+          },
+          body: JSON.stringify([tmdbId, season || 1]),
+          signal: signal,
+        });
+        updateCookies(tvActionRes);
+      }
 
       // Step 2: Bootstrap fetch
       const bootRes = await fetch("https://cinesrc.st/api/c/bootstrap", {
@@ -623,7 +640,7 @@ export class CineSrcScraper {
 
       const postBody =
         kind === "tv"
-          ? [tmdbId, kind, season ? Number(season) : 1, episode ? Number(episode) : 1, fullToken, targetServer]
+          ? [tmdbId, "show", String(season || 1), String(episode || 1), fullToken, targetServer]
           : [tmdbId, kind, "$undefined", "$undefined", fullToken, targetServer];
 
       const actionHeaders: Record<string, string> = {
@@ -645,7 +662,6 @@ export class CineSrcScraper {
       });
 
       const resultText = await streamRes.text();
-      console.log("[CineSrc Debug] Action 2 status:", streamRes.status, "Length:", resultText.length, "Snippet:", resultText.slice(0, 200));
       const lines = resultText.split("\n");
       const r2Line = lines.find((l) => l.includes("r2."));
 
