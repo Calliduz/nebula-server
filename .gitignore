@@ -3,8 +3,10 @@ node_modules/
 dist/
 logs/
 *.log
-scratch/
-data/
+scratch/*
+!scratch/cinesrc_assets/
+data/*
+!data/cinesrc_assets/
 session.json
 tests/
 scripts/

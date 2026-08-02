@@ -31,15 +31,18 @@ function extractDonutHString(donutJsCode?: string): string {
   return "";
 }
 
+function getCineSrcAssetsDir(): string {
+  const dataDir = path.join(process.cwd(), "data", "cinesrc_assets");
+  if (fs.existsSync(dataDir)) return dataDir;
+  const scratchDir = path.join(process.cwd(), "scratch", "cinesrc_assets");
+  if (fs.existsSync(scratchDir)) return scratchDir;
+  return dataDir;
+}
+
 const powCache = new Map<string, string>();
 
 async function solvePoW(inputStr: string): Promise<string> {
-  const wasmPath = path.join(
-    process.cwd(),
-    "scratch",
-    "cinesrc_assets",
-    "pow-v3.wasm",
-  );
+  const wasmPath = path.join(getCineSrcAssetsDir(), "pow-v3.wasm");
   const wasmBuffer = fs.readFileSync(wasmPath);
   const wasmModule = await WebAssembly.instantiate(wasmBuffer, {});
   const instance = wasmModule.instance;
@@ -266,7 +269,7 @@ export class CineSrcScraper {
       if (!bootData || !bootData.r) throw new Error("CineSrc bootstrap failed: empty payload");
 
       // Load Assets
-      const assetsDir = path.join(process.cwd(), "scratch", "cinesrc_assets");
+      const assetsDir = getCineSrcAssetsDir();
       const burgerJsCode = fs.readFileSync(
         path.join(assetsDir, "burger.js"),
         "utf-8",
