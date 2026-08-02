@@ -82,7 +82,9 @@ export function createCineSrcRouter(): Router {
         const cinesrcMirrors = (cachedRecord.mirrors as any[]).filter(
           (m: any) =>
             typeof m.source === "string" &&
-            (m.source.startsWith("CineSrc") || m.source.startsWith("cinesrc")),
+            (m.source.toLowerCase().includes("cinesrc") ||
+              m.source.toLowerCase().includes("starlight") ||
+              ["NEBULA", "THUNDER", "SURGE", "SPARK", "STORM", "FLUX", "RUSH", "WATER", "MIST", "WAVE"].includes(m.source.toUpperCase())),
         );
 
         if (
@@ -214,7 +216,13 @@ export function createCineSrcRouter(): Router {
 function buildResponseObject(mirrors: any[]): Record<string, any> {
   const responseData: Record<string, any> = {};
   mirrors.forEach((m: any) => {
-    const key = m.source || "CineSrc";
+    const rawKey = m.source || "CineSrc";
+    const key =
+      rawKey
+        .replace(/^cinesrc-?/i, "")
+        .replace(/^starlight-?/i, "")
+        .toUpperCase() || "NEBULA";
+
     responseData[key] = {
       url: m.url,
       type: m.type || "hls",

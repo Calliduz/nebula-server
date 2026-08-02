@@ -161,6 +161,19 @@ export class CineSrcScraper {
       });
       updateCookies(action1Res);
 
+      let serverIds: string[] = ["nebula", "thunder", "surge", "spark"];
+      try {
+        const action1Text = await action1Res.text();
+        const match = action1Text.match(/1:(\[.*\])/);
+        if (match && match[1]) {
+          const parsed = JSON.parse(match[1]);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const extracted = parsed.map((s: any) => s.id).filter(Boolean);
+            if (extracted.length > 0) serverIds = extracted;
+          }
+        }
+      } catch {}
+
       if (kind === "tv") {
         const tvActionRes = await fetch(embedUrl, {
           method: "POST",
@@ -645,79 +658,89 @@ export class CineSrcScraper {
 
       const fullToken = `${sec1Token}::c2::${sec2Token}::c3::${bootData.r}`;
 
-      const postBody =
-        kind === "tv"
-          ? [tmdbId, "show", String(season || 1), String(episode || 1), fullToken, targetServer]
-          : [tmdbId, kind, "$undefined", "$undefined", fullToken, targetServer];
+      // Resolve top 4 available servers in parallel
+      const activeServers = (typeof serverIds !== "undefined" && serverIds.length > 0)
+        ? serverIds.slice(0, 4)
+        : ["nebula", "thunder", "surge", "spark"];
 
-      const actionHeaders: Record<string, string> = {
-        "User-Agent": UA,
-        Origin: "https://cinesrc.st",
-        Referer: embedUrl,
-        Cookie: getCookieHeader(),
-        Accept: "text/x-component",
-        "content-type": "text/plain;charset=UTF-8",
-        "next-action": "7ee2ce6e276d24a29d32ee843aa18f1560caba9034",
-        "next-router-state-tree": routerStateTree,
-      };
-
-      const streamRes = await fetch(embedUrl, {
-        method: "POST",
-        headers: actionHeaders,
-        body: JSON.stringify(postBody),
-        signal: signal,
-      });
-
-      const resultText = await streamRes.text();
-      const lines = resultText.split("\n");
-      const r2Line = lines.find((l: string) => l.includes("r2."));
-
-      if (r2Line) {
-        const colonIdx = r2Line.indexOf(":");
-        let encPayload = "";
-        if (colonIdx >= 0) {
+      await Promise.allSettled(
+        activeServers.map(async (targetServer) => {
           try {
-            encPayload = JSON.parse(r2Line.slice(colonIdx + 1));
-          } catch (e) {
-            encPayload = r2Line.slice(r2Line.indexOf("r2.")).replace(/"$/, "");
-          }
-        } else {
-          encPayload = r2Line.slice(r2Line.indexOf("r2.")).replace(/"$/, "");
-        }
+            const postBody =
+              kind === "tv"
+                ? [tmdbId, "show", String(season || 1), String(episode || 1), fullToken, targetServer]
+                : [tmdbId, kind, "$undefined", "$undefined", fullToken, targetServer];
 
-        const decrypted = await vm.runInContext(
-          `
-          (async function() {
-            if (globalThis.__d6Object && typeof globalThis.__d6Object.dr === "function") {
-              return await globalThis.__d6Object.dr(${JSON.stringify(encPayload)});
+            const actionHeaders: Record<string, string> = {
+              "User-Agent": UA,
+              Origin: "https://cinesrc.st",
+              Referer: embedUrl,
+              Cookie: getCookieHeader(),
+              Accept: "text/x-component",
+              "content-type": "text/plain;charset=UTF-8",
+              "next-action": "7ee2ce6e276d24a29d32ee843aa18f1560caba9034",
+              "next-router-state-tree": routerStateTree,
+            };
+
+            const streamRes = await fetch(embedUrl, {
+              method: "POST",
+              headers: actionHeaders,
+              body: JSON.stringify(postBody),
+              signal: signal,
+            });
+
+            const resultText = await streamRes.text();
+            const lines = resultText.split("\n");
+            const r2Line = lines.find((l: string) => l.includes("r2."));
+
+            if (r2Line) {
+              const colonIdx = r2Line.indexOf(":");
+              let encPayload = "";
+              if (colonIdx >= 0) {
+                try {
+                  encPayload = JSON.parse(r2Line.slice(colonIdx + 1));
+                } catch {
+                  encPayload = r2Line.slice(r2Line.indexOf("r2.")).replace(/"$/, "");
+                }
+              } else {
+                encPayload = r2Line.slice(r2Line.indexOf("r2.")).replace(/"$/, "");
+              }
+
+              const decrypted = await vm.runInContext(
+                `
+                (async function() {
+                  if (globalThis.__d6Object && typeof globalThis.__d6Object.dr === "function") {
+                    return await globalThis.__d6Object.dr(${JSON.stringify(encPayload)});
+                  }
+                  return null;
+                })()
+              `,
+                ctx
+              );
+
+              if (decrypted && decrypted.url) {
+                const rawUrls = decrypted.url;
+                const urls = Array.isArray(rawUrls) ? rawUrls : rawUrls ? [rawUrls] : [];
+
+                for (const item of urls) {
+                  if (item && item.url) {
+                    mirrors.push({
+                      url: item.url,
+                      source: `cinesrc-${targetServer.toLowerCase()}`,
+                      quality: "1080p",
+                      type: "hls",
+                      headers: {
+                        Referer: "https://cinesrc.st/",
+                        "User-Agent": UA,
+                      },
+                    });
+                  }
+                }
+              }
             }
-            return null;
-          })()
-        `,
-          ctx
-        );
-
-        if (decrypted && decrypted.url) {
-          const rawUrls = decrypted.url;
-          const urls = Array.isArray(rawUrls) ? rawUrls : rawUrls ? [rawUrls] : [];
-
-          for (const item of urls) {
-            if (item && item.url) {
-              const serverName = item.hash || item.name || item.id || "CineSrc";
-              mirrors.push({
-                url: item.url,
-                source: `cinesrc-${serverName.toLowerCase()}`,
-                quality: "1080p",
-                type: "hls",
-                headers: {
-                  Referer: "https://cinesrc.st/",
-                  "User-Agent": UA,
-                },
-              });
-            }
-          }
-        }
-      }
+          } catch {}
+        })
+      );
     } catch (err: any) {
       console.error("[CineSrc] Pure Node.js scraper error:", err.stack || err.message);
     }
