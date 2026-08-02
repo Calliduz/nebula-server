@@ -198,7 +198,8 @@ export function createSubtitleRouter(
                       id: `${m.source || "provider"}-${s.lang || s.language || "unk"}-${extraSubs.length}`,
                       url: s.url,
                       lang: s.lang || s.language || "unk",
-                      languageName: s.label || s.languageName || s.lang || "Unknown",
+                      languageName:
+                        s.label || s.languageName || s.lang || "Unknown",
                       source: m.source || "Provider",
                     });
                   }

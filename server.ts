@@ -2414,7 +2414,9 @@ app.get("/api/proxy/stream", async (req, res) => {
           abs.includes("/playlist.png") ||
           abs.includes("/playlist.jpeg") ||
           abs.endsWith("/playlist");
-        const proxyPath = isSubPlaylist ? "/api/proxy/stream" : "/api/proxy/segment";
+        const proxyPath = isSubPlaylist
+          ? "/api/proxy/stream"
+          : "/api/proxy/segment";
 
         rewrittenCount++;
         const proxiedUrl = withProxy(proxyPath, encodeURIComponent(abs));
@@ -2437,7 +2439,9 @@ app.get("/api/proxy/stream", async (req, res) => {
         abs.includes("/playlist.png") ||
         abs.includes("/playlist.jpeg") ||
         abs.endsWith("/playlist");
-      const proxyPath = isSubPlaylist ? "/api/proxy/stream" : "/api/proxy/segment";
+      const proxyPath = isSubPlaylist
+        ? "/api/proxy/stream"
+        : "/api/proxy/segment";
 
       rewrittenCount++;
       return withProxy(proxyPath, encodeURIComponent(abs));

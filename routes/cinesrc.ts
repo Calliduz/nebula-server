@@ -84,7 +84,18 @@ export function createCineSrcRouter(): Router {
             typeof m.source === "string" &&
             (m.source.toLowerCase().includes("cinesrc") ||
               m.source.toLowerCase().includes("starlight") ||
-              ["NEBULA", "THUNDER", "SURGE", "SPARK", "STORM", "FLUX", "RUSH", "WATER", "MIST", "WAVE"].includes(m.source.toUpperCase())),
+              [
+                "NEBULA",
+                "THUNDER",
+                "SURGE",
+                "SPARK",
+                "STORM",
+                "FLUX",
+                "RUSH",
+                "WATER",
+                "MIST",
+                "WAVE",
+              ].includes(m.source.toUpperCase())),
         );
 
         if (
