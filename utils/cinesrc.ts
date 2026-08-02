@@ -15,10 +15,9 @@ function createFetchAgent(proxyUrl?: string) {
     if (proxyUrl.startsWith("socks")) {
       return new SocksProxyAgent(proxyUrl);
     }
-    if (proxyUrl.startsWith("https")) {
-      return new HttpsProxyAgent(proxyUrl);
-    }
-    return new HttpProxyAgent(proxyUrl);
+    // Target is HTTPS (https://cinesrc.st), so we must use HttpsProxyAgent
+    // for both http:// and https:// proxy schemes to create a CONNECT tunnel.
+    return new HttpsProxyAgent(proxyUrl);
   } catch (e) {
     console.error(`[CineSrc] Invalid proxy URL: ${proxyUrl}`, e);
     return undefined;
