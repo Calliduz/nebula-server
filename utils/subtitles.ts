@@ -200,3 +200,46 @@ export async function getWyzieSubtitles(
     return [];
   }
 }
+
+export async function getCineSrcSubtitles(
+  tmdbId: string | number,
+  type: "movie" | "tv",
+  season?: number,
+  episode?: number,
+) {
+  let url = `https://subs.bright67.online/search?id=${tmdbId}`;
+  if (type === "tv") {
+    url += `&season=${season || 1}&episode=${episode || 1}`;
+  }
+
+  try {
+    const response = await axios.get(url, {
+      timeout: 8000,
+      headers: {
+        accept: "*/*",
+        origin: "https://cinesrc.st",
+        referer: "https://cinesrc.st/",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+      },
+    });
+
+    const subs = response.data;
+    if (!Array.isArray(subs)) return [];
+
+    return subs
+      .filter((s: any) => Boolean(s.url))
+      .map((sub: any, index: number) => ({
+        id: `starlight-${sub.id || sub.lang || index}`,
+        url: sub.url,
+        lang: sub.lang || "en",
+        languageName: sub.display || getLanguageName(sub.lang || "en"),
+        source: "Starlight",
+      }));
+  } catch (error: any) {
+    console.error(
+      `[SUBS] Failed to fetch Starlight subtitles: ${error.message}`,
+    );
+    return [];
+  }
+}

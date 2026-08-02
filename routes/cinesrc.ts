@@ -240,6 +240,7 @@ function buildResponseObject(mirrors: any[]): Record<string, any> {
       quality: m.quality || "1080p",
       source: key,
       headers: m.headers,
+      subtitles: m.subtitles || [],
     };
   });
   return responseData;

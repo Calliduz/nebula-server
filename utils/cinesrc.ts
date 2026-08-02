@@ -674,20 +674,41 @@ export class CineSrcScraper {
       const d6Key = ctx.d6KeyName;
 
       // Resolve top 4 available servers in parallel
-      const activeServers = (typeof serverIds !== "undefined" && serverIds.length > 0)
-        ? serverIds.slice(0, 4)
-        : ["nebula", "thunder", "surge", "spark"];
+      const activeServers =
+        typeof serverIds !== "undefined" && serverIds.length > 0
+          ? serverIds.slice(0, 4)
+          : ["nebula", "thunder", "surge", "spark"];
 
       for (const targetServer of activeServers) {
         try {
-          const sec1Token = await vm.runInContext(`window[${JSON.stringify(d6Key)}].gc()`, ctx);
-          const sec2Token = await vm.runInContext(`window.__ss2_challenge.gc()`, ctx);
+          const sec1Token = await vm.runInContext(
+            `window[${JSON.stringify(d6Key)}].gc()`,
+            ctx,
+          );
+          const sec2Token = await vm.runInContext(
+            `window.__ss2_challenge.gc()`,
+            ctx,
+          );
           const fullToken = `${sec1Token}::c2::${sec2Token}::c3::${bootData.r}`;
 
           const postBody =
             kind === "tv"
-              ? [tmdbId, "show", String(season || 1), String(episode || 1), fullToken, targetServer]
-              : [tmdbId, kind, "$undefined", "$undefined", fullToken, targetServer];
+              ? [
+                  tmdbId,
+                  "show",
+                  String(season || 1),
+                  String(episode || 1),
+                  fullToken,
+                  targetServer,
+                ]
+              : [
+                  tmdbId,
+                  kind,
+                  "$undefined",
+                  "$undefined",
+                  fullToken,
+                  targetServer,
+                ];
 
           const actionHeaders: Record<string, string> = {
             "User-Agent": UA,
@@ -765,6 +786,49 @@ export class CineSrcScraper {
             }
           }
         } catch {}
+      }
+
+      // Fetch Starlight / CineSrc Subtitles
+      if (mirrors.length > 0) {
+        try {
+          const subUrl =
+            kind === "tv"
+              ? `https://subs.bright67.online/search?id=${tmdbId}&season=${season || 1}&episode=${episode || 1}`
+              : `https://subs.bright67.online/search?id=${tmdbId}`;
+
+          const subRes = await fetch(subUrl, {
+            headers: {
+              accept: "*/*",
+              origin: "https://cinesrc.st",
+              referer: "https://cinesrc.st/",
+              "user-agent": UA,
+            },
+            signal,
+          });
+
+          if (subRes.ok) {
+            const subData: any[] = await subRes.json();
+            if (Array.isArray(subData) && subData.length > 0) {
+              const subtitles = subData
+                .map((s: any) => ({
+                  url: s.url,
+                  lang: s.lang || "en",
+                  label: s.display || s.lang || "English",
+                  languageName: s.display || s.lang || "English",
+                  source: "Starlight",
+                }))
+                .filter((s: any) => Boolean(s.url));
+
+              if (subtitles.length > 0) {
+                for (const m of mirrors) {
+                  m.subtitles = subtitles;
+                }
+              }
+            }
+          }
+        } catch (subErr: any) {
+          console.warn("[CineSrc] Subtitle fetch warning:", subErr.message);
+        }
       }
     } catch (err: any) {
       console.error(

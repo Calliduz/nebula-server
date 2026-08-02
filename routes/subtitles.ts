@@ -12,7 +12,11 @@ import axios from "axios";
 import jschardet from "jschardet";
 import iconv from "iconv-lite";
 import { StreamCache, SubtitleCache } from "../models/Cache.js";
-import { getSubtitles, getWyzieSubtitles } from "../utils/subtitles.js";
+import {
+  getSubtitles,
+  getWyzieSubtitles,
+  getCineSrcSubtitles,
+} from "../utils/subtitles.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "../utils/bypass.js";
 import { fetchVidVaultDownloads } from "../utils/vidvault.js";
 
@@ -33,6 +37,9 @@ const UA =
 
 // ── SSRF allowlist ────────────────────────────────────────────────────────────
 export const SUBTITLE_ALLOWLIST = [
+  "subs.bright67.online",
+  "bright67.online",
+  "cinesrc.st",
   "vidlink.pro",
   "megafiles.store",
   "storm.vodvidl.site",
@@ -94,7 +101,8 @@ export const SUBTITLE_ALLOWLIST = [
 function sourcePriority(source: string): number {
   if (source === "VidVault" || source === "Titan") return 1;
   if (source === "VidRock") return 2;
-  if (source === "Vaplayer") return 3;
+  if (source === "Vaplayer" || source === "Quantum") return 3;
+  if (source === "Starlight" || source === "CineSrc") return 3.5;
   if (source === "Vidrift") return 4;
   if (source === "Videasy") return 5;
   if (source === "VidLink") return 6;
@@ -222,6 +230,9 @@ export function createSubtitleRouter(
       const results = await Promise.allSettled([
         // A — OpenSubtitles (via Stremio API)
         getSubtitles(tmdbId, kind, season, episode, title),
+
+        // B — Starlight / CineSrc Subtitles
+        getCineSrcSubtitles(tmdbId, kind, season, episode),
 
         // C — VidVault subtitles
         (async () => {
