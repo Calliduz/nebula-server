@@ -1,10 +1,17 @@
+// @ts-ignore
 import fetch from "node-fetch";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import vm from "vm";
 import { type MirrorStream, UA } from "./scraper.js";
-import { extractDonutHString } from "../scratch/test_donut_polyfill.js";
+
+function extractDonutHString(donutJsCode?: string): string {
+  if (!donutJsCode) return "";
+  const match = donutJsCode.match(/var\s+[a-zA-Z0-9_$]+\s*=\s*"([^"]{500,})"/);
+  if (match && match[1]) return match[1];
+  return "";
+}
 
 const powCache = new Map<string, string>();
 
@@ -663,7 +670,7 @@ export class CineSrcScraper {
 
       const resultText = await streamRes.text();
       const lines = resultText.split("\n");
-      const r2Line = lines.find((l) => l.includes("r2."));
+      const r2Line = lines.find((l: string) => l.includes("r2."));
 
       if (r2Line) {
         const colonIdx = r2Line.indexOf(":");

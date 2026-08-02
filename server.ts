@@ -41,6 +41,7 @@ import { createSubtitleRouter } from "./routes/subtitles.js";
 import { createFilmuRouter } from "./routes/filmu.js";
 import { createVidnestRouter } from "./routes/vidnest.js";
 import { createVaplayerRouter } from "./routes/vaplayer.js";
+import { createCineSrcRouter } from "./routes/cinesrc.js";
 import { createVidriftRouter } from "./routes/vidrift.js";
 import { createPeachifyRouter } from "./routes/peachify.js";
 import { createKuroRouter } from "./routes/kuro.js";
@@ -68,6 +69,7 @@ const UA =
 import { VidLinkScraper } from "./utils/vidlink.js";
 import { FilmuScraper } from "./utils/filmu/index.js";
 import { VidnestScraper } from "./utils/vidnest.js";
+import { CineSrcScraper } from "./utils/cinesrc.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   HttpCookieAgent,
@@ -1519,6 +1521,28 @@ app.get("/api/stream", async (req, res) => {
           }
         }
 
+        // ── Phase CineSrc: CineSrc Provider Fallback ─────────────────────
+        if (mirrors.length === 0 && process.env.CINESRC_ENABLED !== "false") {
+          console.log(`[STREAM] Checking CineSrc providers...`);
+          try {
+            const cinesrcMirrors = await CineSrcScraper.getStream(
+              tmdbId.toString(),
+              kind as any,
+              season,
+              episode,
+              signal,
+            );
+            if (cinesrcMirrors && cinesrcMirrors.length > 0) {
+              console.log(
+                `[STREAM] CineSrc HIT ✔ (Found ${cinesrcMirrors.length} mirrors)`,
+              );
+              mirrors.push(...cinesrcMirrors);
+            }
+          } catch (e: any) {
+            console.error(`[STREAM] CineSrc failed:`, e.message);
+          }
+        }
+
         // ── Phase E: HDGharTV Provider Fallback ───────────────────────────
         if (mirrors.length === 0 && process.env.HDGHARTV_ENABLED !== "false") {
           console.log(`[STREAM] Phase E: Checking HDGharTV providers...`);
@@ -1954,6 +1978,9 @@ app.use(createVidnestRouter());
 // Vaplayer scraper route → routes/vaplayer.ts (detach by removing this line + the import above)
 app.use(createVaplayerRouter());
 
+// CineSrc scraper route → routes/cinesrc.ts (detach by removing this line + the import above)
+app.use(createCineSrcRouter());
+
 // Vidrift scraper route → routes/vidrift.ts
 app.use(createVidriftRouter());
 
@@ -2381,8 +2408,13 @@ app.get("/api/proxy/stream", async (req, res) => {
 
         const abs = fastResolve(uri);
         const ext = abs.split("?")[0]?.split(".").pop()?.toLowerCase();
-        const proxyPath =
-          ext === "m3u8" ? "/api/proxy/stream" : "/api/proxy/segment";
+        const isSubPlaylist =
+          ext === "m3u8" ||
+          abs.includes("/playlist.jpg") ||
+          abs.includes("/playlist.png") ||
+          abs.includes("/playlist.jpeg") ||
+          abs.endsWith("/playlist");
+        const proxyPath = isSubPlaylist ? "/api/proxy/stream" : "/api/proxy/segment";
 
         rewrittenCount++;
         const proxiedUrl = withProxy(proxyPath, encodeURIComponent(abs));
@@ -2399,8 +2431,13 @@ app.get("/api/proxy/stream", async (req, res) => {
 
       const abs = fastResolve(trimmed);
       const ext = abs.split("?")[0]?.split(".").pop()?.toLowerCase();
-      const proxyPath =
-        ext === "m3u8" ? "/api/proxy/stream" : "/api/proxy/segment";
+      const isSubPlaylist =
+        ext === "m3u8" ||
+        abs.includes("/playlist.jpg") ||
+        abs.includes("/playlist.png") ||
+        abs.includes("/playlist.jpeg") ||
+        abs.endsWith("/playlist");
+      const proxyPath = isSubPlaylist ? "/api/proxy/stream" : "/api/proxy/segment";
 
       rewrittenCount++;
       return withProxy(proxyPath, encodeURIComponent(abs));
@@ -2523,9 +2560,16 @@ app.get("/api/proxy/segment", async (req, res) => {
     );
   }
 
-  // Redirect playlist URLs to stream proxy to bypass ORB blocks on JSON responses
+  // Redirect sub-playlist URLs to stream proxy to bypass ORB blocks on JSON responses.
+  // Note: /playlist.jpg, /playlist.png, .m3u8 are sub-playlists, whereas playlist_000.jpg, init.mp4 are binary segments.
   const lowercaseUrl = targetUrl.toLowerCase();
-  if (lowercaseUrl.includes("playlist") || lowercaseUrl.includes(".m3u8")) {
+  const isSubPlaylist =
+    lowercaseUrl.includes(".m3u8") ||
+    lowercaseUrl.includes("/playlist.jpg") ||
+    lowercaseUrl.includes("/playlist.png") ||
+    lowercaseUrl.includes("/playlist.jpeg") ||
+    lowercaseUrl.endsWith("/playlist");
+  if (isSubPlaylist) {
     console.log(
       `[PROXY/segment] Playlist URL detected in segment proxy. Redirecting to stream proxy: ${sanitizeUrl(targetUrl)}`,
     );

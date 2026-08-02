@@ -74,6 +74,13 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     } catch {}
 
     if (
+      lower.includes("bright67.online") ||
+      lower.includes("cinesrc.st") ||
+      lower.includes("cinesrc")
+    ) {
+      referer = "https://cinesrc.st/";
+      origin = "https://cinesrc.st";
+    } else if (
       lower.includes("eat-peach.sbs") ||
       lower.includes("peachify.pro") ||
       lower.includes("ergfwsarytrgfftsj.workers.dev") ||
