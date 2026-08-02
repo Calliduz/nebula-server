@@ -5,6 +5,25 @@ import fs from "fs";
 import path from "path";
 import vm from "vm";
 import { type MirrorStream, UA } from "./scraper.js";
+import { HttpProxyAgent } from "http-proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
+
+function createFetchAgent(proxyUrl?: string) {
+  if (!proxyUrl) return undefined;
+  try {
+    if (proxyUrl.startsWith("socks")) {
+      return new SocksProxyAgent(proxyUrl);
+    }
+    if (proxyUrl.startsWith("https")) {
+      return new HttpsProxyAgent(proxyUrl);
+    }
+    return new HttpProxyAgent(proxyUrl);
+  } catch (e) {
+    console.error(`[CineSrc] Invalid proxy URL: ${proxyUrl}`, e);
+    return undefined;
+  }
+}
 
 function extractDonutHString(donutJsCode?: string): string {
   if (!donutJsCode) return "";
@@ -92,6 +111,7 @@ export class CineSrcScraper {
    * @param season Season number (for TV).
    * @param episode Episode number (for TV).
    * @param signal Optional AbortSignal.
+   * @param proxyUrl Optional proxy URL (e.g. 'http://176.111.37.216:39811').
    */
   static async getStream(
     tmdbId: string,
@@ -99,13 +119,18 @@ export class CineSrcScraper {
     season?: number,
     episode?: number,
     signal?: AbortSignal,
+    proxyUrl?: string,
   ): Promise<MirrorStream[]> {
     const mirrors: MirrorStream[] = [];
     const targetServer = "nebula";
 
+    // Determine active proxy URL (parameter or environment variable)
+    const activeProxy = proxyUrl || process.env.CINESRC_PROXY;
+    const fetchAgent = createFetchAgent(activeProxy);
+
     try {
       console.log(
-        `[CineSrc] Resolving ${kind} ${tmdbId}${kind === "tv" ? ` S${season}E${episode}` : ""} (Pure Node.js)...`,
+        `[CineSrc] Resolving ${kind} ${tmdbId}${kind === "tv" ? ` S${season}E${episode}` : ""} (Pure Node.js)${activeProxy ? ` via proxy ${activeProxy}` : ""}...`,
       );
 
       const embedUrl =
@@ -147,6 +172,7 @@ export class CineSrcScraper {
       const initRes = await fetch(embedUrl, {
         headers: baseHeaders,
         signal: signal,
+        agent: fetchAgent as any,
       });
       updateCookies(initRes);
 
@@ -168,6 +194,7 @@ export class CineSrcScraper {
         },
         body: JSON.stringify([]),
         signal: signal,
+        agent: fetchAgent as any,
       });
       updateCookies(action1Res);
 
@@ -197,6 +224,7 @@ export class CineSrcScraper {
           },
           body: JSON.stringify([tmdbId, season || 1]),
           signal: signal,
+          agent: fetchAgent as any,
         });
         updateCookies(tvActionRes);
       }
@@ -211,11 +239,32 @@ export class CineSrcScraper {
           "x-cs-q": xCsQ,
         },
         signal: signal,
+        agent: fetchAgent as any,
       });
       updateCookies(bootRes);
 
-      const bootData: any = await bootRes.json();
-      if (!bootData || !bootData.r) throw new Error("CineSrc bootstrap failed");
+      const bootText = await bootRes.text();
+      let bootData: any;
+      try {
+        bootData = JSON.parse(bootText);
+      } catch (parseErr) {
+        if (
+          bootRes.status === 403 ||
+          bootRes.status === 503 ||
+          bootText.includes("<!DOCTYPE") ||
+          bootText.includes("<html") ||
+          bootText.includes("Just a moment...")
+        ) {
+          throw new Error(
+            `CineSrc Cloudflare Challenge/Blocked (HTTP ${bootRes.status}). Received HTML challenge instead of JSON. A working proxy is required.`,
+          );
+        }
+        throw new Error(
+          `CineSrc bootstrap returned non-JSON response (HTTP ${bootRes.status}): ${bootText.slice(0, 120)}`,
+        );
+      }
+
+      if (!bootData || !bootData.r) throw new Error("CineSrc bootstrap failed: empty payload");
 
       // Load Assets
       const assetsDir = path.join(process.cwd(), "scratch", "cinesrc_assets");
@@ -727,6 +776,7 @@ export class CineSrcScraper {
               headers: actionHeaders,
               body: JSON.stringify(postBody),
               signal: signal,
+              agent: fetchAgent as any,
             });
 
             const resultText = await streamRes.text();
