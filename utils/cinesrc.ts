@@ -16,7 +16,12 @@ function extractDonutHString(donutJsCode?: string): string {
 const powCache = new Map<string, string>();
 
 async function solvePoW(inputStr: string): Promise<string> {
-  const wasmPath = path.join(process.cwd(), "scratch", "cinesrc_assets", "pow-v3.wasm");
+  const wasmPath = path.join(
+    process.cwd(),
+    "scratch",
+    "cinesrc_assets",
+    "pow-v3.wasm",
+  );
   const wasmBuffer = fs.readFileSync(wasmPath);
   const wasmModule = await WebAssembly.instantiate(wasmBuffer, {});
   const instance = wasmModule.instance;
@@ -41,7 +46,7 @@ function solveWorkerPoW(
   target: string,
   difficulty: number,
   start: number,
-  end: number
+  end: number,
 ): string | null {
   const cacheKey = `${publicSalt}:${target}`;
   if (powCache.has(cacheKey)) {
@@ -93,14 +98,14 @@ export class CineSrcScraper {
     kind: "movie" | "tv" = "movie",
     season?: number,
     episode?: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<MirrorStream[]> {
     const mirrors: MirrorStream[] = [];
     const targetServer = "nebula";
 
     try {
       console.log(
-        `[CineSrc] Resolving ${kind} ${tmdbId}${kind === "tv" ? ` S${season}E${episode}` : ""} (Pure Node.js)...`
+        `[CineSrc] Resolving ${kind} ${tmdbId}${kind === "tv" ? ` S${season}E${episode}` : ""} (Pure Node.js)...`,
       );
 
       const embedUrl =
@@ -113,7 +118,9 @@ export class CineSrcScraper {
           ? [kind, tmdbId, String(season || 1), String(episode || 1)]
           : [kind, tmdbId, null, null];
 
-      const xCsQ = Buffer.from(JSON.stringify(queryArray)).toString("base64").replace(/=+$/, "");
+      const xCsQ = Buffer.from(JSON.stringify(queryArray))
+        .toString("base64")
+        .replace(/=+$/, "");
 
       const baseHeaders: Record<string, string> = {
         "User-Agent": UA,
@@ -137,7 +144,10 @@ export class CineSrcScraper {
       };
 
       // Step 1: GET initial page
-      const initRes = await fetch(embedUrl, { headers: baseHeaders, signal: signal });
+      const initRes = await fetch(embedUrl, {
+        headers: baseHeaders,
+        signal: signal,
+      });
       updateCookies(initRes);
 
       const routerStateTree =
@@ -209,9 +219,18 @@ export class CineSrcScraper {
 
       // Load Assets
       const assetsDir = path.join(process.cwd(), "scratch", "cinesrc_assets");
-      const burgerJsCode = fs.readFileSync(path.join(assetsDir, "burger.js"), "utf-8");
-      const prod130626Code = fs.readFileSync(path.join(assetsDir, "130626-prod.js"), "utf-8");
-      const donutJsCode = fs.readFileSync(path.join(assetsDir, "donut.js"), "utf-8");
+      const burgerJsCode = fs.readFileSync(
+        path.join(assetsDir, "burger.js"),
+        "utf-8",
+      );
+      const prod130626Code = fs.readFileSync(
+        path.join(assetsDir, "130626-prod.js"),
+        "utf-8",
+      );
+      const donutJsCode = fs.readFileSync(
+        path.join(assetsDir, "donut.js"),
+        "utf-8",
+      );
       const stringH = extractDonutHString(donutJsCode);
 
       const contextObject: any = {
@@ -596,7 +615,7 @@ export class CineSrcScraper {
           });
         };
       `,
-        ctx
+        ctx,
       );
 
       // Evaluate telemetry scripts
@@ -610,7 +629,7 @@ export class CineSrcScraper {
           i: function(a, b) { return i.h.slice(a, a + b); }
         };
       `,
-        ctx
+        ctx,
       );
 
       vm.runInContext(donutJsCode, ctx);
@@ -649,100 +668,109 @@ export class CineSrcScraper {
 
         window.fetch = g;
       `,
-        ctx
+        ctx,
       );
 
       const d6Key = ctx.d6KeyName;
-      const sec1Token = await vm.runInContext(`window[${JSON.stringify(d6Key)}].gc()`, ctx);
-      const sec2Token = await vm.runInContext(`window.__ss2_challenge.gc()`, ctx);
-
-      const fullToken = `${sec1Token}::c2::${sec2Token}::c3::${bootData.r}`;
 
       // Resolve top 4 available servers in parallel
       const activeServers = (typeof serverIds !== "undefined" && serverIds.length > 0)
         ? serverIds.slice(0, 4)
         : ["nebula", "thunder", "surge", "spark"];
 
-      await Promise.allSettled(
-        activeServers.map(async (targetServer) => {
-          try {
-            const postBody =
-              kind === "tv"
-                ? [tmdbId, "show", String(season || 1), String(episode || 1), fullToken, targetServer]
-                : [tmdbId, kind, "$undefined", "$undefined", fullToken, targetServer];
+      for (const targetServer of activeServers) {
+        try {
+          const sec1Token = await vm.runInContext(`window[${JSON.stringify(d6Key)}].gc()`, ctx);
+          const sec2Token = await vm.runInContext(`window.__ss2_challenge.gc()`, ctx);
+          const fullToken = `${sec1Token}::c2::${sec2Token}::c3::${bootData.r}`;
 
-            const actionHeaders: Record<string, string> = {
-              "User-Agent": UA,
-              Origin: "https://cinesrc.st",
-              Referer: embedUrl,
-              Cookie: getCookieHeader(),
-              Accept: "text/x-component",
-              "content-type": "text/plain;charset=UTF-8",
-              "next-action": "7ee2ce6e276d24a29d32ee843aa18f1560caba9034",
-              "next-router-state-tree": routerStateTree,
-            };
+          const postBody =
+            kind === "tv"
+              ? [tmdbId, "show", String(season || 1), String(episode || 1), fullToken, targetServer]
+              : [tmdbId, kind, "$undefined", "$undefined", fullToken, targetServer];
 
-            const streamRes = await fetch(embedUrl, {
-              method: "POST",
-              headers: actionHeaders,
-              body: JSON.stringify(postBody),
-              signal: signal,
-            });
+          const actionHeaders: Record<string, string> = {
+            "User-Agent": UA,
+            Origin: "https://cinesrc.st",
+            Referer: embedUrl,
+            Cookie: getCookieHeader(),
+            Accept: "text/x-component",
+            "content-type": "text/plain;charset=UTF-8",
+            "next-action": "7ee2ce6e276d24a29d32ee843aa18f1560caba9034",
+            "next-router-state-tree": routerStateTree,
+          };
 
-            const resultText = await streamRes.text();
-            const lines = resultText.split("\n");
-            const r2Line = lines.find((l: string) => l.includes("r2."));
+          const streamRes = await fetch(embedUrl, {
+            method: "POST",
+            headers: actionHeaders,
+            body: JSON.stringify(postBody),
+            signal: signal,
+          });
 
-            if (r2Line) {
-              const colonIdx = r2Line.indexOf(":");
-              let encPayload = "";
-              if (colonIdx >= 0) {
-                try {
-                  encPayload = JSON.parse(r2Line.slice(colonIdx + 1));
-                } catch {
-                  encPayload = r2Line.slice(r2Line.indexOf("r2.")).replace(/"$/, "");
-                }
-              } else {
-                encPayload = r2Line.slice(r2Line.indexOf("r2.")).replace(/"$/, "");
+          const resultText = await streamRes.text();
+          const lines = resultText.split("\n");
+          const r2Line = lines.find((l: string) => l.includes("r2."));
+
+          if (r2Line) {
+            const colonIdx = r2Line.indexOf(":");
+            let encPayload = "";
+            if (colonIdx >= 0) {
+              try {
+                encPayload = JSON.parse(r2Line.slice(colonIdx + 1));
+              } catch {
+                encPayload = r2Line
+                  .slice(r2Line.indexOf("r2."))
+                  .replace(/"$/, "");
               }
+            } else {
+              encPayload = r2Line
+                .slice(r2Line.indexOf("r2."))
+                .replace(/"$/, "");
+            }
 
-              const decrypted = await vm.runInContext(
-                `
-                (async function() {
-                  if (globalThis.__d6Object && typeof globalThis.__d6Object.dr === "function") {
-                    return await globalThis.__d6Object.dr(${JSON.stringify(encPayload)});
-                  }
-                  return null;
-                })()
-              `,
-                ctx
-              );
+            const decrypted = await vm.runInContext(
+              `
+              (async function() {
+                if (globalThis.__d6Object && typeof globalThis.__d6Object.dr === "function") {
+                  return await globalThis.__d6Object.dr(${JSON.stringify(encPayload)});
+                }
+                return null;
+              })()
+            `,
+              ctx,
+            );
 
-              if (decrypted && decrypted.url) {
-                const rawUrls = decrypted.url;
-                const urls = Array.isArray(rawUrls) ? rawUrls : rawUrls ? [rawUrls] : [];
+            if (decrypted && decrypted.url) {
+              const rawUrls = decrypted.url;
+              const urls = Array.isArray(rawUrls)
+                ? rawUrls
+                : rawUrls
+                  ? [rawUrls]
+                  : [];
 
-                for (const item of urls) {
-                  if (item && item.url) {
-                    mirrors.push({
-                      url: item.url,
-                      source: `cinesrc-${targetServer.toLowerCase()}`,
-                      quality: "1080p",
-                      type: "hls",
-                      headers: {
-                        Referer: "https://cinesrc.st/",
-                        "User-Agent": UA,
-                      },
-                    });
-                  }
+              for (const item of urls) {
+                if (item && item.url) {
+                  mirrors.push({
+                    url: item.url,
+                    source: `cinesrc-${targetServer.toLowerCase()}`,
+                    quality: "1080p",
+                    type: "hls",
+                    headers: {
+                      Referer: "https://cinesrc.st/",
+                      "User-Agent": UA,
+                    },
+                  });
                 }
               }
             }
-          } catch {}
-        })
-      );
+          }
+        } catch {}
+      }
     } catch (err: any) {
-      console.error("[CineSrc] Pure Node.js scraper error:", err.stack || err.message);
+      console.error(
+        "[CineSrc] Pure Node.js scraper error:",
+        err.stack || err.message,
+      );
     }
 
     return mirrors;
