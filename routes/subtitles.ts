@@ -76,9 +76,7 @@ export const SUBTITLE_ALLOWLIST = [
   "new.vidnest.fun",
   "vaplayer.ru",
   "streamdata.vaplayer.ru",
-  // Vidrift domains
-  "vidrift.in",
-  "embed.vidrift.in",
+
   "vdrk.site",
   "cache.vdrk.site",
   // Wyzie domains
@@ -103,14 +101,12 @@ function sourcePriority(source: string): number {
   if (source === "VidRock") return 2;
   if (source === "Vaplayer" || source === "Quantum") return 3;
   if (source === "Starlight" || source === "CineSrc") return 3.5;
-  if (source === "Vidrift") return 4;
   if (source === "Videasy") return 5;
   if (source === "VidLink") return 6;
   if (source === "Vesper" || source === "NetNaija" || source === "Vortex")
     return 6.5;
   if (source === "Vidnest") return 7;
   if (source && source.startsWith("FilmU")) return 8;
-  if (source === "Peachify") return 9;
   if (source === "Wyzie") return 10;
   if (source === "OpenSubtitles") return 11;
   if (source === "Kuro") return 12;
@@ -497,88 +493,7 @@ export function createSubtitleRouter(
           return [];
         })(),
 
-        // K — Vidrift subtitles
-        (async () => {
-          try {
-            const subUrl =
-              kind === "tv"
-                ? `https://embed.vidrift.in/api/source/subtitles/tv/${tmdbId}/${season}/${episode}`
-                : `https://embed.vidrift.in/api/source/subtitles/movie/${tmdbId}`;
-            const referer =
-              kind === "tv"
-                ? `https://embed.vidrift.in/embed/tv/${tmdbId}/${season}/${episode}`
-                : `https://embed.vidrift.in/embed/movie/${tmdbId}`;
 
-            const response = await fetch(subUrl, {
-              headers: {
-                accept: "*/*",
-                "accept-language": "en-US,en;q=0.6",
-                referer,
-                "user-agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-              },
-              signal: AbortSignal.timeout(6000),
-            });
-            if (!response.ok) return [];
-            const data = await response.json();
-            if (data && data.success && Array.isArray(data.subtitles)) {
-              return data.subtitles
-                .filter((s: any) => s.file)
-                .map((s: any) => ({
-                  id: `vidrift-${s.label.toLowerCase()}-${tmdbId}-${season}-${episode}`,
-                  url: s.file,
-                  lang: getLanguageIso(s.label),
-                  languageName: s.label,
-                  source: "Vidrift",
-                }));
-            }
-          } catch (err: any) {
-            console.warn(
-              `[SUBS] Vidrift subtitle extraction failed: ${err.message}`,
-            );
-          }
-          return [];
-        })(),
-
-        // L — Peachify subtitles from StreamCache
-        (async () => {
-          try {
-            const peachifyCache = await StreamCache.findOne({
-              tmdbId: tmdbId.toString(),
-              type: kind,
-              season,
-              episode,
-            });
-            if (!peachifyCache?.mirrors?.length) return [];
-            const subMap = new Map<string, any>();
-            peachifyCache.mirrors
-              .filter(
-                (m: any) =>
-                  typeof m.source === "string" &&
-                  m.source.startsWith("Peachify"),
-              )
-              .forEach((m: any) => {
-                m.subtitles?.forEach((s: any) => {
-                  if (s?.url && !subMap.has(s.url)) {
-                    subMap.set(s.url, {
-                      id: `peachify-${s.lang || "unk"}-${subMap.size}`,
-                      url: s.url,
-                      lang: s.lang || "unk",
-                      languageName:
-                        s.languageName || s.label || s.lang || "Unknown",
-                      source: "Peachify",
-                    });
-                  }
-                });
-              });
-            return Array.from(subMap.values());
-          } catch (err: any) {
-            console.warn(
-              `[SUBS] Peachify cache extraction failed: ${err.message}`,
-            );
-            return [];
-          }
-        })(),
 
         // M — Kuro subtitles from StreamCache
         (async () => {
@@ -669,8 +584,6 @@ export function createSubtitleRouter(
         vaplayerResult,
         vidrockResult,
         wyzieResult,
-        vidriftResult,
-        peachifyResult,
         kuroResult,
         vesperResult,
       ] = results;
@@ -703,14 +616,6 @@ export function createSubtitleRouter(
         wyzieResult && wyzieResult.status === "fulfilled"
           ? wyzieResult.value
           : [];
-      const vidriftTrack =
-        vidriftResult && vidriftResult.status === "fulfilled"
-          ? vidriftResult.value
-          : [];
-      const peachifyTrack =
-        peachifyResult && peachifyResult.status === "fulfilled"
-          ? peachifyResult.value
-          : [];
       const kuroTrack =
         kuroResult && kuroResult.status === "fulfilled" ? kuroResult.value : [];
       const vesperTrack =
@@ -719,7 +624,7 @@ export function createSubtitleRouter(
           : [];
 
       console.log(
-        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} Vesper:${vesperTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Vidrift:${vidriftTrack.length} Peachify:${peachifyTrack.length} Kuro:${kuroTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
+        `[SUBS] Sources — VidVault:${vidVaultTrack.length} Videasy:${videasyTrack.length} VidLink:${vidLinkTrack.length} Vesper:${vesperTrack.length} FilmU:${filmuTrack.length} Vidnest:${vidnestTrack.length} Vaplayer:${vaplayerTrack.length} VidRock:${vidrockTrack.length} Kuro:${kuroTrack.length} Wyzie:${wyzieTrack.length} OpenSubs:${openSubsTrack.length}`,
       );
 
       // Deduplicate by URL across sources
@@ -737,25 +642,21 @@ export function createSubtitleRouter(
         ...dedup(vidVaultTrack),
         ...dedup(vidrockTrack.filter(isEnglish)),
         ...dedup(vaplayerTrack.filter(isEnglish)),
-        ...dedup(vidriftTrack.filter(isEnglish)),
         ...dedup(videasyTrack.filter(isEnglish)),
         ...dedup(vidLinkTrack.filter(isEnglish)),
         ...dedup(vesperTrack.filter(isEnglish)),
         ...dedup(vidnestTrack.filter(isEnglish)),
         ...dedup(filmuTrack.filter(isEnglish)),
-        ...dedup(peachifyTrack.filter(isEnglish)),
         ...dedup(wyzieTrack.filter(isEnglish)),
         ...dedup(openSubsTrack.filter(isEnglish)),
         ...dedup(kuroTrack.filter(isEnglish)),
         ...dedup(vidrockTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vaplayerTrack.filter((s: any) => !isEnglish(s))),
-        ...dedup(vidriftTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(videasyTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vidLinkTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vesperTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(vidnestTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(filmuTrack.filter((s: any) => !isEnglish(s))),
-        ...dedup(peachifyTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(wyzieTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(openSubsTrack.filter((s: any) => !isEnglish(s))),
         ...dedup(kuroTrack.filter((s: any) => !isEnglish(s))),

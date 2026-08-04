@@ -80,16 +80,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://cinesrc.st/";
       origin = "https://cinesrc.st";
-    } else if (
-      lower.includes("eat-peach.sbs") ||
-      lower.includes("peachify.pro") ||
-      lower.includes("ergfwsarytrgfftsj.workers.dev") ||
-      lower.includes("wispy-waterfall")
-    ) {
-      referer = "https://peachify.pro/";
-      origin = "https://peachify.pro";
-      delete headers["x-forwarded-for"];
-      delete headers["x-real-ip"];
+
     } else if (
       lower.includes("megaplay.buzz") ||
       lower.includes("nekostream.site") ||
@@ -302,15 +293,7 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
-    } else if (
-      lower.includes("vidrift.in") ||
-      lower.includes("vdrk.site") ||
-      lower.includes("hostingersite.com") ||
-      lower.includes("profitablelaunchsystem.website") ||
-      /\.website/i.test(lower)
-    ) {
-      referer = "https://embed.vidrift.in/";
-      origin = null;
+
     } else if (
       lower.includes("smartbusinessframework.site") ||
       lower.includes("onlinecoursecreator.site") ||

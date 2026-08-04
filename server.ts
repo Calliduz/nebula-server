@@ -42,8 +42,7 @@ import { createFilmuRouter } from "./routes/filmu.js";
 import { createVidnestRouter } from "./routes/vidnest.js";
 import { createVaplayerRouter } from "./routes/vaplayer.js";
 import { createCineSrcRouter } from "./routes/cinesrc.js";
-import { createVidriftRouter } from "./routes/vidrift.js";
-import { createPeachifyRouter } from "./routes/peachify.js";
+
 import { createKuroRouter } from "./routes/kuro.js";
 import { createHdgHarTvRouter } from "./routes/hdghartv.js";
 import { createNetnaijaRouter } from "./routes/netnaija.js";
@@ -1356,8 +1355,6 @@ app.get("/api/stream", async (req, res) => {
           "vidrock",
           "vaplayer",
           "videasy",
-          "vidrift",
-          "peachify",
           "kuro",
           "vidnest",
           "filmu",
@@ -1981,11 +1978,7 @@ app.use(createVaplayerRouter());
 // CineSrc scraper route → routes/cinesrc.ts (detach by removing this line + the import above)
 app.use(createCineSrcRouter());
 
-// Vidrift scraper route → routes/vidrift.ts
-app.use(createVidriftRouter());
 
-// Peachify scraper route → routes/peachify.ts
-app.use(createPeachifyRouter());
 
 // Kuro scraper route → routes/kuro.ts
 app.use(createKuroRouter());
@@ -2022,8 +2015,6 @@ app.post("/api/stream/flush", express.json(), async (req, res) => {
           `${tmdbId}-vidrock`,
           `${tmdbId}-vaplayer`,
           `${tmdbId}-videasy`,
-          `${tmdbId}-vidrift`,
-          `${tmdbId}-peachify`,
           `${tmdbId}-vidnest`,
           `${tmdbId}-filmu`,
         ],
@@ -2961,8 +2952,6 @@ app.get("/api/stream/availability", async (req, res) => {
       ...tmdbIds.map((id) => `${id}-vidrock`),
       ...tmdbIds.map((id) => `${id}-vaplayer`),
       ...tmdbIds.map((id) => `${id}-videasy`),
-      ...tmdbIds.map((id) => `${id}-vidrift`),
-      ...tmdbIds.map((id) => `${id}-peachify`),
       ...tmdbIds.map((id) => `${id}-kuro`),
       ...tmdbIds.map((id) => `${id}-vidnest`),
       ...tmdbIds.map((id) => `${id}-filmu`),
@@ -2979,8 +2968,6 @@ app.get("/api/stream/availability", async (req, res) => {
             String(s.tmdbId) === `${id}-vidrock` ||
             String(s.tmdbId) === `${id}-vaplayer` ||
             String(s.tmdbId) === `${id}-videasy` ||
-            String(s.tmdbId) === `${id}-vidrift` ||
-            String(s.tmdbId) === `${id}-peachify` ||
             String(s.tmdbId) === `${id}-kuro` ||
             String(s.tmdbId) === `${id}-vidnest` ||
             String(s.tmdbId) === `${id}-filmu`) &&
@@ -2992,8 +2979,6 @@ app.get("/api/stream/availability", async (req, res) => {
           String(d.tmdbId) === `${id}-vidrock` ||
           String(d.tmdbId) === `${id}-vaplayer` ||
           String(d.tmdbId) === `${id}-videasy` ||
-          String(d.tmdbId) === `${id}-vidrift` ||
-          String(d.tmdbId) === `${id}-peachify` ||
           String(d.tmdbId) === `${id}-kuro` ||
           String(d.tmdbId) === `${id}-vidnest` ||
           String(d.tmdbId) === `${id}-filmu`,
@@ -3088,8 +3073,6 @@ app.post("/api/stream/playback-success", express.json(), async (req, res) => {
           `${tmdbId}-vidrock`,
           `${tmdbId}-vaplayer`,
           `${tmdbId}-videasy`,
-          `${tmdbId}-vidrift`,
-          `${tmdbId}-peachify`,
           `${tmdbId}-kuro`,
           `${tmdbId}-vidnest`,
           `${tmdbId}-filmu`,
@@ -3169,8 +3152,6 @@ app.post("/api/stream/report-dead", express.json(), async (req, res) => {
             `${tmdbId}-vidrock`,
             `${tmdbId}-vaplayer`,
             `${tmdbId}-videasy`,
-            `${tmdbId}-vidrift`,
-            `${tmdbId}-peachify`,
             `${tmdbId}-kuro`,
             `${tmdbId}-vidnest`,
             `${tmdbId}-filmu`,
