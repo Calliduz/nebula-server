@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import vm from "vm";
 import { type MirrorStream, UA } from "./scraper.js";
+import { getLanguageName } from "./subtitles.js";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
@@ -864,13 +865,18 @@ export class CineSrcScraper {
             const subData: any[] = await subRes.json();
             if (Array.isArray(subData) && subData.length > 0) {
               const subtitles = subData
-                .map((s: any) => ({
-                  url: s.url,
-                  lang: s.lang || "en",
-                  label: s.display || s.lang || "English",
-                  languageName: s.display || s.lang || "English",
-                  source: "Starlight",
-                }))
+                .map((s: any) => {
+                  const lang = s.language || s.lang || s.langCode || "en";
+                  const languageName =
+                    s.display || s.languageName || s.label || getLanguageName(lang);
+                  return {
+                    url: s.url,
+                    lang: lang,
+                    label: languageName,
+                    languageName: languageName,
+                    source: "Starlight",
+                  };
+                })
                 .filter((s: any) => Boolean(s.url));
 
               if (subtitles.length > 0) {

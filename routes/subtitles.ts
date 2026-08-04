@@ -16,6 +16,7 @@ import {
   getSubtitles,
   getWyzieSubtitles,
   getCineSrcSubtitles,
+  getLanguageName,
 } from "../utils/subtitles.js";
 import { fetchWithCycleTLS, fetchWithGotScraping } from "../utils/bypass.js";
 import { fetchVidVaultDownloads } from "../utils/vidvault.js";
@@ -198,12 +199,14 @@ export function createSubtitleRouter(
                 m.subtitles?.forEach((s: any) => {
                   if (s?.url && !cachedUrls.has(s.url)) {
                     cachedUrls.add(s.url);
+                    const lCode = s.lang || s.language || "unk";
+                    const lName =
+                      s.label || s.languageName || s.display || getLanguageName(lCode);
                     extraSubs.push({
-                      id: `${m.source || "provider"}-${s.lang || s.language || "unk"}-${extraSubs.length}`,
+                      id: `${m.source || "provider"}-${lCode}-${extraSubs.length}`,
                       url: s.url,
-                      lang: s.lang || s.language || "unk",
-                      languageName:
-                        s.label || s.languageName || s.lang || "Unknown",
+                      lang: lCode,
+                      languageName: lName,
                       source: m.source || "Provider",
                     });
                   }
