@@ -174,7 +174,7 @@ export class KissKHScraper {
             isTV ? "tv" : "movie",
             year,
           );
-          if (tmdbId) {
+          if (tmdbId && process.env.VIDLINK_ENABLED !== "false") {
             console.log(
               `[KissKH] Fallback to VidLink: Using TMDB ID ${tmdbId} for ${detail.title} (${year || "N/A"}) S1E${epNum}`,
             );

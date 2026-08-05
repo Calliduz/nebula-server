@@ -1448,7 +1448,7 @@ app.get("/api/stream", async (req, res) => {
         let proxyUsed: string | undefined = undefined;
 
         // ── Phase B: Direct TMDB Path (VidLink) ──────────────────────────
-        if (mirrors.length === 0) {
+        if (mirrors.length === 0 && process.env.VIDLINK_ENABLED !== "false") {
           console.log(
             `[STREAM] Phase B: Checking VidLink (Direct TMDB Path)...`,
           );
@@ -4016,6 +4016,9 @@ app.get("/api/videasy", async (req, res) => {
 
 // ── /api/vidlink — Standalone VidLink scan (mirrors /api/vidrock pattern) ──
 app.get("/api/vidlink", async (req, res) => {
+  if (process.env.VIDLINK_ENABLED === "false") {
+    return res.status(403).json({ error: "VidLink/Spectra integration is disabled" });
+  }
   const tmdbId = req.query.tmdbId as string;
   const type = req.query.type as "movie" | "tv";
   const seasonStr = req.query.season as string;
