@@ -36,6 +36,7 @@
     "http-proxy-agent": "^9.0.0",
     "https-proxy-agent": "^9.0.0",
     "iconv-lite": "^0.7.2",
+    "ioredis": "^5.6.1",
     "jschardet": "^3.1.4",
     "libsodium-wrappers": "^0.8.4",
     "mongoose": "^9.4.1",

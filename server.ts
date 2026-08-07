@@ -23,6 +23,13 @@ import {
   fetchWithGotScraping,
   shutdownCycleTLS,
 } from "./utils/bypass.js";
+import {
+  getRedisCache,
+  setRedisCache,
+  delRedisCache,
+  getRedisStats,
+  shutdownRedis,
+} from "./utils/redis.js";
 
 import { getSubtitles } from "./utils/subtitles.js";
 import {
@@ -92,81 +99,11 @@ process.on("unhandledRejection", (reason) => {
   console.error("[FATAL] Unhandled promise rejection:", reason);
 });
 
-// Simple memory cache for proxy requests to speed up playback and avoid repeat bypasses
-const proxyCache = new Map<
-  string,
-  { body: Buffer; headers: any; expires: number }
->();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-// 500 entries supports ~125 concurrent viewers (1 master + ~4 variant manifests each).
-const MAX_CACHE_ENTRIES = 500;
-
-/**
- * LRU-aware setter: re-inserts the key at the end of the Map so that
- * Map's insertion-order iteration gives us LRU eviction for free.
- */
-function setProxyCache(
-  key: string,
-  value: { body: Buffer; headers: any; expires: number },
-) {
-  // Remove before re-inserting to move to the end (LRU semantics)
-  proxyCache.delete(key);
-  if (proxyCache.size >= MAX_CACHE_ENTRIES) {
-    // Evict the least-recently-used (first in insertion order)
-    const lruKey = proxyCache.keys().next().value;
-    if (lruKey) proxyCache.delete(lruKey);
-  }
-  proxyCache.set(key, value);
-}
-
-/**
- * LRU-aware getter: moves the hit entry to the end so it survives
- * the next eviction cycle. Returns null on miss or expiry.
- */
-function getProxyCache(key: string) {
-  const entry = proxyCache.get(key);
-  if (!entry) return null;
-  if (entry.expires < Date.now()) {
-    proxyCache.delete(key);
-    return null;
-  }
-  // LRU touch: re-insert at end
-  proxyCache.delete(key);
-  proxyCache.set(key, entry);
-  return entry;
-}
-
-let cacheHits = 0;
-let cacheMisses = 0;
-
-// Pruning logic to prevent memory leaks in proxyCache
+// Memory Monitor & DB/Redis Heartbeat
 if (process.env.VITEST !== "true") {
-  setInterval(
-    () => {
-      const now = Date.now();
-      let pruned = 0;
-      for (const [key, val] of proxyCache.entries()) {
-        if (val.expires < now) {
-          proxyCache.delete(key);
-          pruned++;
-        }
-      }
-      if (pruned > 0)
-        console.log(
-          `[CACHE] Pruned ${pruned} expired entries from proxyCache. Size: ${proxyCache.size}`,
-        );
-    },
-    5 * 60 * 1000,
-  ); // Every 5 minutes
-
-  // Memory Monitor & DB Heartbeat
   setInterval(
     async () => {
       const used = process.memoryUsage();
-      const hitRate =
-        cacheHits + cacheMisses > 0
-          ? ((cacheHits / (cacheHits + cacheMisses)) * 100).toFixed(1)
-          : 0;
 
       // DB Heartbeat to prevent Atlas idle timeout (Atlas drops idle TCP after 30 mins)
       let dbStatus = "OFFLINE";
@@ -181,14 +118,11 @@ if (process.env.VITEST !== "true") {
         dbStatus = "CONNECTING";
       }
 
+      const redisStats = await getRedisStats();
+
       console.log(
-        `[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | DB: ${dbStatus} | Cache: ${proxyCache.size}/${MAX_CACHE_ENTRIES} | HitRate: ${hitRate}%`,
+        `[STATS] RAM: ${(used.rss / 1024 / 1024).toFixed(1)}MB | DB: ${dbStatus} | Redis: ${redisStats.status} (${redisStats.size} keys)`,
       );
-      // Reset counters periodically to see current performance
-      if (cacheHits + cacheMisses > 1000) {
-        cacheHits = 0;
-        cacheMisses = 0;
-      }
     },
     5 * 60 * 1000,
   ); // Every 5 minutes
@@ -2218,9 +2152,9 @@ app.get("/api/proxy/stream", async (req, res) => {
   }
 
   const cacheKey = targetUrl;
-  const cached = getProxyCache(cacheKey);
+  const cached = await getRedisCache(cacheKey);
   if (cached) {
-    console.log(`[PROXY/stream] ⚡ Cache Hit: ${sanitizeUrl(targetUrl)}`);
+    console.log(`[PROXY/stream] ⚡ Redis Cache Hit: ${sanitizeUrl(targetUrl)}`);
     res.setHeader(
       "Content-Type",
       cached.headers["content-type"] || "application/vnd.apple.mpegurl",
@@ -2452,12 +2386,8 @@ app.get("/api/proxy/stream", async (req, res) => {
       );
     }
 
-    // Cache successful rewritten manifest
-    setProxyCache(cacheKey, {
-      body: Buffer.from(proxified, "utf-8"),
-      headers: upstream.headers,
-      expires: Date.now() + CACHE_TTL,
-    });
+    // Cache successful rewritten manifest in Redis (TTL: 10 minutes)
+    await setRedisCache(cacheKey, Buffer.from(proxified, "utf-8"), upstream.headers);
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -2923,7 +2853,7 @@ app.all("/api/cache/clear", express.json(), async (req, res) => {
       .json({ error: "Unauthorized access — specify ?key= in URL" });
 
   try {
-    proxyCache.clear();
+    await delRedisCache("*");
     await Promise.all([
       MetadataCache.deleteMany({}),
       DiscoveryCache.deleteMany({}),
@@ -4281,8 +4211,9 @@ if (process.env.VITEST !== "true") {
 async function handleGracefulShutdown(signal: string) {
   console.log(`[SHUTDOWN] ${signal} received — starting clean shutdown...`);
 
-  // 1. Stop CycleTLS Go helper binary
+  // 1. Stop CycleTLS Go helper binary and disconnect Redis
   await shutdownCycleTLS();
+  await shutdownRedis();
 
   // 2. Disconnect Mongoose/MongoDB pool cleanly
   if (mongoose.connection.readyState !== 0) {
