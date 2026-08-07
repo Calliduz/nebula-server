@@ -7,6 +7,7 @@ import axios from "axios";
 import fs from "fs";
 import https from "https";
 import helmet from "helmet";
+import crypto from "crypto";
 import { rateLimit } from "express-rate-limit";
 import {
   MetadataCache,
@@ -29,6 +30,8 @@ import {
   delRedisCache,
   getRedisStats,
   shutdownRedis,
+  registerViewerHeartbeat,
+  getActiveViewersStats,
 } from "./utils/redis.js";
 
 import { getSubtitles } from "./utils/subtitles.js";
@@ -2870,6 +2873,86 @@ app.all("/api/cache/clear", express.json(), async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Cache flush failure" });
+  }
+});
+
+// Rate limiter for viewer heartbeat ping (max 60 pings/min per IP)
+const heartbeatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: "Heartbeat rate limit exceeded" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Rate limiter for admin analytics endpoint (max 120 req/min per IP)
+const adminAnalyticsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: "Too many admin requests. Please wait a moment." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Endpoint: Register viewer active status heartbeat
+app.post(
+  "/api/heartbeat",
+  heartbeatLimiter,
+  express.json(),
+  async (req, res) => {
+    const { sessionId, title, tmdbId, type } = req.body || {};
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
+    await registerViewerHeartbeat(sessionId, title, tmdbId, type);
+    res.json({ status: "ok" });
+  },
+);
+
+// Helper for constant-time string comparison to prevent timing attacks
+function safeCompareKeys(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Endpoint: Protected Admin Analytics Dashboard Data
+app.get("/api/admin/analytics", adminAnalyticsLimiter, async (req, res) => {
+  const providedKey =
+    (req.headers["x-admin-key"] as string) || (req.query.key as string) || "";
+  const expectedKey = ADMIN_KEY || "";
+
+  if (!providedKey || !safeCompareKeys(providedKey, expectedKey)) {
+    return res.status(401).json({ error: "Unauthorized access" });
+  }
+
+  try {
+    const viewerStats = await getActiveViewersStats();
+    const redisStats = await getRedisStats();
+    const mem = process.memoryUsage();
+
+    let dbStatus = "OFFLINE";
+    if (mongoose.connection.readyState === 1) dbStatus = "ONLINE";
+    else if (mongoose.connection.readyState === 2) dbStatus = "CONNECTING";
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      onlineViewers: viewerStats.totalViewers,
+      activeStreams: viewerStats.activeStreams,
+      serverHealth: {
+        ramRssMb: (mem.rss / 1024 / 1024).toFixed(1),
+        ramHeapMb: (mem.heapUsed / 1024 / 1024).toFixed(1),
+        dbStatus,
+        redisStatus: redisStats.status,
+        redisProxyCacheKeys: redisStats.size,
+      },
+    });
+  } catch (err: any) {
+    res
+      .status(500)
+      .json({ error: "Failed to fetch analytics", details: err.message });
   }
 });
 
