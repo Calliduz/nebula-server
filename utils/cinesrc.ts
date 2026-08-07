@@ -267,7 +267,8 @@ export class CineSrcScraper {
         );
       }
 
-      if (!bootData || !bootData.r) throw new Error("CineSrc bootstrap failed: empty payload");
+      if (!bootData || !bootData.r)
+        throw new Error("CineSrc bootstrap failed: empty payload");
 
       // Load Assets
       const assetsDir = getCineSrcAssetsDir();
@@ -868,7 +869,10 @@ export class CineSrcScraper {
                 .map((s: any) => {
                   const lang = s.language || s.lang || s.langCode || "en";
                   const languageName =
-                    s.display || s.languageName || s.label || getLanguageName(lang);
+                    s.display ||
+                    s.languageName ||
+                    s.label ||
+                    getLanguageName(lang);
                   return {
                     url: s.url,
                     lang: lang,

@@ -201,7 +201,10 @@ export function createSubtitleRouter(
                     cachedUrls.add(s.url);
                     const lCode = s.lang || s.language || "unk";
                     const lName =
-                      s.label || s.languageName || s.display || getLanguageName(lCode);
+                      s.label ||
+                      s.languageName ||
+                      s.display ||
+                      getLanguageName(lCode);
                     extraSubs.push({
                       id: `${m.source || "provider"}-${lCode}-${extraSubs.length}`,
                       url: s.url,
@@ -495,8 +498,6 @@ export function createSubtitleRouter(
           }
           return [];
         })(),
-
-
 
         // M — Kuro subtitles from StreamCache
         (async () => {

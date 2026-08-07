@@ -80,7 +80,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://cinesrc.st/";
       origin = "https://cinesrc.st";
-
     } else if (
       lower.includes("megaplay.buzz") ||
       lower.includes("nekostream.site") ||
@@ -293,7 +292,6 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
     ) {
       referer = "https://vidlink.pro/";
       origin = "https://vidlink.pro";
-
     } else if (
       lower.includes("smartbusinessframework.site") ||
       lower.includes("onlinecoursecreator.site") ||

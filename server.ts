@@ -1912,8 +1912,6 @@ app.use(createVaplayerRouter());
 // CineSrc scraper route → routes/cinesrc.ts (detach by removing this line + the import above)
 app.use(createCineSrcRouter());
 
-
-
 // Kuro scraper route → routes/kuro.ts
 app.use(createKuroRouter());
 
@@ -2387,7 +2385,11 @@ app.get("/api/proxy/stream", async (req, res) => {
     }
 
     // Cache successful rewritten manifest in Redis (TTL: 10 minutes)
-    await setRedisCache(cacheKey, Buffer.from(proxified, "utf-8"), upstream.headers);
+    await setRedisCache(
+      cacheKey,
+      Buffer.from(proxified, "utf-8"),
+      upstream.headers,
+    );
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -3947,7 +3949,9 @@ app.get("/api/videasy", async (req, res) => {
 // ── /api/vidlink — Standalone VidLink scan (mirrors /api/vidrock pattern) ──
 app.get("/api/vidlink", async (req, res) => {
   if (process.env.VIDLINK_ENABLED === "false") {
-    return res.status(403).json({ error: "VidLink/Spectra integration is disabled" });
+    return res
+      .status(403)
+      .json({ error: "VidLink/Spectra integration is disabled" });
   }
   const tmdbId = req.query.tmdbId as string;
   const type = req.query.type as "movie" | "tv";
