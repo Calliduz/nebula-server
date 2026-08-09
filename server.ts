@@ -359,7 +359,7 @@ app.use(
   }),
 );
 
-// Standalone Scraper Route Gate: Protect individual scraper routes from direct external bot spam
+// Standalone Scraper Route Gate: Protect scraper/stream routes from headless bot calls
 const standaloneScraperGate = (
   req: express.Request,
   res: express.Response,
@@ -367,13 +367,13 @@ const standaloneScraperGate = (
 ) => {
   const origin = req.get("origin") || req.get("referer");
   if (
-    !origin ||
+    origin &&
     allowedOrigins.some((o) => origin === o || origin.startsWith(o))
   ) {
     return next();
   }
   console.warn(
-    `[SECURITY] Blocked direct bot call to ${req.path} from unauthorized origin: ${origin}`,
+    `[SECURITY] Blocked direct bot call to ${req.path} from unauthorized origin: ${origin || "NO_ORIGIN"}`,
   );
   return res
     .status(403)
@@ -382,6 +382,7 @@ const standaloneScraperGate = (
 
 app.use(
   [
+    "/api/stream",
     "/api/vaplayer",
     "/api/vidvault",
     "/api/vidsrc",
