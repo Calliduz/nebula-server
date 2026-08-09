@@ -125,8 +125,10 @@ export class NetNaijaScraper {
     try {
       const tmdbApiKey =
         process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
-      const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${tmdbApiKey}`;
-      const res = await axios.get(url, { timeout: 5000 });
+      const isV4 = tmdbApiKey.startsWith("eyJ");
+      const url = `https://api.themoviedb.org/3/${type}/${tmdbId}${isV4 ? "" : `?api_key=${tmdbApiKey}`}`;
+      const headers = isV4 ? { Authorization: `Bearer ${tmdbApiKey}` } : {};
+      const res = await axios.get(url, { headers, timeout: 5000 });
       const title = res.data?.title || res.data?.name || undefined;
       const releaseDate =
         res.data?.release_date || res.data?.first_air_date || "";
