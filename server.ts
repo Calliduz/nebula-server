@@ -331,6 +331,16 @@ const allowedOrigins = [
     : []),
 ];
 
+// Fast CORS Gate: Drop unauthorized origins immediately without throwing Express error objects
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const origin = req.headers.origin;
+  if (origin && !allowedOrigins.includes(origin) && !origin.includes("kisskh")) {
+    console.warn(`[CORS] Fast-rejected unauthorized origin: ${origin}`);
+    return res.status(403).send("Forbidden: CORS origin not allowed");
+  }
+  next();
+});
+
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -341,14 +351,58 @@ app.use(
       ) {
         callback(null, true);
       } else {
-        console.warn(`[CORS] Rejected origin: ${origin}`);
-        callback(new Error(`Not allowed by CORS Security Policy: ${origin}`));
+        callback(null, false);
       }
     },
     methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   }),
 );
+
+// Standalone Scraper Route Gate: Protect individual scraper routes from direct external bot spam
+const standaloneScraperGate = (
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
+  const origin = req.get("origin") || req.get("referer");
+  if (
+    !origin ||
+    allowedOrigins.some((o) => origin === o || origin.startsWith(o))
+  ) {
+    return next();
+  }
+  console.warn(
+    `[SECURITY] Blocked direct bot call to ${req.path} from unauthorized origin: ${origin}`,
+  );
+  return res
+    .status(403)
+    .json({ error: "Access denied to standalone scraper route." });
+};
+
+app.use(
+  ["/api/vaplayer", "/api/vidvault", "/api/vidsrc"],
+  standaloneScraperGate,
+);
+
+// ── Automatic Memory & Garbage Collection Monitor ─────────────────────────────
+if (global.gc) {
+  console.log("[SYSTEM] 🧹 Manual Garbage Collection is enabled (--expose-gc).");
+  setInterval(() => {
+    const memory = process.memoryUsage();
+    const heapUsedMb = Math.round(memory.heapUsed / 1024 / 1024);
+    if (heapUsedMb > 400) {
+      console.log(
+        `[SYSTEM] 🧹 High memory threshold reached (${heapUsedMb} MB heap). Triggering forced GC...`,
+      );
+      try {
+        global.gc!();
+      } catch (err: any) {
+        console.error("[SYSTEM] GC execution failed:", err.message);
+      }
+    }
+  }, 60000);
+}
 
 // ── Request Signing System ──────────────────────────────────────────────────
 export function shouldSkipRateLimit(req: express.Request): boolean {
