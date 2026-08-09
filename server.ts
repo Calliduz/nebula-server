@@ -381,7 +381,13 @@ const standaloneScraperGate = (
 };
 
 app.use(
-  ["/api/vaplayer", "/api/vidvault", "/api/vidsrc"],
+  [
+    "/api/vaplayer",
+    "/api/vidvault",
+    "/api/vidsrc",
+    "/api/download/direct",
+    "/api/downloads",
+  ],
   standaloneScraperGate,
 );
 
