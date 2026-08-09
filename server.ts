@@ -373,7 +373,7 @@ const standaloneScraperGate = (
     return next();
   }
   console.warn(
-    `[SECURITY] Blocked direct bot call to ${req.path} from unauthorized origin: ${origin || "NO_ORIGIN"}`,
+    `[SECURITY] Blocked direct bot call to ${req.originalUrl} from unauthorized origin: ${origin || "NO_ORIGIN"}`,
   );
   return res
     .status(403)
