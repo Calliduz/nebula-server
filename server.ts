@@ -332,14 +332,20 @@ const allowedOrigins = [
 ];
 
 // Fast CORS Gate: Drop unauthorized origins immediately without throwing Express error objects
-app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const origin = req.headers.origin;
-  if (origin && !allowedOrigins.includes(origin) && !origin.includes("kisskh")) {
-    console.warn(`[CORS] Fast-rejected unauthorized origin: ${origin}`);
-    return res.status(403).send("Forbidden: CORS origin not allowed");
-  }
-  next();
-});
+app.use(
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const origin = req.headers.origin;
+    if (
+      origin &&
+      !allowedOrigins.includes(origin) &&
+      !origin.includes("kisskh")
+    ) {
+      console.warn(`[CORS] Fast-rejected unauthorized origin: ${origin}`);
+      return res.status(403).send("Forbidden: CORS origin not allowed");
+    }
+    next();
+  },
+);
 
 app.use(
   cors({
@@ -394,7 +400,9 @@ app.use(
 
 // ── Automatic Memory & Garbage Collection Monitor ─────────────────────────────
 if (global.gc) {
-  console.log("[SYSTEM] 🧹 Manual Garbage Collection is enabled (--expose-gc).");
+  console.log(
+    "[SYSTEM] 🧹 Manual Garbage Collection is enabled (--expose-gc).",
+  );
   setInterval(() => {
     const memory = process.memoryUsage();
     const heapUsedMb = Math.round(memory.heapUsed / 1024 / 1024);

@@ -217,10 +217,11 @@ export async function getActiveViewersStats(): Promise<{
             if (existing) {
               existing.count++;
             } else {
-              const newItem: { count: number; type: string; tmdbId?: string } = {
-                count: 1,
-                type: item.type || "movie",
-              };
+              const newItem: { count: number; type: string; tmdbId?: string } =
+                {
+                  count: 1,
+                  type: item.type || "movie",
+                };
               if (item.tmdbId) newItem.tmdbId = item.tmdbId;
               streamCounts.set(item.title, newItem);
             }
