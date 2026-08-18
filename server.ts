@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import compression from "compression";
@@ -824,7 +825,13 @@ app.get("/api/download", async (req, res) => {
       // 2. Torrentio API (Backup & Multi-Provider Search)
       try {
         const torrentioUrl = `https://torrentio.strem.fun/providers=yts,eztv,1337x,rarbg,torrentgalaxy/stream/movie/${imdbId}.json`;
-        const response = await axios.get(torrentioUrl, { timeout: 8000 });
+        const response = await axios.get(torrentioUrl, {
+          headers: {
+            "User-Agent": UA,
+            Accept: "application/json",
+          },
+          timeout: 8000,
+        });
         const streams = response.data?.streams || [];
 
         streams.forEach((s: any) => {
@@ -1065,7 +1072,13 @@ app.get("/api/download/episode", async (req, res) => {
     // 3. Query Torrentio
     try {
       const torrentioUrl = `https://torrentio.strem.fun/providers=yts,eztv,1337x,rarbg,torrentgalaxy/stream/series/${imdbId}:${season}:${episode}.json`;
-      const response = await axios.get(torrentioUrl, { timeout: 10000 });
+      const response = await axios.get(torrentioUrl, {
+        headers: {
+          "User-Agent": UA,
+          Accept: "application/json",
+        },
+        timeout: 10000,
+      });
       const streams = response.data?.streams || [];
 
       streams.forEach((s: any) => {
@@ -1194,13 +1207,15 @@ app.get("/api/download/direct", async (req, res) => {
     }
 
     const [vidVaultDownloads, netNaijaDownloads] = await Promise.all([
-      fetchVidVaultDownloads(
-        kind,
-        tmdbId,
-        undefined,
-        undefined,
-        titleParam,
-      ).catch(() => []),
+      kind === "movie"
+        ? fetchVidVaultDownloads(
+            kind,
+            tmdbId,
+            undefined,
+            undefined,
+            titleParam,
+          ).catch(() => [])
+        : Promise.resolve([]),
       NetNaijaScraper.getDirectDownloads({
         tmdbId,
         kind,

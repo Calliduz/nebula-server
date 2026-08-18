@@ -41,12 +41,12 @@ export function parseAndFormatSize(rawSize: any): string {
 
 // ── TMDB metadata helper ──────────────────────────────────────────────────────
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
-
 export async function getMediaTitleAndYear(
   tmdbId: string,
   type: "movie" | "tv",
 ): Promise<{ title: string; year: string }> {
+  const apiKey =
+    process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
   const cacheKey = `media-title-year-${tmdbId}-${type}`;
   try {
     const cached = await TmdbCache.findOne({
@@ -66,13 +66,13 @@ export async function getMediaTitleAndYear(
   }
 
   try {
-    const isV4 = TMDB_API_KEY.startsWith("eyJ");
-    const tmdbUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}${isV4 ? "" : `?api_key=${TMDB_API_KEY}`}`;
-    const headers = isV4 ? { Authorization: `Bearer ${TMDB_API_KEY}` } : {};
+    const isV4 = apiKey.startsWith("eyJ") || apiKey.length > 40;
+    const tmdbUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}${isV4 ? "" : `?api_key=${apiKey}`}`;
+    const headers = isV4 ? { Authorization: `Bearer ${apiKey}` } : {};
 
     const res = await axios.get(tmdbUrl, {
       headers,
-      timeout: 5000,
+      timeout: 8000,
     });
     const data = res.data;
     const title =
@@ -201,7 +201,7 @@ export async function fetchVidVaultDownloads(
         "sec-fetch-dest": "empty",
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(18000),
     });
   } catch (err: any) {
     console.warn(`[VIDVAULT] Proxy request error: ${err.message}`);
@@ -383,8 +383,12 @@ export async function fetchVidVaultDownloads(
     }
   }
 
+  const epLabel =
+    kind === "tv" && season !== undefined && episode !== undefined
+      ? ` S${season}E${episode}`
+      : "";
   console.log(
-    `[VIDVAULT] Found ${results.length} download(s) for ${kind} tmdbId=${tmdbId}${kind === "tv" ? ` S${season}E${episode}` : ""}`,
+    `[VIDVAULT] Found ${results.length} download(s) for ${kind} tmdbId=${tmdbId}${epLabel}`,
   );
   return results;
 }
