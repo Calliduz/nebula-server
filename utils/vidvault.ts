@@ -45,8 +45,7 @@ export async function getMediaTitleAndYear(
   tmdbId: string,
   type: "movie" | "tv",
 ): Promise<{ title: string; year: string }> {
-  const apiKey =
-    process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
+  const apiKey = process.env.TMDB_API_KEY || "8410c58030558e2d6e4f340d8ab92858";
   const cacheKey = `media-title-year-${tmdbId}-${type}`;
   try {
     const cached = await TmdbCache.findOne({
