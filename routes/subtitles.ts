@@ -93,6 +93,15 @@ export const SUBTITLE_ALLOWLIST = [
   "cloudvideo.lat",
   "livedns.my",
   "cloudbuzz.lol",
+  "trycloud.pro",
+  "trycloud",
+  "mewstream.buzz",
+  "zapora.buzz",
+  "glimmeron.click",
+  "kotocdn.site",
+  "anivideo.sbs",
+  "streamzone1.site",
+  "all-wish.me",
 ];
 
 // ── Source priority sort helpers ──────────────────────────────────────────────
@@ -767,7 +776,16 @@ export function createSubtitleRouter(
         url.includes("livedns.my") ||
         url.includes("cloudbuzz.lol") ||
         url.includes("watching.onl") ||
-        url.includes("vidwish.live")
+        url.includes("vidwish.live") ||
+        url.includes("trycloud.pro") ||
+        url.includes("trycloud") ||
+        url.includes("mewstream.buzz") ||
+        url.includes("zapora.buzz") ||
+        url.includes("glimmeron.click") ||
+        url.includes("kotocdn.site") ||
+        url.includes("anivideo.sbs") ||
+        url.includes("streamzone1.site") ||
+        url.includes("all-wish.me")
       ) {
         referer = "https://megaplay.buzz/";
         origin = "https://megaplay.buzz";

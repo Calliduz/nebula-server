@@ -97,7 +97,10 @@ export function cdnHeaders(targetUrl?: string, isManifest: boolean = false) {
       lower.includes("zapora.buzz") ||
       lower.includes("glimmeron.click") ||
       lower.includes("kotocdn.site") ||
-      lower.includes("anivideo.sbs")
+      lower.includes("anivideo.sbs") ||
+      lower.includes("trycloud.pro") ||
+      lower.includes("trycloud") ||
+      lower.includes("all-wish.me")
     ) {
       referer = "https://megaplay.buzz/";
       origin = "https://megaplay.buzz";
