@@ -855,8 +855,10 @@ export function createSubtitleRouter(
       }
 
       // ── Step 5: Clean up formatting artifacts ─────────────────────────────
-      content = content.replace(/\{\\an\d+\}/g, "");
-      content = content.replace(/<font[^>]*>/gi, "").replace(/<\/font>/gi, "");
+      content = content.replace(/\{[^}]*\}/g, "");
+      content = content.replace(/<\/?font[^>]*>/gi, "");
+      content = content.replace(/<\/?color[^>]*>/gi, "");
+      content = content.replace(/<\/?(?:v|c|lang|ruby|rt|span|div|p)[^>]*>/gi, "");
       content = content.replace(
         /(\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3})\n\n/g,
         "",
